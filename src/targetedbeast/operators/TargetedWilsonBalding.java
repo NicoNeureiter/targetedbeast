@@ -4,18 +4,15 @@ package targetedbeast.operators;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-
+import java.util.stream.Collectors;
 import beast.base.core.Description;
 import beast.base.core.Input;
 import beast.base.evolution.operator.TreeOperator;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
-import beast.base.inference.CompoundDistribution;
 import beast.base.inference.util.InputUtil;
 import beast.base.util.Randomizer;
-import targetedbeast.edgeweights.ConsensusWeights;
 import targetedbeast.edgeweights.EdgeWeights;
-import targetedbeast.likelihood.RapidTreeLikelihood;
 
 /**
  * WILSON, I. J. and D. J. BALDING, 1998 Genealogical inference from
@@ -57,6 +54,7 @@ public class TargetedWilsonBalding extends TreeOperator {
 			return LengthWeightedTreeProposal();
 		}
     }
+
 	/**
 	 * WARNING: Assumes strictly bifurcating beast.tree.
 	 */
@@ -91,10 +89,6 @@ public class TargetedWilsonBalding extends TreeOperator {
                 
         logHastingsRatio -= Math.log(edgeWeights.getEdgeWeights(randomNode) / totalMutations);
 
-        
-        
-        
-		
 		Node i = tree.getNode(randomNode);
 		
 		Node p = i.getParent();
@@ -102,16 +96,7 @@ public class TargetedWilsonBalding extends TreeOperator {
 			return Double.NEGATIVE_INFINITY;
 		}
 
-		double minHeight = i.getHeight();
-
-		List<Integer> coExistingNodes = new ArrayList<>();
-		for (int k = 0; k < tree.getNodeCount(); k++) {
-			if (tree.getNode(k).isRoot())
-				continue;
-
-			if (tree.getNode(k).getParent().getHeight() > minHeight)
-				coExistingNodes.add(k);
-		}
+		List<Node> coExistingNodes = getCoExistingLineages(i, tree);
 		if (coExistingNodes.size() == 0) {
 			return Double.NEGATIVE_INFINITY;
 		}
@@ -124,7 +109,7 @@ public class TargetedWilsonBalding extends TreeOperator {
 		Node ancestor = i.getParent();
 		while (ancestor != null) {
 			// check if p is in the target
-			if (coExistingNodes.contains(ancestor.getNr())) {
+			if (coExistingNodes.contains(ancestor)) {
 				ancestors.add(ancestor.getNr());
 			}
 			ancestor = ancestor.getParent();
@@ -135,9 +120,9 @@ public class TargetedWilsonBalding extends TreeOperator {
 		edgeWeights.updateByOperatorWithoutNode(i.getNr(), ancestors);
 
 		// remove p as potential targets
-		coExistingNodes.remove(coExistingNodes.indexOf(p.getNr()));
+		coExistingNodes.remove(p);
 		try {
-			coExistingNodes.remove(coExistingNodes.indexOf(i.getNr()));
+			coExistingNodes.remove(i);
 		} catch (Exception e) {
 			System.err.println("couldn't find node " + i.getNr() + " among coexisting nodes ");
 			System.err.println(tree +";");
@@ -145,13 +130,14 @@ public class TargetedWilsonBalding extends TreeOperator {
 		}
 //		coExistingNodes.remove(coExistingNodes.indexOf(CiP.getNr()));
 
-		double[] distance = edgeWeights.getTargetWeightsInteger(i.getNr(), coExistingNodes);
+		double[] distance = edgeWeights.getTargetWeights(i.getNr(), coExistingNodes);
 		
-		double siblingDistance = distance[coExistingNodes.indexOf(CiP.getNr())];
+        int siblingIdx = coExistingNodes.indexOf(CiP);
+		double siblingDistance = distance[siblingIdx];
 		siblingDistance = Math.pow(siblingDistance, 2);
-		distance[coExistingNodes.indexOf(CiP.getNr())] = 0;
+		distance[siblingIdx] = 0;
 		
-		
+
 		double totalDistance = 0;
 		for (int k = 0; k < coExistingNodes.size(); k++) {
 			distance[k] = Math.pow(distance[k], 2);
@@ -166,7 +152,7 @@ public class TargetedWilsonBalding extends TreeOperator {
 			currDist += distance[k];
 			if (currDist > scaler2) {				
 				nodeNr = k;
-				j = treeInput.get().getNode(coExistingNodes.get(nodeNr));
+				j = coExistingNodes.get(nodeNr);
 				break;
 			}
 		}
@@ -209,19 +195,8 @@ public class TargetedWilsonBalding extends TreeOperator {
 		replace(jP, j, p);
 
 		// mark paths to common ancestor as changed
-		Node iup = PiP;
-		Node jup = p;
-		while (iup != jup) {
-			if (iup.getHeight() < jup.getHeight()) {
-				assert !iup.isRoot();
-				iup = iup.getParent();
-			} else {
-				assert !jup.isRoot();
-				jup = jup.getParent();
-			}
-		}
-		jup.makeDirty(3 - jup.isDirty());
-		
+		Node mrca = getMRCA(PiP, p);
+		mrca.makeDirty(3 - mrca.isDirty());
 		
         edgeWeights.prestore();
         edgeWeights.updateByOperator();
@@ -378,18 +353,8 @@ public class TargetedWilsonBalding extends TreeOperator {
 		replace(jP, j, p);
 
 		// mark paths to common ancestor as changed
-		Node iup = PiP;
-		Node jup = p;
-		while (iup != jup) {
-			if (iup.getHeight() < jup.getHeight()) {
-				assert !iup.isRoot();
-				iup = iup.getParent();
-			} else {
-				assert !jup.isRoot();
-				jup = jup.getParent();
-			}
-		}
-		jup.makeDirty(3 - jup.isDirty());
+		Node mrca = getMRCA(PiP, p);
+		mrca.makeDirty(3 - mrca.isDirty());
 		
 		totalLength += i.getLength();
     	
@@ -666,6 +631,42 @@ public class TargetedWilsonBalding extends TreeOperator {
 //		return weights;
 //	}
 	
+	/**
+	 * Returns all nodes in the given tree whose parent's height exceeds the given node's height,
+	 * excluding the root node.
+	 *
+	 * @param node the reference node whose height is used for comparison
+	 * @param tree the tree containing the nodes to be filtered
+	 */
+	private List<Node> getCoExistingLineages(Node node, Tree tree) {
+		return Arrays.stream(tree.getNodesAsArray())
+			.filter(n -> !n.isRoot())
+			.filter(n -> n.getParent().getHeight() > node.getHeight())
+			.collect(Collectors.toList());
+	}
+
+	/**
+	 * Finds the Most Recent Common Ancestor (MRCA) of two nodes in a tree.
+	 *
+	 * @param a the first node
+	 * @param b the second node
+	 * @return the node representing the MRCA of nodes a and b
+	 */
+	private Node getMRCA(Node a, Node b) {
+		Node iup = a;
+		Node jup = b;
+		while (iup != jup) {
+			if (iup.getHeight() < jup.getHeight()) {
+				assert !iup.isRoot();
+				iup = iup.getParent();
+			} else {
+				assert !jup.isRoot();
+				jup = jup.getParent();
+			}
+		}
+		return jup;
+	}
+
 	@Override
 	public void replace(final Node node, final Node child, final Node replacement) {
 		node.removeChild(child);

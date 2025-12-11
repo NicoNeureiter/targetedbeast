@@ -2,20 +2,16 @@
 package targetedbeast.operators;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
-
 import beast.base.core.Description;
 import beast.base.core.Input;
 import beast.base.evolution.operator.TreeOperator;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
-import beast.base.inference.parameter.RealParameter;
 import beast.base.inference.util.InputUtil;
 import beast.base.util.Randomizer;
-import targetedbeast.edgeweights.ConsensusWeights;
 import targetedbeast.edgeweights.EdgeWeights;
-import targetedbeast.likelihood.RapidTreeLikelihood;
+
 @Description("Picks a node, looks for all coexisting lineages and then performs a weighted move")
 public class WeightedWideOperator extends TreeOperator {
 	
@@ -23,9 +19,7 @@ public class WeightedWideOperator extends TreeOperator {
 
     public Input<Double> mutationLimitInput = new Input<>("mutationLimit", "Input of the number of mutations to be used as a limit", 15.0);
 
-    public 
-
-    double limit;
+    public double limit;
     
     EdgeWeights edgeWeights;
     
