@@ -1,14 +1,13 @@
 package targetedbeast.edgeweights;
 
-import java.io.PrintStream;
 import java.util.*;
-
 import beast.base.core.Description;
 import beast.base.core.Input;
 import beast.base.core.Input.Validate;
 import beast.base.evolution.alignment.Alignment;
 import beast.base.evolution.likelihood.LikelihoodCore;
 import beast.base.evolution.likelihood.TreeLikelihood;
+import beast.base.evolution.sitemodel.SiteModel;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
 import beast.base.evolution.tree.TreeInterface;
@@ -21,47 +20,38 @@ import beast.base.inference.State;
 public class FelsensteinWeights extends Distribution implements EdgeWeights {
 	
     final public Input<Alignment> dataInput = new Input<>("data", "sequence data for the beast.tree", Validate.REQUIRED);
-    
     final public Input<TreeInterface> treeInput = new Input<>("tree", "phylogenetic beast.tree with sequence data in the leafs", Validate.REQUIRED);
-    
     final public Input<Double> maxWeightInput = new Input<>("maxWeight", "maximum weight for an edge", 10.0);
-    
-    final public Input<Double> minWeightInput = new Input<>("minWeight", "minimum weight for an edge", 0.0001);
-
+    final public Input<Double> minWeightInput = new Input<>("minWeight", "minimum weight for an edge", 0.1);
     final public Input<TreeLikelihood> likelihoodInput = new Input<>("likelihood", "The tree likelihood used for calculating edge weights.", Validate.REQUIRED);
-
-	protected int hasDirt;
-
-	// Stores the normalized partials for each node (2 copies for store/restore via active index)
-	// Dimensions: [2][nodeCount][partialsSize]
-	private double[][][] nodePartials;
-
-	private boolean[] changed;
-	private boolean[] changedChildren;
-
-	private int[] activeIndex;
-	private int[] storedActiveIndex;
-
-	private int[] activeMutationsIndex;
-	private int[] storedActiveMutationsIndex;
 
     protected TreeLikelihood treelikelihood;
     protected LikelihoodCore likelihoodCore;
 	
-	// for every leaf node, generate a sequence number
-	// leaf nodes with the same sequence have the same number
+	// Leaf partials - stored separately since LikelihoodCore stores states, not partials, for leaves
+	private double[][] leafPartials;
+
+	// Partials computed for the "without node" case
+	// Dimensions: [nodeCount][partialsSize] - only allocated for nodes that need it
+	private double[][] partialsWithoutNode;
+	
+	// Track which node was ignored when computing partialsWithoutNode
+	private int currentIgnoredNode = -1;
+	
+	// For every leaf node, generate a sequence number
+	// Leaf nodes with the same sequence have the same number
 	private int[] sequenceID;
+	private Alignment alignment;
 
-	public double[][] edgeMutations;
-
-	private boolean operatorUpdated = false;
-	private boolean weightsInitialized = false;
+	private boolean initialized = false;
 
 	int stateCount;
 	int patternCount;	
 	int nodeCount;
+	int leafNodeCount;
 	int partialsSize;
-	int matrixCount; // number of rate categories
+	int matrixCount;
+	int matrixSize; // stateCount * stateCount per rate category
 	
 	double maxWeight;
 	double minWeight;
@@ -69,8 +59,18 @@ public class FelsensteinWeights extends Distribution implements EdgeWeights {
 	@Override
 	public void initAndValidate() {
         treelikelihood = likelihoodInput.get();
+		alignment = treelikelihood.dataInput.get();
+		if (alignment == null) {
+			throw new IllegalArgumentException("TreeLikelihood has no alignment (dataInput is null)");
+		}
+		if (dataInput.get() != alignment) {
+			throw new IllegalArgumentException(
+				"FelsensteinWeights requires its data input to be the same alignment object as used by the provided TreeLikelihood. " +
+				"Use the same <data> in both. Got data='" + dataInput.get().getID() + "' but likelihood data='" + alignment.getID() + "'."
+			);
+		}
 
-		if (dataInput.get().getTaxonCount() != treeInput.get().getLeafNodeCount()) {
+		if (alignment.getTaxonCount() != treeInput.get().getLeafNodeCount()) {
 			String leaves = "?";
 			if (treeInput.get() instanceof Tree) {
 				leaves = String.join(", ", ((Tree) treeInput.get()).getTaxaNames());
@@ -78,41 +78,78 @@ public class FelsensteinWeights extends Distribution implements EdgeWeights {
 			throw new IllegalArgumentException(String.format(
 					"The number of leaves in the tree (%d) does not match the number of sequences (%d). "
 							+ "The tree has leaves [%s], while the data refers to taxa [%s].",
-					treeInput.get().getLeafNodeCount(), dataInput.get().getTaxonCount(), leaves,
-					String.join(", ", dataInput.get().getTaxaNames())));
+					treeInput.get().getLeafNodeCount(), alignment.getTaxonCount(), leaves,
+					String.join(", ", alignment.getTaxaNames())));
 		}
 
-		stateCount = dataInput.get().getMaxStateCount();
-		patternCount = dataInput.get().getPatternCount();
+		stateCount = alignment.getMaxStateCount();
+		patternCount = alignment.getPatternCount();
 		nodeCount = treeInput.get().getNodeCount();
+		leafNodeCount = treeInput.get().getLeafNodeCount();
 		
 		maxWeight = maxWeightInput.get();
 		minWeight = minWeightInput.get();
 		
-		// Initialize arrays
-		edgeMutations = new double[2][nodeCount];
-		nodePartials = new double[2][nodeCount][];
-
-		activeIndex = new int[nodeCount];
-		storedActiveIndex = new int[nodeCount];
-
-		activeMutationsIndex = new int[nodeCount];
-		storedActiveMutationsIndex = new int[nodeCount];
-
-		changed = new boolean[nodeCount];
-		changedChildren = new boolean[nodeCount];
+		partialsWithoutNode = new double[nodeCount][];
+		leafPartials = new double[leafNodeCount][];
 		
 		initSequenceID();
+	}
+	
+	/**
+	 * Lazy initialization of likelihood core and leaf partials.
+	 * Must be called lazily because TreeLikelihood may not be fully initialized during initAndValidate().
+	 */
+	private void ensureInitialized() {
+		if (initialized) return;
 		
-		// Note: We cannot access the likelihood core partials during initAndValidate
-		// because the likelihood has not been computed yet. The partials will be 
-		// retrieved during the first call to updateByOperator() or calculateLogP().
+		likelihoodCore = treelikelihood.getLikelihoodCore();
+		partialsSize = likelihoodCore.getPartialsSize();
+		if (partialsSize <= 0) {
+			// Ensure core has been initialized.
+			treelikelihood.calculateLogP();
+			partialsSize = likelihoodCore.getPartialsSize();
+		}
+
+		// Require a SiteModel.Base to obtain category count; do not derive
+		SiteModel.Base siteModel = (treelikelihood.siteModelInput.get() instanceof SiteModel.Base)
+			? (SiteModel.Base) treelikelihood.siteModelInput.get() : null;
+		if (siteModel == null) {
+			throw new IllegalStateException(
+				"FelsensteinWeights requires SiteModel.Base from the TreeLikelihood; got " +
+				(treelikelihood.siteModelInput.get() == null ? "null" : treelikelihood.siteModelInput.get().getClass().getName())
+			);
+		}
+
+		matrixCount = siteModel.getCategoryCount();
+		if (matrixCount <= 0) {
+			throw new IllegalStateException("SiteModel.getCategoryCount() returned " + matrixCount + ".");
+		}
+
+		// Derive patternCount from partialsSize to match what the core was actually initialized with
+		// (the TreeLikelihood may use a filtered alignment with fewer patterns than dataInput)
+		if (partialsSize <= 0 || partialsSize % (stateCount * matrixCount) != 0) {
+			throw new IllegalStateException(
+				"Likelihood core partialsSize (" + partialsSize + ") is not divisible by stateCount*matrixCount (" +
+				stateCount + "*" + matrixCount + "=" + (stateCount * matrixCount) + "). Core may not be initialized."
+			);
+		}
+		patternCount = partialsSize / (stateCount * matrixCount);
+		matrixSize = stateCount * stateCount;
+		
+		// Initialize leaf partials from sequence data
+		TreeInterface tree = treeInput.get();
+		for (int i = 0; i < leafNodeCount; i++) {
+			leafPartials[i] = new double[partialsSize];
+			initializeLeafPartials(tree.getNode(i), leafPartials[i]);
+		}
+		
+		initialized = true;
 	}
 
-	
 	private void initSequenceID() {
 		TreeInterface tree = treeInput.get();
-		Alignment data = dataInput.get();
+		Alignment data = alignment;
 		
 		sequenceID = new int[tree.getNodeCount()];
 		Map<String,Integer> sequenceMap = new HashMap<>();
@@ -131,177 +168,22 @@ public class FelsensteinWeights extends Distribution implements EdgeWeights {
 	}
 	
 	/**
-	 * Ensures the likelihood core is initialized and returns it.
-	 */
-	private LikelihoodCore getLikelihoodCore() {
-		if (likelihoodCore == null) {
-			likelihoodCore = treelikelihood.getLikelihoodCore();
-			partialsSize = likelihoodCore.getPartialsSize();
-			// Compute matrixCount (number of rate categories) from partialsSize
-			// partialsSize = patternCount * stateCount * matrixCount
-			matrixCount = partialsSize / (patternCount * stateCount);
-		}
-		return likelihoodCore;
-	}
-
-	/**
-	 * Get the size of the partials array for a node.
-	 */
-    protected int getPartialSize() {
-        return getLikelihoodCore().getPartialsSize();
-    }
-    
-    /**
-     * Ensure weights are initialized by computing partials for all nodes.
-     * Called on first access after the likelihood has been computed.
-     */
-    private void ensureWeightsInitialized() {
-    	if (!weightsInitialized) {
-    		// First time - compute weights for all nodes
-    		Arrays.fill(changed, true);
-    		Arrays.fill(changedChildren, true);
-    		updateNodePartials(treeInput.get().getRoot());
-    		weightsInitialized = true;
-    	}
-    }
-
-	@Override
-	public void updateByOperator() {
-		ensureWeightsInitialized();
-		operatorUpdated = true;
-		Arrays.fill(changed, false);
-		Arrays.fill(changedChildren, false);
-		getFilthyNodes(treeInput.get().getRoot());
-		updateNodePartials(treeInput.get().getRoot());
-	}
-
-	@Override
-	public void updateByOperatorWithoutNode(int ignore, List<Integer> nodes) {
-		ensureWeightsInitialized();
-		Arrays.fill(changed, false);
-		Arrays.fill(changedChildren, false);
-		for (Integer nodeNo : nodes) {
-			changed[nodeNo] = true;
-		}
-		updatePartialsWithoutNode(treeInput.get().getRoot(), ignore);
-	}
-
-	@Override
-	public void fakeUpdateByOperator() {
-		operatorUpdated = true;
-		// used for operators that change the tree, but without affecting the order of
-		// the patterns
-	}
-
-	private boolean getFilthyNodes(Node node) {
-		// compute the number of patterns for each node.
-		if (node.isLeaf()) {
-			return false;
-		} else {
-			boolean left = getFilthyNodes(node.getLeft());
-			boolean right = getFilthyNodes(node.getRight());
-			if (left || right || node.isDirty() > 1) {
-				changed[node.getNr()] = true;
-				if (node.isDirty() == 3) { 
-					return false;
-				}
-			}
-		}
-		return changed[node.getNr()];
-	}
-
-	/**
-	 * Update node partials from the likelihood core and compute edge weights.
-	 * The partials P(data below | state at node) are retrieved from the tree likelihood.
-	 * Edge weights are computed as divergence measures between parent and child partials.
-	 */
-	private void updateNodePartials(Node n) {
-		final int nodeNr = n.getNr();
-		
-		if (n.isLeaf()) {
-			// For leaf nodes, we don't have partials in the usual sense 
-			// (they have states, not partials), but we can still compute
-			// a normalized distribution for each pattern based on the data
-			if (changed[nodeNr] || nodePartials[activeIndex[nodeNr]][nodeNr] == null) {
-				// Note: We do NOT call treelikelihood.calculateLogP() here as that would
-				// corrupt the cached likelihood state during operator proposals.
-				// The partials should already be computed from previous MCMC steps.
-				
-				activeIndex[nodeNr] = 1 - activeIndex[nodeNr];
-				int activeInd = activeIndex[nodeNr];
-				
-				if (nodePartials[activeInd][nodeNr] == null) {
-					nodePartials[activeInd][nodeNr] = new double[getPartialSize()];
-				}
-				
-				// For leaves, create partials from the state information
-				// This is a simplified representation - actual partials for leaves
-				// are handled specially in the likelihood calculation
-				initializeLeafPartials(n, nodePartials[activeInd][nodeNr]);
-			}
-			return;
-		}
-		
-		if (changed[nodeNr]) {
-			// Recurse to children first
-			updateNodePartials(n.getLeft());
-			updateNodePartials(n.getRight());
-
-			final int leftNr = n.getLeft().getNr();
-			final int rightNr = n.getRight().getNr();
-
-			// Note: We do NOT call treelikelihood.calculateLogP() here as that would
-			// corrupt the cached likelihood state during operator proposals.
-			// The partials should already be computed from previous MCMC steps.
-
-			// Switch to new active index for this node
-			activeIndex[nodeNr] = 1 - activeIndex[nodeNr];
-			activeMutationsIndex[leftNr] = 1 - activeMutationsIndex[leftNr];
-			activeMutationsIndex[rightNr] = 1 - activeMutationsIndex[rightNr];
-
-			int activeInd = activeIndex[nodeNr];
-			
-			// Allocate array if needed
-			if (nodePartials[activeInd][nodeNr] == null) {
-				nodePartials[activeInd][nodeNr] = new double[getPartialSize()];
-			}
-			
-			// Get partials from tree likelihood for this internal node
-			getLikelihoodCore().getNodePartials(nodeNr, nodePartials[activeInd][nodeNr]);
-			
-			// Compute edge weights as divergence between parent and children
-			double leftDivergence = computePartialsDivergence(nodeNr, leftNr);
-			double rightDivergence = computePartialsDivergence(nodeNr, rightNr);
-			
-			edgeMutations[activeMutationsIndex[leftNr]][leftNr] = Math.max(minWeight, Math.min(maxWeight, leftDivergence));
-			edgeMutations[activeMutationsIndex[rightNr]][rightNr] = Math.max(minWeight, Math.min(maxWeight, rightDivergence));
-		} else {
-			updateNodePartials(n.getLeft());
-			updateNodePartials(n.getRight());
-		}
-	}
-	
-	/**
-	 * Initialize partials for a leaf node based on the sequence data.
-	 * For each pattern and rate category, we set probability 1.0 for the observed state and 0 for others.
-	 * Ambiguous states get equal probability for all compatible states.
-	 * 
-	 * The partials array is organized as [pattern][category][state], flattened to:
-	 * partials[pattern * stateCount * matrixCount + category * stateCount + state]
+	 * Initialize partials for a leaf node based on sequence data.
 	 */
 	private void initializeLeafPartials(Node n, double[] partials) {
-		Alignment data = dataInput.get();
-		int nodeNr = n.getNr();
-		
-		// Ensure matrixCount is initialized
-		getLikelihoodCore();
+		Alignment data = alignment;
+		int taxonIndex = data.getTaxonIndex(n.getID());
+		if (taxonIndex < 0) {
+			throw new IllegalArgumentException(
+				"Leaf node '" + n.getID() + "' not found in alignment taxa. Available taxa: " + String.join(", ", data.getTaxaNames())
+			);
+		}
 		
 		for (int pattern = 0; pattern < patternCount; pattern++) {
-			int state = data.getPattern(nodeNr, pattern);
+			int state = data.getPattern(taxonIndex, pattern);
 			
-			// Fill in partials for all rate categories
 			for (int category = 0; category < matrixCount; category++) {
-				int offset = (pattern * matrixCount + category) * stateCount;
+                int offset = getPartialOffset(pattern, category);
 				
 				if (state < stateCount) {
 					// Unambiguous state
@@ -317,371 +199,411 @@ public class FelsensteinWeights extends Distribution implements EdgeWeights {
 			}
 		}
 	}
+
+	/**
+	 * Get partials for a node - from cache for leaves, from likelihood core for internal nodes.
+	 */
+	private double[] getPartials(int nodeNr) {
+		ensureInitialized();
+		if (nodeNr < leafNodeCount) {
+			return leafPartials[nodeNr];
+		} else {
+			double[] partials = new double[partialsSize];
+			likelihoodCore.getNodePartials(nodeNr, partials);
+			return partials;
+		}
+	}
 	
 	/**
-	 * Compute a divergence measure between the partials of two nodes.
+	 * Compute a divergence measure between two partial arrays.
 	 * Uses a Hellinger-like distance which is symmetric and bounded.
-	 * Returns a value that is higher when the partials are more different.
-	 * 
-	 * The partials array is organized as [pattern][category][state], flattened.
-	 * We integrate over rate categories by summing partials across categories.
+	 * For each rate category, sums divergence across patterns, then averages across categories.
 	 */
-	private double computePartialsDivergence(int parentNr, int childNr) {
-		double[] parentPartials = nodePartials[activeIndex[parentNr]][parentNr];
-		double[] childPartials = nodePartials[activeIndex[childNr]][childNr];
-		
+	private double computePartialsDivergence(double[] parentPartials, double[] childPartials) {
 		if (parentPartials == null || childPartials == null) {
 			return minWeight;
 		}
 		
-		// Ensure matrixCount is initialized
-		getLikelihoodCore();
-		
+		Alignment data = alignment;
 		double totalDivergence = 0.0;
 		
-		// Compute divergence for each pattern (using a simplified Hellinger-like measure)
-		// that works well with partial likelihoods
-		for (int pattern = 0; pattern < patternCount; pattern++) {
-			// Sum partials across all rate categories for this pattern
-			double parentSum = 0.0;
-			double childSum = 0.0;
-			double[] parentPatternPartials = new double[stateCount];
-			double[] childPatternPartials = new double[stateCount];
+		// For each category, compute total divergence across all patterns
+		for (int category = 0; category < matrixCount; category++) {
+			double categoryDivergence = 0.0;
 			
-			for (int category = 0; category < matrixCount; category++) {
-				int offset = (pattern * matrixCount + category) * stateCount;
+			for (int pattern = 0; pattern < patternCount; pattern++) {
+				int offset = getPartialOffset(pattern, category);
+				
+				// Compute sums for normalization
+				double parentSum = 0.0;
+				double childSum = 0.0;
 				for (int s = 0; s < stateCount; s++) {
-					parentPatternPartials[s] += parentPartials[offset + s];
-					childPatternPartials[s] += childPartials[offset + s];
 					parentSum += parentPartials[offset + s];
 					childSum += childPartials[offset + s];
 				}
-			}
-			
-			if (parentSum > 0 && childSum > 0) {
-				// Compute Hellinger-like distance: sum of (sqrt(p) - sqrt(q))^2
+				
+				if (parentSum <= 0 || childSum <= 0) {
+					throw new RuntimeException("Partials sum to zero or negative - likelihood core may not be initialized");
+				}
+				
+				// Compute Hellinger-like divergence for this pattern
 				double patternDiv = 0.0;
 				for (int s = 0; s < stateCount; s++) {
-					double p = parentPatternPartials[s] / parentSum;
-					double q = childPatternPartials[s] / childSum;
+					double p = parentPartials[offset + s] / parentSum;
+					double q = childPartials[offset + s] / childSum;
 					double diff = Math.sqrt(p) - Math.sqrt(q);
 					patternDiv += diff * diff;
 				}
-				totalDivergence += patternDiv;
+				categoryDivergence += data.getPatternWeight(pattern) * patternDiv;
 			}
+			
+			totalDivergence += categoryDivergence;
 		}
 		
-		// Scale the divergence to a reasonable range
-		return totalDivergence;
+		return minWeight + totalDivergence / matrixCount;
 	}
 	
 	/**
-	 * Update partials for a node, ignoring a specific node in the computation.
-	 * Used when computing target weights for operators.
+	 * Compute a similarity measure between the partials of two nodes.
+	 * Uses the dot product of normalized partial distributions.
+	 * For each rate category, multiplies across patterns (sums log), then averages across categories.
 	 */
-	private void updatePartialsWithoutNode(Node n, int ignore) {
+	private double computePartialsSimilarity(double[] partials1, double[] partials2) {
+		Alignment data = alignment;
+        double[] categoryLogSims = new double[matrixCount]; 
+		
+		// For each category, compute total log-similarity across all patterns
+		for (int category = 0; category < matrixCount; category++) {
+			categoryLogSims[category] = 0.0;
+			
+			for (int pattern = 0; pattern < patternCount; pattern++) {
+				int offset = getPartialOffset(pattern, category);
+				
+				// Compute sums for normalization
+				double sum1 = 0.0;
+				double sum2 = 0.0;
+				for (int s = 0; s < stateCount; s++) {
+					sum1 += partials1[offset + s];
+					sum2 += partials2[offset + s];
+				}
+				
+				if (sum1 <= 0 || sum2 <= 0) {
+                    continue;
+					// throw new IllegalStateException(
+					// 	"Partials sum to zero or negative (sum1=" + sum1 + ", sum2=" + sum2 + ") " +
+					// 	"at pattern=" + pattern + ", category=" + category + "."
+					// );
+				}
+				
+				// Compute dot product for this pattern
+				double patternSim = 0.0;
+				for (int s = 0; s < stateCount; s++) {
+					double p1 = partials1[offset + s] / sum1;
+					double p2 = partials2[offset + s] / sum2;
+					patternSim += p1 * p2;
+				}
+				// Add small epsilon for numerical stability
+				categoryLogSims[category] += data.getPatternWeight(pattern) * Math.log(patternSim + 1E-7);
+			}
+		}
+		
+        return logSumExp(categoryLogSims);
+	}
+
+	@Override
+    /**
+     * Force an update to the weights in the middle of an operator, when the tree has changed from
+     * the last likelihood update. Use sparingly, as the likelihood update is expensive.
+     */
+	public void updateByOperator() {
+		likelihoodInput.get().calculateLogP();  // Force full partial recalculation
+        partialsWithoutNode = new double[nodeCount][];  // Clear stale "without node" partials
+	}
+
+	@Override
+	public void updateByOperatorWithoutNode(int ignore, List<Integer> nodes) {
+		ensureInitialized();
+		// Track which node is being ignored and which nodes will have valid partialsWithoutNode
+		currentIgnoredNode = ignore;
+		
+		// Compute modified partials that exclude the contribution of the ignored node
+		Set<Integer> nodesToUpdate = new HashSet<>(nodes);
+		updatePartialsWithoutNodeRecursive(treeInput.get().getRoot(), ignore, nodesToUpdate);
+	}
+	
+	/**
+	 * Recursively update partials for the "without node" case.
+	 * Computes what partials would look like if the ignored node were removed.
+	 * 
+	 * Uses the Felsenstein pruning algorithm:
+	 * P_parent(s) = prod_{c in children} sum_{s'} P(s'|s,t_c) * P_c(s')
+	 * 
+	 * where P(s'|s,t_c) is the transition probability from state s to s' over branch length t_c.
+	 */
+	private void updatePartialsWithoutNodeRecursive(Node n, int ignore, Set<Integer> nodesToUpdate) {
 		if (n.isLeaf()) {
 			return;
 		}
 		
+		// Recurse to children first (post-order traversal)
+		for (Node child : n.getChildren()) {
+			updatePartialsWithoutNodeRecursive(child, ignore, nodesToUpdate);
+		}
+		
 		final int nodeNr = n.getNr();
-		if (changed[nodeNr]) {
-			activeIndex[nodeNr] = 1 - activeIndex[nodeNr];
-
-			final int leftNr = n.getLeft().getNr();
-			final int rightNr = n.getRight().getNr();
-
-			int activeInd = activeIndex[nodeNr];
-			int activeIndLeft = activeIndex[leftNr];
-			int activeIndRight = activeIndex[rightNr];
-			
-			if (nodePartials[activeInd][nodeNr] == null) {
-				nodePartials[activeInd][nodeNr] = new double[getPartialSize()];
+		if (!nodesToUpdate.contains(nodeNr)) {
+			return;
+		}
+		
+		// Allocate array if needed
+		if (partialsWithoutNode[nodeNr] == null) {
+			partialsWithoutNode[nodeNr] = new double[partialsSize];
+		}
+		
+		double[] currentPartials = partialsWithoutNode[nodeNr];
+		
+		// Get children, excluding the ignored node
+		List<Node> validChildren = new ArrayList<>();
+		for (Node child : n.getChildren()) {
+			if (child.getNr() != ignore) {
+				validChildren.add(child);
 			}
+		}
+		
+		if (validChildren.isEmpty()) {
+			// All children are ignored - set uniform partials
+			Arrays.fill(currentPartials, 1.0);
+		} else {
+			// Initialize with 1s for multiplication
+			Arrays.fill(currentPartials, 1.0);
 			
-			double[] currentPartials = nodePartials[activeInd][nodeNr];
+			// Temporary buffer for single rate category matrix
+			double[] matrix = new double[matrixSize];
 			
-			if (leftNr != ignore && rightNr != ignore) {
-				// Both children are valid - combine their partials
-				double[] leftPartials = nodePartials[activeIndLeft][leftNr];
-				double[] rightPartials = nodePartials[activeIndRight][rightNr];
-				if (leftPartials != null && rightPartials != null) {
-					for (int i = 0; i < currentPartials.length; i++) {
-						currentPartials[i] = leftPartials[i] * rightPartials[i];
+			// For each valid child, apply transition matrix and multiply into result
+			for (Node child : validChildren) {
+				double[] childPartials = getPartialsForWithoutNode(child.getNr(), ignore, nodesToUpdate);
+				if (childPartials != null) {
+					// Apply transition matrix for each rate category
+					// Matrix layout: matrix[i * stateCount + j] = P(from j -> to i)
+					for (int category = 0; category < matrixCount; category++) {
+						// Get the transition matrix for this child's branch and rate category
+						likelihoodCore.getNodeMatrix(child.getNr(), category, matrix);
+						
+						for (int pattern = 0; pattern < patternCount; pattern++) {
+							int partialsOffset = getPartialOffset(pattern, category);
+							
+							for (int i = 0; i < stateCount; i++) {
+								double sum = 0.0;
+								for (int j = 0; j < stateCount; j++) {
+									// matrix[i * stateCount + j] = P(from state j to state i)
+									sum += matrix[i * stateCount + j] * childPartials[partialsOffset + j];
+								}
+								currentPartials[partialsOffset + i] *= sum;
+							}
+
+							// // Rescale per (pattern, category) to avoid numerical underflow.
+							// double rescale = 0.0;
+							// for (int i = 0; i < stateCount; i++) {
+							// 	rescale += currentPartials[partialsOffset + i];
+							// }
+							// if (!(rescale > 0.0) || Double.isNaN(rescale) || Double.isInfinite(rescale)) {
+							// 	Arrays.fill(currentPartials, partialsOffset, partialsOffset + stateCount, 1.0);
+							// } else {
+							// 	for (int i = 0; i < stateCount; i++) {
+							// 		currentPartials[partialsOffset + i] /= rescale;
+							// 	}
+							// }
+						}
 					}
 				}
-			} else if (leftNr == ignore) {
-				// Only use right child
-				double[] rightPartials = nodePartials[activeIndRight][rightNr];
-				if (rightPartials != null) {
-					System.arraycopy(rightPartials, 0, currentPartials, 0, currentPartials.length);
-				}
-			} else if (rightNr == ignore) {
-				// Only use left child
-				double[] leftPartials = nodePartials[activeIndLeft][leftNr];
-				if (leftPartials != null) {
-					System.arraycopy(leftPartials, 0, currentPartials, 0, currentPartials.length);
-				}
 			}
 		}
-		updatePartialsWithoutNode(n.getLeft(), ignore);
-		updatePartialsWithoutNode(n.getRight(), ignore);
 	}
 
+    int getPartialOffset(int pattern, int category) {
+        // return (pattern * matrixCount + category) * stateCount;
+        return (category * patternCount + pattern) * stateCount;
+    }
+	
 	/**
-	 * check state for changed variables and update temp results if necessary *
+	 * Get partials for the "without node" case.
+	 * If the node was updated as part of the "without" calculation, use those partials.
+	 * Otherwise, read from the likelihood core.
 	 */
+	private double[] getPartialsForWithoutNode(int nodeNr, int ignore, Set<Integer> nodesToUpdate) {
+		if (nodeNr == ignore) {
+			return null;
+		}
+		if (nodesToUpdate.contains(nodeNr) && nodeNr >= leafNodeCount) {
+			// Use the computed "without" partials
+			return partialsWithoutNode[nodeNr];
+		} else {
+			// Use normal partials from core
+			return getPartials(nodeNr);
+		}
+	}
+	
+	/**
+	 * Get partials of node `nodeNr` ignoring the effect of the subtree below `nodeNr`.
+	 */
+	private double[] getPartialsForTargetWeight(int nodeNr, int fromNodeNr) {
+		// Check if we have valid partialsWithoutNode for this node,
+		// computed with fromNodeNr as the ignored node
+		if (currentIgnoredNode == fromNodeNr && 
+			nodeNr >= leafNodeCount &&
+			partialsWithoutNode[nodeNr] != null) {
+			return partialsWithoutNode[nodeNr];
+		}
+
+		// Otherwise use the regular partials
+		return getPartials(nodeNr);
+	}
+
+	@Override
+	public void fakeUpdateByOperator() {
+		// Used for operators that change the tree without affecting edge weights
+	}
+
 	@Override
 	protected boolean requiresRecalculation() {
-		hasDirt = Tree.IS_CLEAN;
-
-		if (dataInput.get().isDirtyCalculation()) {
-			hasDirt = Tree.IS_FILTHY;
-			return true;
-		}
-		
-		if (!operatorUpdated) {
-			ensureWeightsInitialized();
-			Arrays.fill(changed, false);
-			Arrays.fill(changedChildren, false);
-			getFilthyNodes(treeInput.get().getRoot());
-			updateNodePartials(treeInput.get().getRoot());
-		}
-		
-		operatorUpdated = false;
-		return treeInput.get().somethingIsDirty();
+		return treeInput.get().somethingIsDirty() || likelihoodInput.get().isDirtyCalculation();
 	}
 
 	@Override
 	public void store() {
 		super.store();
-		if (!operatorUpdated) { // avoid storing again if the operator has already done it
-			if (operatorUpdated) {
-				operatorUpdated = false;
-				return;
-			}
-			System.arraycopy(activeIndex, 0, storedActiveIndex, 0, activeIndex.length);
-			System.arraycopy(activeMutationsIndex, 0, storedActiveMutationsIndex, 0, activeMutationsIndex.length);
-		}
 	}
 
 	@Override
 	public void prestore() {
-		System.arraycopy(activeIndex, 0, storedActiveIndex, 0, activeIndex.length);
-		System.arraycopy(activeMutationsIndex, 0, storedActiveMutationsIndex, 0, activeMutationsIndex.length);
+		// No caching, nothing to prestore
 	}
 
 	@Override
 	public void reset() {
-		// undoes any previous calculation
-		System.arraycopy(storedActiveIndex, 0, activeIndex, 0, activeIndex.length);
-		System.arraycopy(storedActiveMutationsIndex, 0, activeMutationsIndex, 0, activeMutationsIndex.length);
-		operatorUpdated = false;
+		// No caching, nothing to reset
 	}
 
 	@Override
 	public void restore() {
 		super.restore();
-		System.arraycopy(storedActiveIndex, 0, activeIndex, 0, activeIndex.length);
-		System.arraycopy(storedActiveMutationsIndex, 0, activeMutationsIndex, 0, activeMutationsIndex.length);
-	}
-
-	public double getEdgeMutations(int i) {
-		return edgeMutations[activeMutationsIndex[i]][i];
-	}
-	
-	public boolean getChanged(int i) {
-		return changed[i];
-	}
-
-	/**
-	 * Get the stored partials for a node.
-	 */
-	public double[] getNodePartials(int nr) {
-		return nodePartials[activeIndex[nr]][nr];
 	}
 
 	@Override
 	public double getEdgeWeights(int nodeNr) {
-		return minWeight + getEdgeMutations(nodeNr);
+        // Get parent node
+        Node parent = treeInput.get().getNode(nodeNr).getParent();
+        if (parent == null)
+            return minWeight;  // Return minimum weight for the root node
+		int parentNr = parent.getNr();
+
+        // Get partials
+        double[] parentPartials = getPartials(parentNr);
+        double[] childPartials = getPartials(nodeNr);
+
+        // Compute divergence
+        double divergence = computePartialsDivergence(parentPartials, childPartials);
+
+        // Clip and return
+        return Math.max(minWeight, Math.min(maxWeight, divergence));
 	}
 
 	@Override	
-	public double[] getTargetWeights(int fromNodeNr, List<Node> toNodeNrs) {
-		double[] weights = new double[toNodeNrs.size()];
-		double[] fromPartials = getNodePartials(fromNodeNr);
+	public double[] getTargetWeights(int fromNodeNr, List<Node> toNodes) {
+		double[] weights = new double[toNodes.size()];
+		double[] fromPartials = getPartials(fromNodeNr);
 		
-		for (int k = 0; k < toNodeNrs.size(); k++) {
-			int nodeNo = toNodeNrs.get(k).getNr();
-			if (sequenceID[nodeNo] == sequenceID[fromNodeNr]) {
-				// Same sequence - maximum weight
-				weights[k] = maxWeight;				
-			} else {
-				double[] toPartials = getNodePartials(nodeNo);
-				// Calculate similarity between partials (inverse of divergence)
-				double similarity = computePartialsSimilarity(fromPartials, toPartials);
-				weights[k] = similarity;
-			}
+		for (int k = 0; k < toNodes.size(); k++) {
+			int nodeNo = toNodes.get(k).getNr();
+            // Use partialsWithoutNode (excludes fromNodeNr's contribution)
+			double[] toPartials = getPartialsForTargetWeight(nodeNo, fromNodeNr);
+			weights[k] = computePartialsSimilarity(fromPartials, toPartials);
 		}
-		return weights;
-	}
+
+        // Normalise probabilities
+        double[] p = softmax(weights);
+        
+        // Add epsilon to avoid 0 weights
+        for (int i=0; i<p.length; i++)
+            p[i] += EPS;
+
+        return p;
+    }
+
+	private static final double EPS = 1E-10;
 	
 	@Override
 	public double[] getTargetWeightsInteger(int fromNodeNr, List<Integer> toNodeNrs) {
 		double[] weights = new double[toNodeNrs.size()];
-		double[] fromPartials = getNodePartials(fromNodeNr);
+		double[] fromPartials = getPartials(fromNodeNr);
 		
 		for (int k = 0; k < toNodeNrs.size(); k++) {
 			int nodeNo = toNodeNrs.get(k);
-			if (sequenceID[nodeNo] == sequenceID[fromNodeNr]) {
-				// Same sequence - maximum weight
-				weights[k] = maxWeight;
-			} else {
-				double[] toPartials = getNodePartials(nodeNo);
-				// Calculate similarity between partials (inverse of divergence)
-				double similarity = computePartialsSimilarity(fromPartials, toPartials);
-				weights[k] = similarity;
-			}
-		}		
-		return weights;
-	}
-	
-	/**
-	 * Compute a similarity measure between the partials of two nodes.
-	 * Uses the dot product of normalized partial distributions, which gives
-	 * higher values when the partials are more similar.
-	 * 
-	 * The partials array is organized as [pattern][category][state], flattened.
-	 * We integrate over rate categories by summing partials across categories.
-	 */
-	private double computePartialsSimilarity(double[] partials1, double[] partials2) {
-		// if (partials1 == null || partials2 == null) {
-		// 	return minWeight;
-		// }
-		
-		// Ensure matrixCount is initialized
-		getLikelihoodCore();
-		
-		double totalSimilarity = 0.0;
-		
-		// Compute similarity for each pattern using Bhattacharyya coefficient
-		for (int pattern = 0; pattern < patternCount; pattern++) {
-			// Sum partials across all rate categories for this pattern
-			double sum1 = 0.0;
-			double sum2 = 0.0;
-			double[] patternPartials1 = new double[stateCount];
-			double[] patternPartials2 = new double[stateCount];
-			
-			for (int category = 0; category < matrixCount; category++) {
-				int offset = (pattern * matrixCount + category) * stateCount;
-				for (int s = 0; s < stateCount; s++) {
-					patternPartials1[s] += partials1[offset + s];
-					patternPartials2[s] += partials2[offset + s];
-					sum1 += partials1[offset + s];
-					sum2 += partials2[offset + s];
-				}
-			}
-			
-			if (sum1 > 0 && sum2 > 0) {
-				// Compute Bhattacharyya coefficient
-				double patternSim = 0.0;
-				for (int s = 0; s < stateCount; s++) {
-					double p1 = patternPartials1[s] / sum1;
-					double p2 = patternPartials2[s] / sum2;
-					patternSim += Math.sqrt(p1 * p2);
-				}
-				totalSimilarity += patternSim;
-			}
-		}
-		
-		// Normalize to [0, 1] range and apply min weight
-		double normalizedSimilarity = totalSimilarity / patternCount;
-		return Math.max(minWeight, normalizedSimilarity);
-	}
-
-
-	@Override
-	public List<String> getArguments() {
-		return null;
-	}
-
-
-	@Override
-	public List<String> getConditions() {
-		return null;
-	}
-
-
-	@Override
-	public void sample(State state, Random random) {
-		// Not used for edge weights
-	}
-	
-	
-	@Override
-	public void init(PrintStream out) {
-		out.println("#NEXUS\n");
-		out.println("Begin trees;");
-	}
-
-	@Override
-	public void log(long sample, PrintStream out) {
-		Tree tree = (Tree) treeInput.get();
-		out.print("tree STATE_" + sample + " = ");
-		final String newick = toNewick(tree.getRoot());
-		out.print(newick);
-		out.print(";");
-	}
-	
-	public String getTree() {
-		Tree tree = (Tree) treeInput.get();
-		return toNewick(tree.getRoot());
-	}
-
-	/**
-	 * Generate a Newick string with edge weights annotated.
-	 */
-	public String toNewick(Node n) {
-		final StringBuilder buf = new StringBuilder();
-		if (!n.isLeaf()) {
-			buf.append("(");
-			boolean isFirst = true;
-			for (Node child : n.getChildren()) {
-				if (isFirst)
-					isFirst = false;
-				else
-					buf.append(",");
-				buf.append(toNewick(child));
-			}
-			buf.append(")");
-
-			if (n.getID() != null)
-				buf.append(n.getID());
-		} else {
-			if (n.getID() != null)
-				buf.append(n.getID());
+            // Use partialsWithoutNode (excludes fromNodeNr's contribution)
+            double[] toPartials = getPartialsForTargetWeight(nodeNo, fromNodeNr);
+            weights[k] = computePartialsSimilarity(fromPartials, toPartials);
 		}
 
-		final int nodeNr = n.getNr();
-		double weight = edgeMutations[activeMutationsIndex[nodeNr]][nodeNr];
-		buf.append("[&weight=").append(String.format("%.4f", weight)).append("]");
-		buf.append(":").append(n.getLength());
+        // Normalise probabilities
+        double[] p = softmax(weights);
+        
+        // Add epsilon to avoid 0 weights
+        for (int i=0; i<p.length; i++)
+            p[i] += EPS;
+        return p;
+	}
 
-		return buf.toString();
+	// ========== Utility Methods ==========
+
+	/**
+	 * Numerically stable log-sum-exp.
+	 */
+	private static double logSumExp(double[] logVals) {
+		double maxTerm = Double.NEGATIVE_INFINITY;
+		for (double logx : logVals) {
+			maxTerm = Math.max(maxTerm, logx);
+		}
+		if (maxTerm == Double.NEGATIVE_INFINITY) {
+			return Double.NEGATIVE_INFINITY;
+		}
+		double sum = 0.0;
+		for (double logx : logVals) {
+			sum += Math.exp(logx - maxTerm);
+		}
+		return maxTerm + Math.log(sum);
 	}
 
 	/**
-	 * @see beast.base.core.Loggable
+	 * Softmax: converts log-values to normalized probabilities.
 	 */
-	@Override
-	public void close(PrintStream out) {
-		out.print("End;");
+	private static double[] softmax(double[] logVals) {
+		double logSum = logSumExp(logVals);
+		double[] result = new double[logVals.length];
+		for (int i = 0; i < logVals.length; i++) {
+			result[i] = Math.exp(logVals[i] - logSum);
+		}
+		return result;
 	}
-
 
 	@Override
 	public double minEdgeWeight() {
 		return minWeight;
 	}
 
-} // class FelsensteinWeights
+	@Override
+	public List<String> getArguments() {
+		return null;
+	}
+
+	@Override
+	public List<String> getConditions() {
+		return null;
+	}
+
+	@Override
+	public void sample(State state, Random random) {
+		// Not used for edge weights
+	}
+
+}
