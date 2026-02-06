@@ -17,7 +17,6 @@ import beast.base.evolution.alignment.Alignment;
 import beast.base.evolution.alignment.Sequence;
 import beast.base.evolution.alignment.Taxon;
 import beast.base.evolution.alignment.TaxonSet;
-import beast.base.evolution.likelihood.TreeLikelihood;
 import beast.base.evolution.operator.TreeOperator;
 import beast.base.evolution.sitemodel.SiteModel;
 import beast.base.evolution.speciation.YuleModel;
@@ -181,11 +180,11 @@ public class DetailedBalanceTest {
                     double transitionsBackward = flow.get(keyBackward);
 
                     // Skip low count/high variance groups
-                    if (groupCounter.getCount(group) + groupCounter.getCount(toGroup) < 20) 
+                    if (Math.min(groupCounter.getCount(group), groupCounter.getCount(toGroup)) < 20) 
                         continue;
 
                     // Skip low count/high variance groups
-                    if (proposalCounter.getCount(keyForward) + proposalCounter.getCount(keyBackward) < 20) 
+                    if (Math.min(proposalCounter.getCount(keyForward), proposalCounter.getCount(keyBackward)) < 20) 
                         continue;
 
                     double forwVariance = estimateFlowVariance(groupCounter.getCount(group), proposalCounter.getCount(keyForward), transitionsForward);
