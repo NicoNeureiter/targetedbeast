@@ -49,6 +49,10 @@ public interface EdgeWeights {
 	 */
 	double[] getTargetWeightsInteger(int fromNodeNr, List<Integer> toNodeNrs);
 
+	default double[] getTargetWeightsInteger(int fromNodeNr, List<Integer> toNodeNrs, double toHeight) {
+        return getTargetWeightsInteger(fromNodeNr, toNodeNrs);
+    }
+
 	double minEdgeWeight();
 
 }

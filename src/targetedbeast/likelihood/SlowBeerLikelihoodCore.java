@@ -2,7 +2,6 @@ package targetedbeast.likelihood;
 
 import beast.base.evolution.likelihood.LikelihoodCore;
 import beast.base.evolution.tree.Node;
-import cern.colt.Arrays;
 
 /**
  * standard likelihood core, uses no caching *
