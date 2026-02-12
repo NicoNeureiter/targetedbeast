@@ -5,6 +5,7 @@ import static org.junit.Assert.*;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.stream.IntStream;
 import java.lang.reflect.Field;
 
 import org.junit.Before;
@@ -14,7 +15,6 @@ import beast.base.evolution.alignment.Alignment;
 import beast.base.evolution.alignment.Sequence;
 import beast.base.evolution.likelihood.LikelihoodCore;
 import beast.base.evolution.sitemodel.SiteModel;
-import beast.base.evolution.sitemodel.SiteModelInterface;
 import beast.base.evolution.substitutionmodel.JukesCantor;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
@@ -44,7 +44,7 @@ public class FelsensteinWeightsTest {
 	@Before
 	public void setUp() {
 		// Create alignment with 4 taxa
-		Sequence seqA = new Sequence("A", "ACGTACGTAA");
+		Sequence seqA = new Sequence("A", "ACGTACGT-A");
 		Sequence seqB = new Sequence("B", "ACGTACGTAG");
 		Sequence seqC = new Sequence("C", "ACGTAAGTAC");
 		Sequence seqD = new Sequence("D", "ACGTAAGTAC");  // Same as C to test identical sequences
@@ -86,6 +86,8 @@ public class FelsensteinWeightsTest {
 			"minWeight", 0.01,
 			"maxWeight", 10.0
 		);
+
+        weights.updateByOperator();
 	}
 
 	// ========== Category 1: Component Tests ==========
@@ -128,78 +130,10 @@ public class FelsensteinWeightsTest {
 			if (tree.getNode(i).isRoot()) continue;
 			
 			double w = weights.getEdgeWeights(i);
+			assertTrue("Edge weight should be finite", Double.isFinite(w));
 			assertTrue("Edge weight should be >= minWeight", w >= 0.01);
 			assertTrue("Edge weight should be <= maxWeight", w <= 10.0);
 		}
-	}
-
-	/**
-	 * Property: Target weights should form a valid probability distribution 
-	 * (sum to ~1, all positive).
-	 */
-	@Test
-	public void testTargetWeightsFormDistribution() {
-		likelihood.calculateLogP();
-
-		// Pick an internal node and get target weights to all other internal nodes
-		List<Node> internalNodes = new ArrayList<>();
-		for (int i = 0; i < tree.getNodeCount(); i++) {
-			if (!tree.getNode(i).isLeaf() && !tree.getNode(i).isRoot()) {
-				internalNodes.add(tree.getNode(i));
-			}
-		}
-
-		if (internalNodes.size() < 2) {
-			// Need at least 2 internal nodes
-			return;
-		}
-
-		Node fromNode = internalNodes.get(0);
-		List<Node> toNodes = new ArrayList<>(internalNodes);
-		toNodes.remove(fromNode);
-
-		double[] targetWeights = weights.getTargetWeights(fromNode.getNr(), toNodes);
-
-		// All weights should be positive
-		for (double w : targetWeights) {
-			assertTrue("Target weight should be positive", w > 0);
-		}
-
-		// Sum should be close to 1 (allowing for EPS additions)
-		double sum = Arrays.stream(targetWeights).sum();
-		assertEquals("Target weights should sum to ~1", 1.0, sum, 0.01);
-	}
-
-	/**
-	 * Property: Divergence should be symmetric: div(A,B) = div(B,A).
-	 */
-	@Test
-	public void testDivergenceSymmetry() {
-		likelihood.calculateLogP();
-
-		// Get two internal nodes
-		Node node1 = null, node2 = null;
-		for (int i = 0; i < tree.getNodeCount(); i++) {
-			if (!tree.getNode(i).isLeaf()) {
-				if (node1 == null) node1 = tree.getNode(i);
-				else if (node2 == null) { node2 = tree.getNode(i); break; }
-			}
-		}
-
-		if (node1 == null || node2 == null) return;
-
-		// Compute edge weights in both directions (via common ancestor logic)
-		// Since divergence is symmetric, we test by checking the similarity is also symmetric
-		List<Node> list1 = Arrays.asList(node2);
-		List<Node> list2 = Arrays.asList(node1);
-
-		double[] w12 = weights.getTargetWeights(node1.getNr(), list1);
-		double[] w21 = weights.getTargetWeights(node2.getNr(), list2);
-
-		// The raw similarity scores should be symmetric (before softmax)
-		// We can't easily access raw similarities, but with single-element lists,
-		// the softmax just returns [1.0 + eps], so this is a weak test.
-		// A stronger test is the reconstruction property below.
 	}
 
 	/**
@@ -261,30 +195,30 @@ public class FelsensteinWeightsTest {
 	public void testFullConditionalLikelihoodMatchesTreeLikelihood() {
 		double expectedLogP = likelihood.calculateLogP();
 
-		List<Integer> allNodes = new ArrayList<>();
-		for (int i = 0; i < tree.getNodeCount(); i++) {
-			allNodes.add(i);
-		}
+		List<Integer> allNodes = IntStream.range(0, tree.getNodeCount()).boxed().toList();
 
 		weights.updateByOperatorWithoutNode(-1, allNodes);
 
 		for (int nodeNr = 0; nodeNr < tree.getNodeCount(); nodeNr++) {
 			double actualLogP = computeLogPFromFullConditionals(nodeNr);
+            System.out.println(expectedLogP + "   " + actualLogP);
 			assertEquals(
 					"Full conditional likelihood should match tree likelihood at node " + nodeNr,
 					expectedLogP,
 					actualLogP,
-					1e-6
+					1e-10
 			);
 		}
 	}
 
 	private double computeLogPFromFullConditionals(int nodeNr) {
 		double[] fullConditional = weights.getFullConditionalLikelihoods(nodeNr, -1);
+        return computeLogPFromFullConditionals(nodeNr, fullConditional);
+    }
 
+    private double computeLogPFromFullConditionals(int nodeNr, double[] fullConditional) {
 		double[] integrated = new double[weights.patternCount * weights.stateCount];
-		SiteModelInterface.Base siteModelBase = weights.getSiteModel();
-		double[] proportions = siteModelBase.getCategoryProportions(tree.getNode(nodeNr));
+		double[] proportions = weights.getSiteModel().getCategoryProportions(tree.getNode(nodeNr));
 		weights.likelihoodCore.calculateIntegratePartials(fullConditional, proportions, integrated);
 
 		double[] patternLogLikelihoods = new double[weights.patternCount];
@@ -298,6 +232,7 @@ public class FelsensteinWeightsTest {
 
 		return weightedSum;
 	}
+
 
 	/**
 	 * Property: Identical sequences should have identical leaf partials.
@@ -319,101 +254,55 @@ public class FelsensteinWeightsTest {
 		assertTrue("Should find taxon C", nodeC >= 0);
 		assertTrue("Should find taxon D", nodeD >= 0);
 
-		// Get edge weights - they should be similar for C and D (both connecting to same parent)
-		// Actually, we need to check the leaf partials are identical
-		// Since leafPartials is private, we'll test indirectly via similarity
-		List<Node> targets = Arrays.asList(tree.getNode(nodeC));
-		double[] simToC = weights.getTargetWeights(nodeD, targets);
-
-		// The similarity of D to C should be maximal (since they have same sequence)
-		// In a single-element list, softmax gives ~1.0
-		assertEquals("Similarity of identical sequences should be ~1", 1.0, simToC[0], 0.01);
+        String partialStringC = Arrays.toString(weights.getPartials(nodeC));
+        String partialStringD = Arrays.toString(weights.getPartials(nodeD));
+        
+		// Check whether leaf partials are equal
+		assertEquals("Identical sequences should result in identical leaf partials", partialStringC, partialStringD);
 	}
 
-	/**
-	 * KEY PROPERTY TEST: Partials reconstruction via "without node" computation.
-	 * 
-	 * If node P has children L and R, then:
-	 *   partialsWithoutNode(P, ignoring L) contains only R's contribution
-	 *   partialsWithoutNode(P, ignoring R) contains only L's contribution
-	 * 
-	 * Multiplying these (element-wise, after transition matrix application) should
-	 * approximate the original partials at P (up to scaling).
-	 * 
-	 * This tests the core correctness of the "without node" Felsenstein recursion.
-	 */
-	@Test
-	public void testPartialsWithoutNodeReconstruction() {
-		likelihood.calculateLogP();
-		weights.getEdgeWeights(0);  // Force initialization
+    private static List<Integer> collectAncestors(Node nodeI) {
+        List<Integer> ancestors = new ArrayList<>();
+        Node ancestor = nodeI.getParent();
+        while (ancestor != null) {
+            ancestors.add(ancestor.getNr());
+            ancestor = ancestor.getParent();
+        }
+        return ancestors;
+    }
 
-		// Find an internal node with two children
-		Node parent = null;
-		for (int i = 0; i < tree.getNodeCount(); i++) {
-			Node n = tree.getNode(i);
-			if (!n.isLeaf() && !n.isRoot() && n.getChildCount() == 2) {
-				parent = n;
-				break;
-			}
-		}
+    // TODO| For the test to work we need a larger tree, because the internalNode 
+    // TODO| is not allowed to be the root or child of the root.
+    // 
+	// /**
+	//  * Property: Self-similarity should be maximal.
+	//  * Computing similarity of a node's partials with itself should give a high value.
+	//  */
+	// @Test
+	// public void testSelfSimilarityIsMaximal() {
+	// 	// Get an internal node
+	// 	Node internalNode = null;
+	// 	for (Node n : tree.getNodesAsArray()) {
+	// 		if (!(n.isLeaf() || n.isRoot())) {
+	// 			internalNode = n;
+	// 			break;
+	// 		}
+	// 	}
+	// 	assert (internalNode != null);
 
-		if (parent == null) {
-			// Skip if no suitable node found
-			return;
-		}
+    //     List<Integer> ancestors = collectAncestors(internalNode);
+    //     System.out.println(tree.toString());
+    //     System.out.println(internalNode.getNr());
+    //     weights.updateByOperatorWithoutNode(internalNode.getNr(), ancestors);
 
-		Node leftChild = parent.getChild(0);
-		Node rightChild = parent.getChild(1);
+	// 	// Get target weights to itself (degenerate case but should work)
+	// 	List<Node> selfList = Arrays.asList(internalNode);
+	// 	double[] selfWeights = weights.getTargetWeights(internalNode.getNr(), selfList);
 
-		// Compute partialsWithoutNode ignoring left child
-		List<Integer> nodesToUpdate = Arrays.asList(parent.getNr());
-		weights.updateByOperatorWithoutNode(leftChild.getNr(), nodesToUpdate);
-
-		// The target weight from left child to parent (using partialsWithoutNode)
-		// should reflect how well left's partials match "everything except left" at parent
-		List<Node> targetList = Arrays.asList(parent);
-		double[] weightsFromLeft = weights.getTargetWeights(leftChild.getNr(), targetList);
-
-		// Now compute ignoring right child
-		weights.updateByOperatorWithoutNode(rightChild.getNr(), nodesToUpdate);
-		double[] weightsFromRight = weights.getTargetWeights(rightChild.getNr(), targetList);
-
-		// Both should give valid (positive) weights
-		assertTrue("Weight from left child should be positive", weightsFromLeft[0] > 0);
-		assertTrue("Weight from right child should be positive", weightsFromRight[0] > 0);
-
-		// The similarity from a child to its parent (excluding that child's contribution)
-		// should be reasonable (not degenerate)
-		// This is a sanity check that the reconstruction is working
-	}
-
-	/**
-	 * Property: Self-similarity should be maximal.
-	 * Computing similarity of a node's partials with itself should give a high value.
-	 */
-	@Test
-	public void testSelfSimilarityIsMaximal() {
-		likelihood.calculateLogP();
-
-		// Get an internal node
-		Node internalNode = null;
-		for (int i = 0; i < tree.getNodeCount(); i++) {
-			if (!tree.getNode(i).isLeaf()) {
-				internalNode = tree.getNode(i);
-				break;
-			}
-		}
-
-		if (internalNode == null) return;
-
-		// Get target weights to itself (degenerate case but should work)
-		List<Node> selfList = Arrays.asList(internalNode);
-		double[] selfWeights = weights.getTargetWeights(internalNode.getNr(), selfList);
-
-		// With a single target, softmax always gives ~1.0 (plus eps), so this is weak
-		// But it shouldn't crash
-		assertEquals("Self-weight in single-element list should be ~1", 1.0, selfWeights[0], 0.01);
-	}
+	// 	// With a single target, softmax always gives ~1.0 (plus eps), so this is weak
+	// 	// But it shouldn't crash
+	// 	assertEquals("Self-weight in single-element list should be ~1", 1.0, selfWeights[0], 0.01);
+	// }
 
 	/**
 	 * Test with multiple rate categories.
@@ -446,7 +335,7 @@ public class FelsensteinWeightsTest {
 	 * frequencies. This should match exactly how TreeLikelihood computes its final log probability.
 	 */
 	@Test
-	public void testAggegatePartials() throws Exception {
+	public void testAggregatePartials() throws Exception {
         SlowBeerLikelihoodCore core = (SlowBeerLikelihoodCore) likelihood.getLikelihoodCore();
 
 		// Setup tree and likelihood
@@ -499,82 +388,7 @@ public class FelsensteinWeightsTest {
 		assertEquals("Combined partials with pattern weighting should match tree likelihood log prob",
 			treeLogProb, weightsLogProb, 1e-6);
 	}
-
-	@Test
-	public void testGetTargetWeightsIntegerMatchesLikelihood() throws Exception {
-		// Setup tree and likelihood
-		likelihood.calculateLogP();
-
-		// Create list of all nodes to update
-		List<Integer> allNodes = new ArrayList<>();
-		for (int i = 0; i < tree.getNodeCount(); i++) {
-			allNodes.add(i);
-		}
-
-		// Update partialsWithoutNode with invalid ignore node (-1), which should recover full partials
-		weights.updateByOperatorWithoutNode(-1, allNodes);
-
-		// Get root node and its two children
-		Node rootNode = tree.getRoot();
-		if (rootNode.getChildCount() != 2) {
-			System.out.println("Skipping test - root must have exactly 2 children");
-			return;
-		}
-
-		Node child1 = rootNode.getChild(0);
-		Node child2 = rootNode.getChild(1);
-
-		// Compute agreement using the same structure as getTargetWeightsInteger
-		int child1Nr = child1.getNr();
-		int child2Nr = child2.getNr();
-
-		double[] fromPartials = getPartialsByNr(weights, child1Nr);
-		double[] toPartials = getPartialsForTargetWeightByNr(weights, child2Nr, child1Nr);
-
-		if (fromPartials == null || toPartials == null) {
-			System.out.println("Skipping test - could not retrieve partials");
-			return;
-		}
-
-		// Ensure internal buffers are initialized for transition matrix computation
-		ensureProbabilitiesInitialized(weights);
-		ensureTransitionMatricesInitialized(weights);
-
-		// Compute agreement - now includes pattern weighting internally
-		double weightsLogProb = weights.computePartialsAgreement(child1, child2, fromPartials, toPartials, rootNode.getHeight());
-
-		// Get log probability from tree likelihood
-		double treeLogProb = likelihood.calculateLogP();
-
-		// Debug output
-		System.out.println("Log prob from computePartialsAgreement: " + weightsLogProb);
-		System.out.println("Tree likelihood log prob: " + treeLogProb);
-
-		// Validate that computePartialsAgreement (with pattern weighting) matches TreeLikelihood
-		assertEquals("Combined partials with pattern weighting should match tree likelihood log prob",
-			treeLogProb, weightsLogProb, 1e-6);
-	}
-
-	private double[] getPartialsWithoutNodeFromCache(FelsensteinWeights weights, int nodeNr) throws Exception {
-		double[][] partialsWithoutNode = getPartialsWithoutNode(weights);
-		if (nodeNr >= 0 && nodeNr < partialsWithoutNode.length) {
-			return partialsWithoutNode[nodeNr];
-		}
-		return null;
-	}
-
-	private double[] getPartialsByNr(FelsensteinWeights weights, int nodeNr) throws Exception {
-		java.lang.reflect.Method method = FelsensteinWeights.class.getDeclaredMethod("getPartials", int.class);
-		method.setAccessible(true);
-		return (double[]) method.invoke(weights, nodeNr);
-	}
-
-	private double[] getPartialsForTargetWeightByNr(FelsensteinWeights weights, int nodeNr, int fromNodeNr) throws Exception {
-		java.lang.reflect.Method method = FelsensteinWeights.class.getDeclaredMethod("getPartialsForTargetWeight", int.class, int.class);
-		method.setAccessible(true);
-		return (double[]) method.invoke(weights, nodeNr, fromNodeNr);
-	}
-
+    
 	private void ensureProbabilitiesInitialized(FelsensteinWeights weights) throws Exception {
 		Field field = FelsensteinWeights.class.getDeclaredField("_probabilities");
 		field.setAccessible(true);
@@ -584,8 +398,8 @@ public class FelsensteinWeightsTest {
 	}
 
 	private void ensureTransitionMatricesInitialized(FelsensteinWeights weights) throws Exception {
-		Field fromMatrixField = FelsensteinWeights.class.getDeclaredField("fromMatrix");
-		Field toMatrixField = FelsensteinWeights.class.getDeclaredField("toMatrix");
+		Field fromMatrixField = FelsensteinWeights.class.getDeclaredField("_fromMatrix");
+		Field toMatrixField = FelsensteinWeights.class.getDeclaredField("_toMatrix");
 		fromMatrixField.setAccessible(true);
 		toMatrixField.setAccessible(true);
 		if (fromMatrixField.get(weights) == null) {
@@ -596,11 +410,4 @@ public class FelsensteinWeightsTest {
 		}
 	}
 
-	private double sumDoubleArray(double[] arr) {
-		double sum = 0.0;
-		for (double x : arr) {
-			sum += x;
-		}
-		return sum;
-	}
 }

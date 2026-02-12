@@ -1,29 +1,26 @@
-package targetedbeast;
+package targetedbeast.edgeweights;
 
 import static org.junit.Assert.assertEquals;
-
+import static org.junit.Assert.assertTrue;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
-
 import org.junit.BeforeClass;
 import org.junit.Test;
 
 import beast.base.evolution.alignment.Alignment;
 import beast.base.evolution.alignment.Taxon;
 import beast.base.evolution.alignment.TaxonSet;
-import beast.base.evolution.likelihood.TreeLikelihood;
 import beast.base.evolution.sitemodel.SiteModel;
 import beast.base.evolution.substitutionmodel.JukesCantor;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
 import beast.base.inference.DirectSimulator;
 import beast.base.evolution.speciation.YuleModel;
-import beast.base.util.Randomizer;
-import targetedbeast.edgeweights.FelsensteinWeights;
-import targetedbeast.edgeweights.ParsimonyWeights2;
+import targetedbeast.DetailedBalanceTest;
 import targetedbeast.likelihood.SlowTreeLikelihood;
+import targetedbeast.util.LinearAlgebra;
 
 /**
  * Test to verify that target weights computed by FelsensteinWeights are invariant
@@ -47,9 +44,7 @@ public class FelsensteinWeightsWithoutNodeTest {
      * a Wilson-Balding style move of the ignored node.
      */
     @Test
-    public void targetWeightsInvariantAfterMove() throws Exception {
-        // Randomizer.setSeed(42);
-        
+    public void targetWeightsInvariantAfterMove() throws Exception {        
         Tree tree = new Tree();
         tree.initByName("taxonset", getTaxonSet(alignment.getTaxonCount()));
 
@@ -72,8 +67,6 @@ public class FelsensteinWeightsWithoutNodeTest {
 
         FelsensteinWeights edgeWeights = new FelsensteinWeights();
         edgeWeights.initByName("tree", tree, "likelihood", treeLikelihood, "data", alignment);
-        // ParsimonyWeights2 edgeWeights = new ParsimonyWeights2();
-        // edgeWeights.initByName("tree", tree, "data", alignment);
 
         // Initialize likelihoods
         treeLikelihood.calculateLogP();
@@ -104,12 +97,24 @@ public class FelsensteinWeightsWithoutNodeTest {
         Node jP = j.getParent();
 
         // Compute ancestors of i for partialsWithoutNode
-        List<Integer> ancestorsBefore = collectAncestors(nodeI, candidates);
+        // Ancestors should be recomputed each time since the node's position changes
+        List<Integer> ancestorsBefore = collectAncestors(nodeI);
 
         // Compute target weights BEFORE the move
         edgeWeights.prestore();
         edgeWeights.updateByOperatorWithoutNode(nodeI.getNr(), ancestorsBefore);
         double[] weightsBefore = edgeWeights.getTargetWeights(nodeI.getNr(), candidates);
+        
+        // Store partials for all nodes (for comparison after the move)
+        double[][] partialsWithoutNodeBefore = new double[tree.getNodeCount()][];
+        double[][] outsidePartialsBefore = new double[tree.getNodeCount()][];
+        for (int i = 0; i < tree.getNodeCount(); i++) {
+            double[] pwn = edgeWeights.getPartialsWithoutNode(i);
+            double[] op = edgeWeights.getOutsidePartials(i);
+            if (pwn != null) partialsWithoutNodeBefore[i] = Arrays.copyOf(pwn, pwn.length);
+            if (op != null) outsidePartialsBefore[i] = Arrays.copyOf(op, op.length);
+        }
+        
         edgeWeights.reset();
 
         // Store the weights to specific nodes for comparison
@@ -130,7 +135,7 @@ public class FelsensteinWeightsWithoutNodeTest {
         double jRateBefore = edgeWeights.getBranchRate(j);
 
         // Perform a Wilson-Balding move: detach i+p, reattach on edge above j
-        double newHeight = (j.getHeight() + jP.getHeight()) / 2.0;
+        double newHeight = edgeWeights.getToHeightWithoutNode(j, nodeI);
         p.setHeight(newHeight);
         
         // Detach: PiP adopts CiP directly
@@ -158,19 +163,72 @@ public class FelsensteinWeightsWithoutNodeTest {
         assertEquals("CiP branch rate should be invariant", ciPRateBefore, edgeWeights.getBranchRate(CiP), 1e-12);
         assertEquals("j branch rate should be invariant", jRateBefore, edgeWeights.getBranchRate(j), 1e-12);
 
-        // Compute ancestors of i for the new tree
+        // // Recompute likelihoods after restoring the tree
+        // treeLikelihood.calculateLogP();
+
+        // Now compute target weights AFTER the "move and reverse" operation
+        // This tests that the weights are invariant even if we internally perform moves
         List<Node> candidatesAfter = getCoExistingLineages(nodeI, tree);
         candidatesAfter.remove(p);
         candidatesAfter.remove(nodeI);
-        List<Integer> ancestorsAfter = collectAncestors(nodeI, candidatesAfter);
+        List<Integer> ancestorsAfter = collectAncestors(nodeI);
+
+        assertEquals(candidates, candidatesAfter);
 
         // Compute target weights AFTER the move
         edgeWeights.prestore();
         edgeWeights.updateByOperatorWithoutNode(nodeI.getNr(), ancestorsAfter);
         double[] weightsAfter = edgeWeights.getTargetWeights(nodeI.getNr(), candidatesAfter);
+        
+        // CRITICAL TEST: Verify that partials computed with same ignored node are identical
+        // before and after the move. This isolates whether the issue is in partials computation
+        // or in the weights calculation.
+        List<Integer> nodesWithChangedPartials = new ArrayList<>();
+        List<Integer> nodesWithChangedOutsidePartials = new ArrayList<>();
+        for (int i = 0; i < tree.getNodeCount(); i++) {
+            if (i == p.getNr()) continue;
+            // double[] pwnAfter = edgeWeights.getPartialsForWithoutNode(i, nodeI.getNr(), new HashSet<>(ancestorsAfter));
+            double[] pwnAfter = edgeWeights.getPartialsWithoutNode(i);
+            double[] opAfter = edgeWeights.getOutsidePartials(i);
+            
+            double[] pwnBefore = partialsWithoutNodeBefore[i];
+            // Check partialsWithoutNode
+            if (pwnBefore != null || pwnAfter != null) {
+                if (pwnBefore == null) {
+                    throw new AssertionError("Node " + i + " has partialsWithoutNode after move but not before!");
+                }
+                if (pwnAfter == null) {
+                    throw new AssertionError("Node " + i + " has partialsWithoutNode before move but not after!");
+                }
+                if (!allClose(pwnBefore, pwnAfter, 1E-6)) {
+                    nodesWithChangedPartials.add(i);
+                }
+            }
+            
+            // Check outsidePartials
+            if (outsidePartialsBefore[i] != null || opAfter != null) {
+                if (outsidePartialsBefore[i] == null) {
+                    throw new AssertionError("Node " + i + " has outsidePartials after move but not before!");
+                }
+                if (opAfter == null) {
+                    throw new AssertionError("Node " + i + " has outsidePartials before move but not after!");
+                }
+                if (!allClose(outsidePartialsBefore[i], opAfter, 1E-6)) {
+                    nodesWithChangedOutsidePartials.add(i);
+                }
+                for (int k = 0; k < outsidePartialsBefore[i].length; k++) {
+                    assertEquals("outsidePartials[" + i + "][" + k + "] should be invariant when ignoring same node",
+                            outsidePartialsBefore[i][k], opAfter[k], 1e-6);
+                }
+            }
+        }
+        assertTrue("partialsWithoutNode not invariant: " + nodesWithChangedPartials.toString(), nodesWithChangedPartials.isEmpty());
+        assertTrue("outsidePartials not invariant: " + nodesWithChangedOutsidePartials.toString(), nodesWithChangedOutsidePartials.isEmpty());
+        System.out.println("Partials consistency check PASSED!");
+        
         edgeWeights.reset();
 
-        // Find CiP and j in the new candidate list
+        // Find CiP and j in the candidate list (should be the same as before)
         int idxCiPAfter = candidatesAfter.indexOf(CiP);
         int idxJAfter = candidatesAfter.indexOf(j);
 
@@ -178,19 +236,105 @@ public class FelsensteinWeightsWithoutNodeTest {
         // because:
         // 1. i's subtree is unchanged
         // 2. The "tree without i" (with p as unary) has the same effective partials
-        System.out.println(idxCiPAfter + " | " + weightToCiPBefore);
         if (idxCiPAfter >= 0) {
             double weightToCiPAfter = weightsAfter[idxCiPAfter];
-            System.out.println(weightToCiPAfter);
             assertEquals("Weight to CiP should be invariant", 
                     weightToCiPBefore, weightToCiPAfter, 1e-9);
         }
-        System.out.println(idxJAfter + " | " + weightToJBefore);
         if (idxJAfter >= 0) {
             double weightToJAfter = weightsAfter[idxJAfter];
-            System.out.println(weightToJAfter);
             assertEquals("Weight to j should be invariant", 
                     weightToJBefore, weightToJAfter, 1e-9);
+        }
+    }
+
+    boolean allClose(double[] a1, double[] a2, double tol) {
+        for (int i=0; i<a1.length; i++) {
+            if (Math.abs(a1[i] - a2[i]) > tol)
+                return false;
+        }
+        return true;
+    }
+
+    /**
+     * Test that inner products of partialsWithoutNode and outsidePartials
+     * are consistent across nodes when ignoring a node (i.e. reflect the
+     * pruned tree likelihood up to a constant).
+     */
+    @Test
+    public void prunedTreeLikelihoodConsistentAcrossNodes() throws Exception {
+        // Randomizer.setSeed(42);
+
+        Tree tree = new Tree();
+        tree.initByName("taxonset", getTaxonSet(alignment.getTaxonCount()));
+
+        // Simulate a tree from a Yule prior
+        YuleModel yulePrior = new YuleModel();
+        yulePrior.initByName("tree", tree, "birthDiffRate", "2.0");
+        DirectSimulator simulator = new DirectSimulator();
+        simulator.initByName("distribution", yulePrior, "nSamples", 1);
+        simulator.run();
+
+        SiteModel siteModel = new SiteModel();
+        siteModel.initByName("substModel", new JukesCantor());
+
+        SlowTreeLikelihood treeLikelihood = new SlowTreeLikelihood();
+        treeLikelihood.initByName(
+                "tree", tree,
+                "siteModel", siteModel,
+                "data", alignment,
+                "implementation", "SlowBeerLikelihoodCore4");
+
+        FelsensteinWeights edgeWeights = new FelsensteinWeights();
+        edgeWeights.initByName("tree", tree, "likelihood", treeLikelihood, "data", alignment);
+
+        // Initialize likelihoods
+        treeLikelihood.calculateLogP();
+
+        // Pick a node i that can be moved (not root, parent not root)
+        Node nodeI = pickMovableNode(tree);
+
+        // Use candidate set to define ancestors to update (as in main test)
+        List<Node> candidates = getCoExistingLineages(nodeI, tree);
+        candidates.remove(nodeI.getParent());
+        candidates.remove(nodeI);
+        List<Integer> ancestors = collectAncestors(nodeI);
+
+        // Compute partialsWithoutNode and outsidePartials for ignored node
+        edgeWeights.prestore();
+        edgeWeights.updateByOperatorWithoutNode(nodeI.getNr(), ancestors);
+
+        Double referencePrunedLikelihood = null;
+        int referenceNodeNr = -1;
+        for (int i = 0; i < tree.getNodeCount(); i++) {
+            if (i == nodeI.getNr() || i == nodeI.getParent().getNr())
+                continue;
+
+            // double[] partials = edgeWeights.getPartialsForWithoutNode(i, nodeI.getNr(), new HashSet<>(ancestors));
+            double[] partials = edgeWeights.getPartialsWithoutNode(i);
+            double[] outside = edgeWeights.getOutsidePartials(i);
+
+            if (partials == null || outside == null) {
+                continue;
+            }
+            double[] combinedPartials = LinearAlgebra.multiply(partials, outside);
+            double prunedLikelihoodAtNode = edgeWeights.computeLikelihoodFromPartials(tree.getNode(i), combinedPartials);
+
+            if (referencePrunedLikelihood == null) {
+                referencePrunedLikelihood = prunedLikelihoodAtNode;
+                referenceNodeNr = i;
+            } else {
+                assertEquals(
+                        "partialsWithoutNode ⊙ outsidePartials inner product should be consistent across nodes when ignoring same node (ref node "
+                                + referenceNodeNr + ")",
+                        referencePrunedLikelihood,
+                        prunedLikelihoodAtNode,
+                        1e-9);
+            }
+        }
+
+        if (referencePrunedLikelihood == null) {
+            throw new AssertionError("No nodes had both partialsWithoutNode and outsidePartials computed");
         }
     }
 
@@ -216,18 +360,16 @@ public class FelsensteinWeightsWithoutNodeTest {
         else
             return Arrays.stream(tree.getNodesAsArray())
                 .filter(n -> !n.isRoot())
-                .filter(n -> n.getParent().getHeight() >= node.getParent().getHeight())
-                .filter(n -> n.getHeight() < node.getParent().getHeight())
+                .filter(n -> n.getParent().getHeight() > node.getHeight())
+                // .filter(n -> n.getHeight() < node.getParent().getHeight())
                 .collect(Collectors.toList());
     }
 
-    private static List<Integer> collectAncestors(Node nodeI, List<Node> candidates) {
+    private static List<Integer> collectAncestors(Node nodeI) {
         List<Integer> ancestors = new ArrayList<>();
         Node ancestor = nodeI.getParent();
         while (ancestor != null) {
-            if (candidates.contains(ancestor)) {
-                ancestors.add(ancestor.getNr());
-            }
+            ancestors.add(ancestor.getNr());
             ancestor = ancestor.getParent();
         }
         return ancestors;
