@@ -28,7 +28,9 @@ public final class LearnedWeightsTrainingSampleIO {
         if (samples == null) {
             throw new IllegalArgumentException("samples must not be null");
         }
-        LearnedWeightsReportSupport.ensureParentDirectory(outputFile);
+        if (outputFile.getParent() != null) {
+            Files.createDirectories(outputFile.getParent());
+        }
 
         try (BufferedWriter writer = Files.newBufferedWriter(outputFile)) {
             writer.write(MAGIC);
