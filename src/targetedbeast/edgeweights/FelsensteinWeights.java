@@ -113,7 +113,10 @@ public class FelsensteinWeights extends Distribution implements EdgeWeights {
 	 * Must be called lazily because TreeLikelihood may not be fully initialized during initAndValidate().
 	 */
 	public void ensureInitialized() {
-		if (initialized) return;
+		if (initialized) 
+            return;
+        
+        treelikelihood.calculateLogP();
 		
         // Ensure likelihood core is SlowBeerLikelihoodCore
         if (treelikelihood.getLikelihoodCore() instanceof SlowBeerLikelihoodCore beerliCore) {
@@ -128,7 +131,6 @@ public class FelsensteinWeights extends Distribution implements EdgeWeights {
 		partialsSize = likelihoodCore.getPartialsSize();
 		if (partialsSize <= 0) {
 			// Ensure core has been initialized.
-			treelikelihood.calculateLogP();
 			partialsSize = likelihoodCore.getPartialsSize();
 		}
         if (partialsSize <= 0)
@@ -645,6 +647,9 @@ public class FelsensteinWeights extends Distribution implements EdgeWeights {
 
 	@Override
 	public double getEdgeWeights(int nodeNr) {
+        ensureInitialized();
+        // likelihoodInput.get().calculateLogP();
+
         // Get parent node
         Node parent = treeInput.get().getNode(nodeNr).getParent();
         if (parent == null)
@@ -665,22 +670,6 @@ public class FelsensteinWeights extends Distribution implements EdgeWeights {
 	@Override	
 	public double[] getTargetWeights(int fromNodeNr, List<Node> toNodes) {
         return getTargetWeightsInteger(fromNodeNr,  toNodes.stream().map(n -> n.getNr()).toList());
-    }
-	
-    /**
-     * @param parent the parent
-     * @param child  the child that you want the sister of
-     * @return the other child of the given parent.
-     */
-    protected Node getOtherChild(final Node child) {
-        Node parent = child.getParent();
-        if (parent == null)
-            return null;
-        else if (parent.getLeft().getNr() == child.getNr()) {
-            return parent.getRight();
-        } else {
-            return parent.getLeft();
-        }
     }
 
 	@Override
