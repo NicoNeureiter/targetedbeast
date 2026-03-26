@@ -39,6 +39,14 @@ public interface EdgeWeights {
 	 * @return
 	 */
 	double[] getTargetWeights(int fromNodeNr, List<Node> toNodeNrs);
+
+	default double[] getTargetWeights(int fromNodeNr, List<Node> toNodeNrs, double toHeight) {
+        return getTargetWeights(fromNodeNr, toNodeNrs);
+    }
+
+	default double[] getTargetWeights(int fromNodeNr, List<Node> toNodeNrs, List<Double> toHeights) {
+        return getTargetWeights(fromNodeNr, toNodeNrs);
+    }
 	
 	/**
 	 * Get the distance from one node to a list of nodes
@@ -50,6 +58,10 @@ public interface EdgeWeights {
 	double[] getTargetWeightsInteger(int fromNodeNr, List<Integer> toNodeNrs);
 
 	default double[] getTargetWeightsInteger(int fromNodeNr, List<Integer> toNodeNrs, double toHeight) {
+        return getTargetWeightsInteger(fromNodeNr, toNodeNrs);
+    }
+
+	default double[] getTargetWeightsInteger(int fromNodeNr, List<Integer> toNodeNrs, List<Double> toHeights) {
         return getTargetWeightsInteger(fromNodeNr, toNodeNrs);
     }
 
