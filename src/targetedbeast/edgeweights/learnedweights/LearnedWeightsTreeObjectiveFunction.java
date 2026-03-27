@@ -47,6 +47,8 @@ public class LearnedWeightsTreeObjectiveFunction implements LearnedWeightsOptimi
     private double lastPcaPenalty = Double.NaN;
     private int totalEvaluationCount = 0;
     private int runEvaluationCount = 0;
+    private int currentIteration = 0;
+    private int configuredMaxIterations = -1;
     private String progressLabel = "LearnedWeights";
     private long runStartNanos = -1L;
     private long lastProgressLogNanos = -1L;
@@ -112,6 +114,7 @@ public class LearnedWeightsTreeObjectiveFunction implements LearnedWeightsOptimi
 
     @Override
     public void beginIteration(int iteration) {
+        currentIteration = iteration;
         if (!useMiniBatches) {
             activeBatchStart = 0;
             activeBatchCount = trainingSamples.size();
@@ -140,9 +143,14 @@ public class LearnedWeightsTreeObjectiveFunction implements LearnedWeightsOptimi
     }
 
     public void beginOptimizationRun(String label) {
+        beginOptimizationRun(label, -1);
+    }
+
+    public void beginOptimizationRun(String label, int maxIterations) {
         if (label != null && !label.isBlank()) {
             progressLabel = label;
         }
+        configuredMaxIterations = maxIterations;
         bestParameters = null;
         bestLoss = Double.POSITIVE_INFINITY;
         bestFitLoss = Double.POSITIVE_INFINITY;
@@ -150,6 +158,7 @@ public class LearnedWeightsTreeObjectiveFunction implements LearnedWeightsOptimi
         bestPcaPenalty = 0.0;
         bestSlope = 1.0;
         bestIntercept = 0.0;
+        currentIteration = 0;
         runEvaluationCount = 0;
         runStartNanos = -1L;
         lastProgressLogNanos = -1L;
@@ -749,9 +758,10 @@ public class LearnedWeightsTreeObjectiveFunction implements LearnedWeightsOptimi
 
         double elapsedSec = (now - runStartNanos) / 1_000_000_000.0;
         Log.info.println(String.format(
-            "%s: objective eval %d, elapsed=%.1fs, trialLoss=%.6f, bestSeenLoss=%.6f, fitLoss=%.6f, slopePenalty=%.6f, pcaPenalty=%.6f, slope=%.6f, intercept=%.6f",
+            "%s: objective iteration %d/%s, elapsed=%.1fs, trialLoss=%.6f, bestSeenLoss=%.6f, fitLoss=%.6f, slopePenalty=%.6f, pcaPenalty=%.6f, slope=%.6f, intercept=%.6f",
             progressLabel,
-            runEvaluationCount,
+            currentIteration,
+            configuredMaxIterations > 0 ? configuredMaxIterations : "?",
             elapsedSec,
             lastLoss,
             bestLoss,

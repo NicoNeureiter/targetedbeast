@@ -156,8 +156,8 @@ public final class LearnedWeightsOptimizer {
                 checker,
                 DEFAULT_LINE_SEARCH_RELATIVE_TOLERANCE,
                 DEFAULT_LINE_SEARCH_ABSOLUTE_TOLERANCE,
-            config.learningRate,
-            new ClippedGradientPreconditioner(config.maxGradientNorm));
+                config.learningRate,
+                new ClippedGradientPreconditioner(config.maxGradientNorm));
 
         try {
             PointValuePair optimum = optimizer.optimize(

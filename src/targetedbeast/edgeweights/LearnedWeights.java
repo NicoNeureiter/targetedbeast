@@ -17,6 +17,7 @@ import beast.base.core.Input;
 import beast.base.core.Input.Validate;
 import beast.base.core.Log;
 import beast.base.evolution.alignment.Alignment;
+import beast.base.evolution.branchratemodel.BranchRateModel;
 import beast.base.evolution.likelihood.GenericTreeLikelihood;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
@@ -63,6 +64,10 @@ public class LearnedWeights extends Distribution implements EdgeWeights {
         final public Input<List<File>> trainingTreeFileInput = new Input<>(
             "trainingTreeFile",
             "optional posterior tree logs to use directly as the LearnedWeights training set; specify multiple trainingTreeFile entries in XML to combine multiple logs",
+            new ArrayList<>());
+        final public Input<List<File>> trainingLogFileInput = new Input<>(
+            "trainingLogFile",
+            "optional posterior parameter log files paired with trainingTreeFile entries; used to restore sampled clock-rate state when rates are not encoded in the trees",
             new ArrayList<>());
         final public Input<Integer> trainingTreeBurninPercentageInput = new Input<>(
             "trainingTreeBurninPercentage",
@@ -154,6 +159,7 @@ public class LearnedWeights extends Distribution implements EdgeWeights {
     }
 
     private PCAWeightsBrownianFullLikelihood createRuntimeModel(TreeInterface tree, String value) {
+        BranchRateModel.Base branchRateModel = likelihoodInput.get().branchRateModelInput.get();
         PCAWeightsBrownianFullLikelihood model = new PCAWeightsBrownianFullLikelihood();
         model.initByName(
             "data", dataInput.get(),
@@ -164,7 +170,9 @@ public class LearnedWeights extends Distribution implements EdgeWeights {
             "brownianRate", BROWNIAN_RATE,
             "useInverseMeanDistanceProposal", useInverseMeanDistanceProposalInput.get(),
             "offset", offset,
-            "value", value);
+            "value", value,
+            "branchRateModel", branchRateModel
+        );
         return model;
     }
 
@@ -277,7 +285,7 @@ public class LearnedWeights extends Distribution implements EdgeWeights {
                 ? "LearnedWeights: progress lines report batch-specific objective evaluations; trialLoss values are not directly comparable across batches."
                 : "LearnedWeights: progress lines report raw line-search objective evaluations; trialLoss can spike even when bestSeenLoss improves.");
 
-        optimizationObjective.beginOptimizationRun("LearnedWeights");
+        optimizationObjective.beginOptimizationRun("LearnedWeights", maxIterationsInput.get());
         LearnedWeightsOptimizer.Result result = optimizer.optimize(initialParameters, optimizationObjective);
 
         double[] finalGradient = new double[reportingObjective.getParameterCount()];
@@ -332,6 +340,7 @@ public class LearnedWeights extends Distribution implements EdgeWeights {
     private List<LearnedWeightsTreeTrainer.TrainingTreeSample> loadOrGenerateTrainingSamples() {
         List<File> treeFiles = trainingTreeFileInput.get();
         if (!treeFiles.isEmpty()) {
+            List<File> logFiles = trainingLogFileInput.get();
             LearnedWeightsTreeTrainer trainer = new LearnedWeightsTreeTrainer(
                     likelihoodInput.get(),
                     dataInput.get(),
@@ -339,6 +348,7 @@ public class LearnedWeights extends Distribution implements EdgeWeights {
             try {
                 List<LearnedWeightsTreeTrainer.TrainingTreeSample> samples = trainer.generateTrainingSamplesFromTreeFiles(
                     treeFiles,
+                    logFiles,
                     trainingTreeBurninPercentageInput.get(),
                     trainingTreeThinIntervalInput.get(),
                     nTrainingTreesInput.get()

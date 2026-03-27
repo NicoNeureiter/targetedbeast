@@ -11,6 +11,7 @@ import beast.base.core.Input;
 import beast.base.core.Input.Validate;
 import beast.base.core.Log;
 import beast.base.evolution.alignment.Alignment;
+import beast.base.evolution.branchratemodel.BranchRateModel;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
 import beast.base.evolution.tree.TreeInterface;
@@ -19,7 +20,7 @@ import beast.base.inference.State;
 import targetedbeast.util.Alignment2PCA;
 
 @Description("Brownian-motion edge weights with upward and downward Gaussian messages, "
-        + "approximating full-tree trait likelihoods for targeted proposals.")
+    + "approximating full-tree trait likelihoods for targeted proposals.")
 public class PCAWeightsBrownianFullLikelihood extends Distribution implements EdgeWeights {
     private static final double VARIANCE_FLOOR = 1e-12;
     private static final double NEUTRAL_VARIANCE = Double.POSITIVE_INFINITY;
@@ -33,20 +34,24 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
     final public Input<Boolean> distanceBasedInput = new Input<>("distanceBased", "use distance matrix for PCA", true);
     final public Input<Boolean> compressedInput = new Input<>("compressed", "remove duplicate entries for PCA", true);
     final public Input<Boolean> useOneNormInput = new Input<>("useOneNorm", "use one norm for edge weights", true);
-        final public Input<Boolean> useInverseMeanDistanceProposalInput = new Input<>(
+    final public Input<BranchRateModel.Base> branchRateModelInput = new Input<>(
+            "branchRateModel",
+            "optional branch rate model used to scale Brownian variance propagation along branches");
+    final public Input<Boolean> useInverseMeanDistanceProposalInput = new Input<>(
             "useInverseMeanDistanceProposal",
             "use inverse distance between propagated attachment means instead of approximate full-tree log likelihoods",
             false);
-            final public Input<Double> brownianRateInput = new Input<>(
-                "brownianRate",
-                "Brownian diffusion rate used when propagating Gaussian trait messages along branches",
-                1.0);
+    final public Input<Double> brownianRateInput = new Input<>(
+            "brownianRate",
+            "Brownian diffusion rate used when propagating Gaussian trait messages along branches",
+            1.0);
     final public Input<Double> offsetInput = new Input<>("offset", "offset in weight", 0.01);
 
     private int dim;
     private double offset;
     private boolean useOneNorm;
     private boolean useInverseMeanDistanceProposal;
+    private BranchRateModel.Base branchRateModel;
     private double brownianRate;
     private double proposalLogLikelihoodScale = 1.0;
     private double maxWeight;
@@ -65,6 +70,7 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
     private double[] outsideLogNorm;
     private boolean[] outsideValid;
     private double[] edgeMutations;
+    private double[] cachedBranchRates;
 
     private boolean initialized;
     private boolean insideDirty = true;
@@ -75,12 +81,13 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
         dim = dimensionInput.get();
         offset = offsetInput.get();
         useOneNorm = useOneNormInput.get();
+        branchRateModel = branchRateModelInput.get();
         useInverseMeanDistanceProposal = useInverseMeanDistanceProposalInput.get();
         brownianRate = brownianRateInput.get();
         maxWeight = maxWeightInput.get();
         minWeight = minWeightInput.get();
 
-        if (!(brownianRate > 0.0) || !Double.isFinite(brownianRate)) {
+        if (branchRateModel == null && (!(brownianRate > 0.0) || !Double.isFinite(brownianRate))) {
             throw new IllegalArgumentException("brownianRate must be finite and > 0, but was " + brownianRate);
         }
 
@@ -125,6 +132,8 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
         outsideLogNorm = new double[nodeCount];
         outsideValid = new boolean[nodeCount];
         edgeMutations = new double[nodeCount];
+        cachedBranchRates = new double[nodeCount];
+        Arrays.fill(cachedBranchRates, Double.NaN);
     }
 
     private void calcValue() {
@@ -204,6 +213,7 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
         recomputeInsideRecursive(treeInput.get().getRoot());
         insideDirty = false;
         clearWithoutNodeState();
+        refreshCachedBranchRates();
     }
 
     private GaussianMessage recomputeInsideRecursive(Node node) {
@@ -217,8 +227,8 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
 
         GaussianMessage left = recomputeInsideRecursive(node.getLeft());
         GaussianMessage right = recomputeInsideRecursive(node.getRight());
-        GaussianMessage leftUp = propagateMessage(left, node.getLeft().getLength());
-        GaussianMessage rightUp = propagateMessage(right, node.getRight().getLength());
+        GaussianMessage leftUp = propagateMessage(left, node.getLeft(), node.getLeft().getLength());
+        GaussianMessage rightUp = propagateMessage(right, node.getRight(), node.getRight().getLength());
         GaussianMessage merged = combineMessages(leftUp, rightUp);
 
         copyMessage(merged, insideMeans[nodeNr], insideVariances[nodeNr]);
@@ -275,13 +285,13 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
         GaussianMessage message;
         if (branch1 == null) {
             GaussianMessage child2Message = recomputeInsideWithoutRecursive(branch2.node, ignore);
-            message = propagateMessage(child2Message, branch2.branchLength);
+            message = propagateMessage(child2Message, branch2.diffusionLength);
         } else if (branch2 == null) {
             GaussianMessage child1Message = recomputeInsideWithoutRecursive(branch1.node, ignore);
-            message = propagateMessage(child1Message, branch1.branchLength);
+            message = propagateMessage(child1Message, branch1.diffusionLength);
         } else {
-            GaussianMessage up1 = propagateMessage(recomputeInsideWithoutRecursive(branch1.node, ignore), branch1.branchLength);
-            GaussianMessage up2 = propagateMessage(recomputeInsideWithoutRecursive(branch2.node, ignore), branch2.branchLength);
+            GaussianMessage up1 = propagateMessage(recomputeInsideWithoutRecursive(branch1.node, ignore), branch1.diffusionLength);
+            GaussianMessage up2 = propagateMessage(recomputeInsideWithoutRecursive(branch2.node, ignore), branch2.diffusionLength);
             message = combineMessages(up1, up2);
         }
 
@@ -303,9 +313,9 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
         if (leftBranch != null) {
             GaussianMessage siblingContribution = rightBranch == null
                     ? neutralMessage()
-                    : propagateMessage(getInsideWithoutMessage(rightBranch.node.getNr()), rightBranch.branchLength);
+                    : propagateMessage(getInsideWithoutMessage(rightBranch.node.getNr()), rightBranch.diffusionLength);
             GaussianMessage combined = combineMessages(nodeOutside, siblingContribution);
-            GaussianMessage childOutside = propagateMessage(combined, leftBranch.branchLength);
+            GaussianMessage childOutside = propagateMessage(combined, leftBranch.diffusionLength);
             setOutside(leftBranch.node.getNr(), childOutside);
             recomputeOutsideRecursive(leftBranch.node, ignore);
         }
@@ -313,9 +323,9 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
         if (rightBranch != null) {
             GaussianMessage siblingContribution = leftBranch == null
                     ? neutralMessage()
-                    : propagateMessage(getInsideWithoutMessage(leftBranch.node.getNr()), leftBranch.branchLength);
+                    : propagateMessage(getInsideWithoutMessage(leftBranch.node.getNr()), leftBranch.diffusionLength);
             GaussianMessage combined = combineMessages(nodeOutside, siblingContribution);
-            GaussianMessage childOutside = propagateMessage(combined, rightBranch.branchLength);
+            GaussianMessage childOutside = propagateMessage(combined, rightBranch.diffusionLength);
             setOutside(rightBranch.node.getNr(), childOutside);
             recomputeOutsideRecursive(rightBranch.node, ignore);
         }
@@ -433,6 +443,12 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
     protected boolean requiresRecalculation() {
         if (dataInput.get().isDirtyCalculation()) {
             initializeLeafPoints();
+            insideDirty = true;
+        }
+        if (branchRateModel != null && branchRateModel.isDirtyCalculation()) {
+            insideDirty = true;
+        }
+        if (refreshCachedBranchRates()) {
             insideDirty = true;
         }
         if (treeInput.get().somethingIsDirty() || insideDirty) {
@@ -579,8 +595,8 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
 
     public double computeFullConditionalAgreement(Node fromNode, Node toNode, GaussianMessage fromFullConditional,
             GaussianMessage toFullConditional, double toHeight) {
-        GaussianMessage fromAtHeight = propagateMessage(fromFullConditional, Math.max(0.0, toHeight - fromNode.getHeight()));
-        GaussianMessage toAtHeight = propagateMessage(toFullConditional, Math.max(0.0, toHeight - toNode.getHeight()));
+        GaussianMessage fromAtHeight = propagateMessage(fromFullConditional, fromNode, Math.max(0.0, toHeight - fromNode.getHeight()));
+        GaussianMessage toAtHeight = propagateMessage(toFullConditional, toNode, Math.max(0.0, toHeight - toNode.getHeight()));
         return combineMessages(fromAtHeight, toAtHeight).logNorm;
     }
 
@@ -598,8 +614,8 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
         assert toHeight > fromNode.getHeight();
         assert toHeight > toNode.getHeight();
 
-        GaussianMessage fromAtHeight = propagateMessage(fromInside, toHeight - fromNode.getHeight());
-        GaussianMessage toAtHeight = propagateMessage(toInsideWithout, toHeight - toNode.getHeight());
+        GaussianMessage fromAtHeight = propagateMessage(fromInside, fromNode, toHeight - fromNode.getHeight());
+        GaussianMessage toAtHeight = propagateMessage(toInsideWithout, toNode, toHeight - toNode.getHeight());
         double[] contributions = new double[dim];
         GaussianMessage parentMessage = combineMessagesWithContributions(fromAtHeight, toAtHeight, contributions);
 
@@ -608,11 +624,10 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
             return contributions;
         }
 
-        GaussianMessage gpMessage = propagateMessage(parentMessage, Math.max(0.0, grandparent.getHeight() - toHeight));
-        Node sibling = getEffectiveSibling(toNode, currentIgnoredNode);
-        if (sibling != null) {
-            GaussianMessage siblingUp = propagateMessage(getInsideWithoutMessage(sibling.getNr()),
-                    Math.max(0.0, grandparent.getHeight() - sibling.getHeight()));
+        GaussianMessage gpMessage = propagateMessage(parentMessage, toNode, Math.max(0.0, grandparent.getHeight() - toHeight));
+        EffectiveBranch siblingBranch = getEffectiveSiblingBranch(toNode, currentIgnoredNode);
+        if (siblingBranch != null) {
+            GaussianMessage siblingUp = propagateMessage(getInsideWithoutMessage(siblingBranch.node.getNr()), siblingBranch.diffusionLength);
             gpMessage = combineMessagesWithContributions(gpMessage, siblingUp, contributions);
         }
 
@@ -684,12 +699,12 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
         if (child.getNr() == ignore) {
             return null;
         }
-        double branchLength = child.getLength();
+        double diffusionLength = getDiffusionLength(child, child.getLength());
         while (becomesUnary(child, ignore)) {
             child = getIncludedChild(child, ignore);
-            branchLength += child.getLength();
+            diffusionLength += getDiffusionLength(child, child.getLength());
         }
-        return new EffectiveBranch(child, branchLength);
+        return new EffectiveBranch(child, diffusionLength);
     }
 
     Node getEffectiveSibling(Node node, int ignore) {
@@ -703,6 +718,22 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
             return right;
         }
         if (right == node) {
+            return left;
+        }
+        return null;
+    }
+
+    EffectiveBranch getEffectiveSiblingBranch(Node node, int ignore) {
+        Node parent = getEffectiveParent(node, ignore);
+        if (parent == null) {
+            return null;
+        }
+        EffectiveBranch left = getEffectiveBranch(parent, 0, ignore);
+        EffectiveBranch right = getEffectiveBranch(parent, 1, ignore);
+        if (left != null && left.node == node) {
+            return right;
+        }
+        if (right != null && right.node == node) {
             return left;
         }
         return null;
@@ -752,11 +783,15 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
         return new GaussianMessage(mean, variance, 0.0);
     }
 
-    private GaussianMessage propagateMessage(GaussianMessage message, double branchLength) {
+    private GaussianMessage propagateMessage(GaussianMessage message, Node branchNode, double branchLength) {
+        return propagateMessage(message, getDiffusionLength(branchNode, branchLength));
+    }
+
+    private GaussianMessage propagateMessage(GaussianMessage message, double diffusionLength) {
         double[] mean = Arrays.copyOf(message.mean, dim);
         double[] variance = Arrays.copyOf(message.variance, dim);
         for (int i = 0; i < dim; i++) {
-            variance[i] = propagatedVariance(variance[i], branchLength);
+            variance[i] = propagatedVariance(variance[i], diffusionLength);
         }
         return new GaussianMessage(mean, variance, message.logNorm);
     }
@@ -811,11 +846,40 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
         System.arraycopy(source.variance, 0, targetVariance, 0, dim);
     }
 
-    private double propagatedVariance(double variance, double branchLength) {
+    private boolean refreshCachedBranchRates() {
+        if (branchRateModel == null || cachedBranchRates == null) {
+            return false;
+        }
+        boolean changed = false;
+        for (Node node : getTree().getNodesAsArray()) {
+            if (node.isRoot()) {
+                continue;
+            }
+            double rate = getBranchRate(node);
+            if (cachedBranchRates[node.getNr()] != rate) {
+                cachedBranchRates[node.getNr()] = rate;
+                changed = true;
+            }
+        }
+        return changed;
+    }
+
+    private double getDiffusionLength(Node node, double branchLength) {
+        return getBranchRate(node) * Math.max(branchLength, 0.0);
+    }
+
+    private double getBranchRate(Node node) {
+        if (branchRateModel == null)
+            return brownianRate;
+        else
+            return branchRateModel.getRateForBranch(node);
+    }
+
+    private double propagatedVariance(double variance, double diffusionLength) {
         if (Double.isInfinite(variance)) {
             return variance;
         }
-        return Math.max(variance + brownianRate * Math.max(branchLength, 0.0), VARIANCE_FLOOR);
+        return Math.max(variance + diffusionLength, VARIANCE_FLOOR);
     }
 
     private double sanitizeVariance(double variance) {
@@ -910,11 +974,11 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
 
     static final class EffectiveBranch {
         private final Node node;
-        private final double branchLength;
+        private final double diffusionLength;
 
-        private EffectiveBranch(Node node, double branchLength) {
+        private EffectiveBranch(Node node, double diffusionLength) {
             this.node = node;
-            this.branchLength = branchLength;
+            this.diffusionLength = diffusionLength;
         }
     }
 }
