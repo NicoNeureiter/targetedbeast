@@ -25,8 +25,6 @@ public class LearnedWeightsTreeObjectiveFunction implements LearnedWeightsOptimi
     private final int miniBatchSize;
     private final long miniBatchSeed;
     private final boolean useMiniBatches;
-    private final double surrogateConstantTerm;
-
     private int[] batchOrder;
     private int batchCursor = 0;
     private int activeBatchStart = 0;
@@ -109,7 +107,6 @@ public class LearnedWeightsTreeObjectiveFunction implements LearnedWeightsOptimi
         this.miniBatchSize = useMiniBatches ? miniBatchSize : trainingSamples.size();
         this.miniBatchSeed = miniBatchSeed;
         this.activeBatchCount = trainingSamples.size();
-        this.surrogateConstantTerm = -0.5 * dim * taxonCount * (LOG_TWO_PI + Math.log(brownianRate));
     }
 
     @Override
@@ -536,9 +533,9 @@ public class LearnedWeightsTreeObjectiveFunction implements LearnedWeightsOptimi
         }
 
         double[] contributions = new double[dim];
-        double baseContribution = -0.5 * taxonCount * LOG_TWO_PI
+        double baseContribution = -0.5 * sample.logNormalizerDimension * LOG_TWO_PI
                 - 0.5 * sample.logDeterminant
-                - 0.5 * taxonCount * Math.log(brownianRate);
+            - 0.5 * sample.logNormalizerDimension * Math.log(brownianRate);
         for (int axis = 0; axis < dim; axis++) {
             contributions[axis] = baseContribution - 0.5 * quadraticForms[axis] / brownianRate;
         }
@@ -658,7 +655,9 @@ public class LearnedWeightsTreeObjectiveFunction implements LearnedWeightsOptimi
         for (int index = 0; index < embeddingParameterCount; index++) {
             quadraticForm += parameters[index] * precisionTimesEmbeddings[index];
         }
-        return surrogateConstantTerm - 0.5 * dim * sample.logDeterminant - 0.5 * quadraticForm / brownianRate;
+        return -0.5 * dim * sample.logNormalizerDimension * (LOG_TWO_PI + Math.log(brownianRate))
+            - 0.5 * dim * sample.logDeterminant
+            - 0.5 * quadraticForm / brownianRate;
     }
 
     private void resetMiniBatchSchedule() {

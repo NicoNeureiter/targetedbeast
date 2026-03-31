@@ -14,6 +14,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.SortedSet;
+import java.util.TreeSet;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -26,6 +28,7 @@ import beast.base.evolution.branchratemodel.StrictClockModel;
 import beast.base.evolution.likelihood.GenericTreeLikelihood;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
+import beast.base.evolution.tree.TreeParser;
 import beast.base.evolution.tree.TreeInterface;
 import beast.base.inference.parameter.IntegerParameter;
 import beast.base.inference.parameter.Parameter;
@@ -49,11 +52,18 @@ public class LearnedWeightsTreeTrainer {
         public final double targetLogLikelihood;
         public final double[][] precisionMatrix;
         public final double logDeterminant;
+        public final int logNormalizerDimension;
 
         public TrainingTreeSample(double targetLogLikelihood, double[][] precisionMatrix, double logDeterminant) {
+            this(targetLogLikelihood, precisionMatrix, logDeterminant, precisionMatrix.length);
+        }
+
+        public TrainingTreeSample(double targetLogLikelihood, double[][] precisionMatrix, double logDeterminant,
+                int logNormalizerDimension) {
             this.targetLogLikelihood = targetLogLikelihood;
             this.precisionMatrix = precisionMatrix;
             this.logDeterminant = logDeterminant;
+            this.logNormalizerDimension = logNormalizerDimension;
         }
 
         public int getTaxonCount() {
@@ -69,20 +79,37 @@ public class LearnedWeightsTreeTrainer {
     private final SampledBranchRateModel sampledBranchRateModel;
     private final Tree runtimeLikelihoodTree;
     private final Map<String, Parameter.Base<?>> loggedParametersById;
+    private final double rootPriorVariance;
     private SampledRateContext currentSampledRateContext = SampledRateContext.empty();
 
     public LearnedWeightsTreeTrainer(
             GenericTreeLikelihood likelihoodTemplate,
             Alignment alignment,
             int nTrainingTrees) {
+        this(likelihoodTemplate, alignment, nTrainingTrees, 0.0);
+    }
+
+    public LearnedWeightsTreeTrainer(
+            GenericTreeLikelihood likelihoodTemplate,
+            Alignment alignment,
+            int nTrainingTrees,
+            double rootPriorVariance) {
         this.likelihoodTemplate = likelihoodTemplate;
         this.alignment = alignment;
         this.nTrainingTrees = nTrainingTrees;
+        this.rootPriorVariance = rootPriorVariance;
         this.canonicalTaxa = alignment.getTaxaNames().toArray(new String[0]);
-        this.sampledBranchRateModel = new SampledBranchRateModel(likelihoodTemplate.branchRateModelInput.get());
-        this.likelihoodEvaluator = createTrainingLikelihoodEvaluator(likelihoodTemplate, sampledBranchRateModel);
-        this.runtimeLikelihoodTree = getRuntimeLikelihoodTree(likelihoodEvaluator);
-        this.loggedParametersById = collectLoggedParameters(likelihoodEvaluator, sampledBranchRateModel.getDelegate());
+        if (likelihoodTemplate == null) {
+            this.sampledBranchRateModel = new SampledBranchRateModel(null);
+            this.likelihoodEvaluator = null;
+            this.runtimeLikelihoodTree = null;
+            this.loggedParametersById = Collections.emptyMap();
+        } else {
+            this.sampledBranchRateModel = new SampledBranchRateModel(likelihoodTemplate.branchRateModelInput.get());
+            this.likelihoodEvaluator = createTrainingLikelihoodEvaluator(likelihoodTemplate, sampledBranchRateModel);
+            this.runtimeLikelihoodTree = getRuntimeLikelihoodTree(likelihoodEvaluator);
+            this.loggedParametersById = collectLoggedParameters(likelihoodEvaluator, sampledBranchRateModel.getDelegate());
+        }
     }
 
     public List<TrainingTreeSample> generateTrainingSamples() {
@@ -164,36 +191,58 @@ public class LearnedWeightsTreeTrainer {
         }
 
         final long startNanos = System.nanoTime();
-        List<PosteriorTreeSample> selectedTrees = new ArrayList<>();
+        List<FileTreeSelectionPlan> treeSelectionPlans = new ArrayList<>(normalizedFiles.size());
         int parsedTreeCount = 0;
+        int totalSelectedTreeCount = 0;
+        for (File treeFile : normalizedFiles) {
+            int fileParsedTreeCount = countTreesInFile(treeFile);
+            int fileSelectedTreeCount = countSelectedEntries(fileParsedTreeCount, burninPercentage, thinInterval);
+            treeSelectionPlans.add(new FileTreeSelectionPlan(treeFile, fileParsedTreeCount, fileSelectedTreeCount));
+            parsedTreeCount += fileParsedTreeCount;
+            totalSelectedTreeCount += fileSelectedTreeCount;
+        }
+
+        int[] retainedGlobalSelectedIndices = computeRetainedSelectedIndices(totalSelectedTreeCount, maxSamples);
+        assignRetainedSelectedIndices(treeSelectionPlans, retainedGlobalSelectedIndices);
+
+        List<PosteriorTreeSample> selectedTrees = new ArrayList<>(retainedGlobalSelectedIndices.length);
         for (int fileIndex = 0; fileIndex < normalizedFiles.size(); fileIndex++) {
             File treeFile = normalizedFiles.get(fileIndex);
             File logFile = normalizedLogFiles.isEmpty() ? null : normalizedLogFiles.get(fileIndex);
-            List<Tree> parsedTrees = loadTreesFromFile(treeFile);
-            parsedTreeCount += parsedTrees.size();
-                LoggedPosteriorSamples loggedPosteriorSamples = logFile == null
+            FileTreeSelectionPlan selectionPlan = treeSelectionPlans.get(fileIndex);
+            RetainedPosteriorTrees retainedTrees = loadRetainedPosteriorTrees(
+                    selectionPlan,
+                    burninPercentage,
+                    thinInterval);
+            LoggedPosteriorSamples loggedPosteriorSamples = logFile == null
                     ? LoggedPosteriorSamples.empty()
-                    : loadLoggedPosteriorSamples(logFile);
-            List<LoggedPosteriorSample> orderedLoggedRates = logFile == null
-                ? Collections.emptyList()
-                    : selectPosteriorLogRows(loggedPosteriorSamples.orderedSamples, burninPercentage, thinInterval, 0);
-            List<PosteriorTreeSample> fileSelection = selectPosteriorTreeSamples(
-                parsedTrees,
-                    loggedPosteriorSamples.bySampleNumber,
-                orderedLoggedRates,
-                burninPercentage,
-                thinInterval,
-                0);
-            selectedTrees.addAll(fileSelection);
+                    : loadRetainedLoggedPosteriorSamples(
+                            logFile,
+                            burninPercentage,
+                            thinInterval,
+                            selectionPlan.retainedSelectedIndices,
+                            retainedTrees.sampleNumbers);
+            for (int retainedIndex = 0; retainedIndex < retainedTrees.trees.size(); retainedIndex++) {
+                Tree tree = retainedTrees.trees.get(retainedIndex);
+                LoggedPosteriorSample loggedRate = resolveLoggedRate(
+                        tree,
+                        loggedPosteriorSamples.bySampleNumber,
+                        loggedPosteriorSamples.orderedSamples,
+                        retainedIndex);
+                selectedTrees.add(new PosteriorTreeSample(
+                        tree,
+                        SampledRateContext.fromTree(tree, loggedRate),
+                        LoggedStateContext.fromLoggedPosteriorSample(loggedRate)));
+            }
             Log.info.println(String.format(
-                    "LearnedWeights: selected %d/%d posterior trees from %s (burnin=%d%%, thin=%d)",
-                    fileSelection.size(),
-                    parsedTrees.size(),
+                    "LearnedWeights: retained %d/%d selected posterior trees from %s (parsed=%d, burnin=%d%%, thin=%d)",
+                    retainedTrees.trees.size(),
+                    selectionPlan.selectedCount,
                     treeFile.getAbsolutePath(),
+                    selectionPlan.parsedCount,
                     burninPercentage,
                     thinInterval));
         }
-        selectedTrees = capSelectedTrees(selectedTrees, maxSamples);
 
         Log.info.println(String.format(
                 "LearnedWeights: generating training samples from posterior tree file%s %s (parsed=%d, selected=%d, burnin=%d%%, thin=%d, maxSamples=%s)",
@@ -234,6 +283,347 @@ public class LearnedWeightsTreeTrainer {
         return Collections.unmodifiableList(samples);
     }
 
+    private RetainedPosteriorTrees loadRetainedPosteriorTrees(
+            FileTreeSelectionPlan selectionPlan,
+            int burninPercentage,
+            int thinInterval) throws IOException {
+        if (selectionPlan.retainedSelectedIndices.isEmpty()) {
+            return RetainedPosteriorTrees.empty();
+        }
+
+        try (BufferedReader reader = new BufferedReader(new FileReader(selectionPlan.treeFile))) {
+            TreeBlockContext treeBlockContext = moveToTreesBlock(reader);
+            List<Tree> retainedTrees = new ArrayList<>(selectionPlan.retainedSelectedIndices.size());
+            List<Long> sampleNumbers = new ArrayList<>(selectionPlan.retainedSelectedIndices.size());
+            int burninCount = selectionPlan.parsedCount * burninPercentage / 100;
+            int parsedIndex = 0;
+            int selectedIndex = 0;
+            NexusTreeCommand nextCommand = readNextTreeCommand(reader);
+            while (nextCommand != null && !nextCommand.isEndOfBlock()) {
+                if (nextCommand.isCommand("translate")) {
+                    treeBlockContext = treeBlockContext.withTranslation(parseTranslateCommand(nextCommand.arguments));
+                } else if (nextCommand.isCommand("tree")) {
+                    boolean isSelectedTree = parsedIndex >= burninCount && ((parsedIndex - burninCount) % thinInterval == 0);
+                    if (isSelectedTree) {
+                        if (selectionPlan.retainedSelectedIndices.contains(selectedIndex)) {
+                            ParsedTreeCommand parsedTree = parseTreeCommand(nextCommand.arguments, treeBlockContext);
+                            retainedTrees.add(parsedTree.tree());
+                            sampleNumbers.add(extractTreeSampleNumber(parsedTree.tree()));
+                        }
+                        selectedIndex++;
+                    }
+                    parsedIndex++;
+                }
+                nextCommand = readNextTreeCommand(reader);
+            }
+            return new RetainedPosteriorTrees(retainedTrees, sampleNumbers);
+        }
+    }
+
+    private LoggedPosteriorSamples loadRetainedLoggedPosteriorSamples(
+            File logFile,
+            int burninPercentage,
+            int thinInterval,
+            Set<Integer> retainedSelectedIndices,
+            List<Long> requiredSampleNumbers) throws IOException {
+        if (retainedSelectedIndices.isEmpty()) {
+            return LoggedPosteriorSamples.empty();
+        }
+
+        int parsedRowCount = countLogRows(logFile);
+        int burninCount = parsedRowCount * burninPercentage / 100;
+        Set<Long> requiredSampleNumberSet = new HashSet<>();
+        for (Long sampleNumber : requiredSampleNumbers) {
+            if (sampleNumber != null) {
+                requiredSampleNumberSet.add(sampleNumber);
+            }
+        }
+
+        List<LoggedPosteriorSample> orderedSamples = new ArrayList<>(retainedSelectedIndices.size());
+        Map<Long, LoggedPosteriorSample> bySample = new LinkedHashMap<>();
+
+        try (BufferedReader reader = new BufferedReader(new FileReader(logFile))) {
+            String line;
+            String[] headers = null;
+            int sampleIndex = -1;
+            int targetLogLikelihoodIndex = -1;
+            List<LoggedParameterBinding> parameterBindings = Collections.emptyList();
+            int parsedRowIndex = 0;
+            int selectedRowIndex = 0;
+            while ((line = reader.readLine()) != null) {
+                String trimmed = line.trim();
+                if (trimmed.isEmpty() || trimmed.startsWith("#")) {
+                    continue;
+                }
+                String[] fields = trimmed.split("\\t");
+                if (headers == null) {
+                    headers = fields;
+                    sampleIndex = findColumnIndex(headers, "Sample");
+                    if (sampleIndex < 0) {
+                        throw new IllegalArgumentException("Could not find Sample column in training log "
+                                + logFile.getAbsolutePath());
+                    }
+                    targetLogLikelihoodIndex = resolveTargetLogLikelihoodColumn(headers, logFile);
+                    parameterBindings = resolveLoggedParameterBindings(headers, logFile);
+                    continue;
+                }
+                if (fields.length <= sampleIndex) {
+                    continue;
+                }
+                long sampleNumber = Long.parseLong(fields[sampleIndex]);
+                boolean retainByExactSampleNumber = requiredSampleNumberSet.contains(sampleNumber);
+                boolean isSelectedRow = parsedRowIndex >= burninCount && ((parsedRowIndex - burninCount) % thinInterval == 0);
+                boolean retainForFallbackOrder = isSelectedRow && retainedSelectedIndices.contains(selectedRowIndex);
+                if (retainByExactSampleNumber || retainForFallbackOrder) {
+                    Double targetLogLikelihood = extractLoggedTargetLogLikelihood(fields, targetLogLikelihoodIndex);
+                    List<LoggedParameterSample> parameterSamples = extractLoggedParameterSamples(fields, parameterBindings);
+                    double strictClockMeanRate = extractStrictClockMeanRate(parameterSamples);
+                    LoggedPosteriorSample sample = new LoggedPosteriorSample(
+                            sampleNumber,
+                            strictClockMeanRate,
+                            targetLogLikelihood,
+                            parameterSamples);
+                    if (retainForFallbackOrder) {
+                        orderedSamples.add(sample);
+                    }
+                    if (retainByExactSampleNumber) {
+                        bySample.put(sampleNumber, sample);
+                    }
+                }
+                if (isSelectedRow) {
+                    selectedRowIndex++;
+                }
+                parsedRowIndex++;
+            }
+        }
+
+        return new LoggedPosteriorSamples(
+                Collections.unmodifiableList(orderedSamples),
+                bySample.isEmpty() ? Collections.emptyMap() : Collections.unmodifiableMap(bySample));
+    }
+
+    private int countTreesInFile(File treeFile) throws IOException {
+        try (BufferedReader reader = new BufferedReader(new FileReader(treeFile))) {
+            moveToTreesBlock(reader);
+            int parsedCount = 0;
+            NexusTreeCommand nextCommand = readNextTreeCommand(reader);
+            while (nextCommand != null && !nextCommand.isEndOfBlock()) {
+                if (nextCommand.isCommand("tree")) {
+                    parsedCount++;
+                }
+                nextCommand = readNextTreeCommand(reader);
+            }
+            return parsedCount;
+        }
+    }
+
+    private int countLogRows(File logFile) throws IOException {
+        int parsedRows = 0;
+        try (BufferedReader reader = new BufferedReader(new FileReader(logFile))) {
+            String line;
+            boolean headerSeen = false;
+            while ((line = reader.readLine()) != null) {
+                String trimmed = line.trim();
+                if (trimmed.isEmpty() || trimmed.startsWith("#")) {
+                    continue;
+                }
+                if (!headerSeen) {
+                    headerSeen = true;
+                    continue;
+                }
+                parsedRows++;
+            }
+        }
+        return parsedRows;
+    }
+
+    private int countSelectedEntries(int parsedCount, int burninPercentage, int thinInterval) {
+        if (parsedCount <= 0) {
+            return 0;
+        }
+        int burninCount = parsedCount * burninPercentage / 100;
+        if (burninCount >= parsedCount) {
+            return 0;
+        }
+        return ((parsedCount - 1 - burninCount) / thinInterval) + 1;
+    }
+
+    private int[] computeRetainedSelectedIndices(int totalSelectedCount, int maxSamples) {
+        if (totalSelectedCount <= 0) {
+            return new int[0];
+        }
+        int retainedCount = maxSamples > 0 ? Math.min(totalSelectedCount, maxSamples) : totalSelectedCount;
+        int[] retainedIndices = new int[retainedCount];
+        if (retainedCount == totalSelectedCount) {
+            for (int i = 0; i < retainedCount; i++) {
+                retainedIndices[i] = i;
+            }
+            return retainedIndices;
+        }
+        double step = (double) totalSelectedCount / retainedCount;
+        for (int i = 0; i < retainedCount; i++) {
+            retainedIndices[i] = Math.min(totalSelectedCount - 1, (int) Math.floor(i * step));
+        }
+        return retainedIndices;
+    }
+
+    private void assignRetainedSelectedIndices(
+            List<FileTreeSelectionPlan> selectionPlans,
+            int[] retainedGlobalSelectedIndices) {
+        int retainedPointer = 0;
+        int selectedOffset = 0;
+        for (int fileIndex = 0; fileIndex < selectionPlans.size(); fileIndex++) {
+            FileTreeSelectionPlan selectionPlan = selectionPlans.get(fileIndex);
+            Set<Integer> retainedLocalIndices = new HashSet<>();
+            int selectedUpperBound = selectedOffset + selectionPlan.selectedCount;
+            while (retainedPointer < retainedGlobalSelectedIndices.length
+                    && retainedGlobalSelectedIndices[retainedPointer] < selectedUpperBound) {
+                retainedLocalIndices.add(retainedGlobalSelectedIndices[retainedPointer] - selectedOffset);
+                retainedPointer++;
+            }
+            selectionPlans.set(fileIndex, selectionPlan.withRetainedSelectedIndices(retainedLocalIndices));
+            selectedOffset = selectedUpperBound;
+        }
+    }
+
+    private TreeBlockContext moveToTreesBlock(BufferedReader reader) throws IOException {
+        String line;
+        while ((line = reader.readLine()) != null) {
+            if (line.trim().toLowerCase().matches("^begin\\s+trees;\\s*$")) {
+                return new TreeBlockContext(null, -1, null);
+            }
+        }
+        throw new IOException("Could not find begin trees block in posterior tree file");
+    }
+
+    private NexusTreeCommand readNextTreeCommand(BufferedReader reader) throws IOException {
+        StringBuilder commandBuilder = new StringBuilder();
+        while (true) {
+            int nextValue = reader.read();
+            if (nextValue < 0) {
+                break;
+            }
+            char nextChar = (char) nextValue;
+            if (nextChar == ';') {
+                break;
+            }
+            commandBuilder.append(nextChar);
+            switch (nextChar) {
+                case '[':
+                    readNexusComment(reader, commandBuilder);
+                    break;
+                case '"':
+                case '\'':
+                    readNexusString(reader, commandBuilder, nextChar);
+                    break;
+                default:
+                    break;
+            }
+        }
+        if (commandBuilder.toString().isEmpty()) {
+            return null;
+        }
+        return new NexusTreeCommand(commandBuilder.toString());
+    }
+
+    private void readNexusComment(BufferedReader reader, StringBuilder builder) throws IOException {
+        int depth = 1;
+        while (depth > 0) {
+            int nextValue = reader.read();
+            if (nextValue < 0) {
+                throw new IOException("Unterminated nexus comment in tree file");
+            }
+            char nextChar = (char) nextValue;
+            builder.append(nextChar);
+            if (nextChar == '[') {
+                depth++;
+            } else if (nextChar == ']') {
+                depth--;
+            } else if (nextChar == '"' || nextChar == '\'') {
+                readNexusString(reader, builder, nextChar);
+            }
+        }
+    }
+
+    private void readNexusString(BufferedReader reader, StringBuilder builder, char delimiter) throws IOException {
+        while (true) {
+            int nextValue = reader.read();
+            if (nextValue < 0) {
+                throw new IOException("Unterminated nexus string in tree file");
+            }
+            char nextChar = (char) nextValue;
+            builder.append(nextChar);
+            if (nextChar == delimiter) {
+                return;
+            }
+        }
+    }
+
+    private ParsedTreeCommand parseTreeCommand(String treeString, TreeBlockContext treeBlockContext) {
+        final int startOfNewick = treeString.indexOf('(');
+        String id = "0";
+        try {
+            id = treeString.substring(5, startOfNewick).split("=")[0].trim();
+        } catch (Exception ignored) {
+            // keep default id
+        }
+        String newick = startOfNewick > 0 ? treeString.substring(startOfNewick) : treeString;
+        TreeParser treeParser;
+        if (treeBlockContext.origin != -1) {
+            treeParser = new TreeParser(treeBlockContext.taxa, newick, treeBlockContext.origin, false);
+        } else {
+            try {
+                treeParser = new TreeParser(treeBlockContext.taxa, newick, 0, false);
+            } catch (ArrayIndexOutOfBoundsException e) {
+                treeParser = new TreeParser(treeBlockContext.taxa, newick, 1, false);
+            }
+        }
+        treeParser.setID(id);
+        return new ParsedTreeCommand(treeParser, id);
+    }
+
+    private Map<String, String> parseTranslateCommand(String translateArgs) throws IOException {
+        Map<String, String> translationMap = new HashMap<>();
+        String[] taxaTranslations = translateArgs.split(",");
+        for (String taxaTranslation : taxaTranslations) {
+            taxaTranslation = taxaTranslation.trim();
+            int splitIndex = 0;
+            while (splitIndex < taxaTranslation.length() && !Character.isWhitespace(taxaTranslation.charAt(splitIndex))) {
+                splitIndex++;
+            }
+            if (splitIndex > 0) {
+                String key = taxaTranslation.substring(0, splitIndex);
+                String value = taxaTranslation.substring(splitIndex).trim();
+                translationMap.put(key, value);
+            }
+        }
+        return translationMap;
+    }
+
+    private static int getIndexedTranslationMapOrigin(Map<String, String> translationMap) {
+        SortedSet<Integer> indices = new TreeSet<>();
+        int count = 0;
+        for (String key : translationMap.keySet()) {
+            int index = Integer.parseInt(key);
+            indices.add(index);
+            count++;
+        }
+        if (!indices.isEmpty()
+                && (indices.last() - indices.first() == count - 1)
+                && (indices.first() == 0 || indices.first() == 1)) {
+            return indices.first();
+        }
+        return -1;
+    }
+
+    private static List<String> getIndexedTranslationMap(Map<String, String> translationMap, int origin) {
+        String[] taxa = new String[translationMap.size()];
+        for (String key : translationMap.keySet()) {
+            taxa[Integer.parseInt(key) - origin] = translationMap.get(key);
+        }
+        return Arrays.asList(taxa);
+    }
+
     protected Tree sampleRandomTree(Alignment data) {
         ConstantPopulation popFunc = new ConstantPopulation();
         popFunc.initByName("popSize", new RealParameter("1.0"));
@@ -248,7 +638,11 @@ public class LearnedWeightsTreeTrainer {
     protected TrainingTreeSample buildTrainingSample(Tree tree, double targetLogLikelihood) {
         double[][] covariance = buildCovarianceMatrix(tree);
         MatrixFactorization factorization = factorizeCovariance(covariance);
-        return new TrainingTreeSample(targetLogLikelihood, factorization.precisionMatrix, factorization.logDeterminant);
+        return new TrainingTreeSample(
+            targetLogLikelihood,
+            factorization.precisionMatrix,
+            factorization.logDeterminant,
+            factorization.logNormalizerDimension);
     }
 
     protected List<Tree> loadTreesFromFile(File treeFile) throws IOException {
@@ -337,6 +731,13 @@ public class LearnedWeightsTreeTrainer {
     }
 
     private MatrixFactorization factorizeCovariance(double[][] covariance) {
+        if (Double.isInfinite(rootPriorVariance)) {
+            return factorizeImproperRootCovariance(covariance);
+        }
+        return factorizeProperRootCovariance(withRootPriorVariance(covariance, rootPriorVariance), covariance.length);
+    }
+
+    private MatrixFactorization factorizeProperRootCovariance(double[][] covariance, int logNormalizerDimension) {
         for (double jitter : JITTER_SCHEDULE) {
             try {
                 RealMatrix matrix = new Array2DRowRealMatrix(addJitter(covariance, jitter), false);
@@ -344,18 +745,76 @@ public class LearnedWeightsTreeTrainer {
                         matrix,
                         CHOLESKY_THRESHOLD,
                         CHOLESKY_THRESHOLD);
-                double determinant = decomposition.getDeterminant();
-                if (!(determinant > 0.0) || !Double.isFinite(determinant)) {
-                    throw new IllegalStateException("Non-positive or non-finite covariance determinant: " + determinant);
+                double logDeterminant = getLogDeterminantFromCholesky(decomposition);
+                if (!Double.isFinite(logDeterminant)) {
+                    throw new IllegalStateException("Non-finite covariance log determinant: " + logDeterminant);
                 }
                 return new MatrixFactorization(
                         decomposition.getSolver().getInverse().getData(),
-                        Math.log(determinant));
+                        logDeterminant,
+                        logNormalizerDimension);
             } catch (NonPositiveDefiniteMatrixException | IllegalStateException ignored) {
                 // try larger diagonal jitter
             }
         }
         throw new IllegalStateException("Failed to factorize Brownian covariance matrix for LearnedWeights training sample.");
+    }
+
+    private double getLogDeterminantFromCholesky(CholeskyDecomposition decomposition) {
+        RealMatrix lMatrix = decomposition.getL();
+        double logDeterminant = 0.0;
+        for (int i = 0; i < lMatrix.getRowDimension(); i++) {
+            double diagonal = lMatrix.getEntry(i, i);
+            if (!(diagonal > 0.0) || !Double.isFinite(diagonal)) {
+                throw new IllegalStateException("Invalid Cholesky diagonal entry: " + diagonal);
+            }
+            logDeterminant += 2.0 * Math.log(diagonal);
+        }
+        return logDeterminant;
+    }
+
+    private MatrixFactorization factorizeImproperRootCovariance(double[][] covariance) {
+        MatrixFactorization fixedRoot = factorizeProperRootCovariance(covariance, covariance.length);
+        double[][] inverse = fixedRoot.precisionMatrix;
+        int n = inverse.length;
+        double[] inverseOnes = new double[n];
+        double onesInverseOnes = 0.0;
+        for (int row = 0; row < n; row++) {
+            double sum = 0.0;
+            for (int column = 0; column < n; column++) {
+                sum += inverse[row][column];
+            }
+            inverseOnes[row] = sum;
+            onesInverseOnes += sum;
+        }
+        if (!(onesInverseOnes > 0.0) || !Double.isFinite(onesInverseOnes)) {
+            throw new IllegalStateException("Invalid improper-root normalization term: " + onesInverseOnes);
+        }
+
+        double[][] projectedPrecision = new double[n][n];
+        for (int row = 0; row < n; row++) {
+            for (int column = 0; column < n; column++) {
+                projectedPrecision[row][column] = inverse[row][column]
+                        - (inverseOnes[row] * inverseOnes[column]) / onesInverseOnes;
+            }
+        }
+        return new MatrixFactorization(
+                projectedPrecision,
+                fixedRoot.logDeterminant + Math.log(onesInverseOnes),
+                Math.max(0, n - 1));
+    }
+
+    private double[][] withRootPriorVariance(double[][] covariance, double variance) {
+        if (variance == 0.0) {
+            return covariance;
+        }
+        double[][] adjusted = new double[covariance.length][covariance.length];
+        for (int row = 0; row < covariance.length; row++) {
+            for (int column = 0; column < covariance[row].length; column++) {
+                adjusted[row][column] = covariance[row][column] + variance;
+            }
+        }
+        return adjusted;
     }
 
     private double[][] addJitter(double[][] covariance, double jitter) {
@@ -387,6 +846,9 @@ public class LearnedWeightsTreeTrainer {
     }
 
     protected Double computeCurrentTreeLogLikelihood(Tree tree) {
+        if (likelihoodEvaluator == null || runtimeLikelihoodTree == null) {
+            throw new IllegalStateException("A likelihood template is required to evaluate tree log likelihoods.");
+        }
         Tree backupTree = runtimeLikelihoodTree.copy();
         try {
             runtimeLikelihoodTree.assignFrom(tree);
@@ -414,19 +876,6 @@ public class LearnedWeightsTreeTrainer {
         return runtimeTree;
     }
 
-    private List<PosteriorTreeSample> capSelectedTrees(List<PosteriorTreeSample> trees, int maxSamples) {
-        if (maxSamples <= 0 || trees.size() <= maxSamples) {
-            return trees;
-        }
-        List<PosteriorTreeSample> capped = new ArrayList<>(maxSamples);
-        double step = (double) trees.size() / maxSamples;
-        for (int sampleIndex = 0; sampleIndex < maxSamples; sampleIndex++) {
-            int sourceIndex = Math.min(trees.size() - 1, (int) Math.floor(sampleIndex * step));
-            capped.add(trees.get(sourceIndex));
-        }
-        return capped;
-    }
-
     private GenericTreeLikelihood createTrainingLikelihoodEvaluator(
             GenericTreeLikelihood template,
             BranchRateModel.Base branchRateModel) {
@@ -438,21 +887,22 @@ public class LearnedWeightsTreeTrainer {
             copiedTree.setID(templateTree.getID());
             GenericTreeLikelihood evaluator = template.getClass().getDeclaredConstructor().newInstance();
             List<Object> initArguments = new ArrayList<>();
-            for (Input<?> input : template.listInputs()) {
-                String inputName = input.getName();
-                Object inputValue;
-                if ("tree".equals(inputName)) {
-                    inputValue = copiedTree;
-                } else if ("branchRateModel".equals(inputName)) {
-                    inputValue = branchRateModel;
-                } else {
-                    inputValue = input.get();
-                }
-                if (inputValue != null) {
-                    initArguments.add(inputName);
-                    initArguments.add(inputValue);
-                }
+            Collections.addAll(
+                    initArguments,
+                    "data", template.dataInput.get(),
+                    "tree", copiedTree,
+                    "siteModel", template.siteModelInput.get());
+            if (branchRateModel != null) {
+                initArguments.add("branchRateModel");
+                initArguments.add(branchRateModel);
             }
+            addOptionalTrainingLikelihoodInput(initArguments, template, "useAmbiguities");
+            addOptionalTrainingLikelihoodInput(initArguments, template, "useTipLikelihoods");
+            addOptionalTrainingLikelihoodInput(initArguments, template, "scaling");
+            addOptionalTrainingLikelihoodInput(initArguments, template, "rootFrequencies");
+            addOptionalTrainingLikelihoodInput(initArguments, template, "implementation");
+            addOptionalTrainingLikelihoodInput(initArguments, template, "threads");
+            addOptionalTrainingLikelihoodInput(initArguments, template, "proportions");
             evaluator.initByName(initArguments.toArray());
             return evaluator;
         } catch (InstantiationException | IllegalAccessException | InvocationTargetException
@@ -462,6 +912,31 @@ public class LearnedWeightsTreeTrainer {
                             + template.getClass().getName(),
                     e);
         }
+    }
+
+    private static void addOptionalTrainingLikelihoodInput(
+            List<Object> initArguments,
+            GenericTreeLikelihood template,
+            String inputName) {
+        Input<?> input = findInputByName(template, inputName);
+        if (input == null) {
+            return;
+        }
+        Object value = input.get();
+        if (value == null) {
+            return;
+        }
+        initArguments.add(inputName);
+        initArguments.add("scaling".equals(inputName) ? value.toString() : value);
+    }
+
+    private static Input<?> findInputByName(GenericTreeLikelihood template, String inputName) {
+        for (Input<?> input : template.listInputs()) {
+            if (inputName.equals(input.getName())) {
+                return input;
+            }
+        }
+        return null;
     }
 
     private List<File> normalizeLogFiles(List<File> logFiles, int expectedSize) {
@@ -486,51 +961,65 @@ public class LearnedWeightsTreeTrainer {
         return normalized;
     }
 
-    private List<PosteriorTreeSample> selectPosteriorTreeSamples(
-            List<Tree> parsedTrees,
-            Map<Long, LoggedPosteriorSample> loggedRatesBySample,
-            List<LoggedPosteriorSample> orderedLoggedRates,
-            int burninPercentage,
-            int thinInterval,
-            int maxSamples) {
-        if (parsedTrees.isEmpty()) {
-            return Collections.emptyList();
+    private record FileTreeSelectionPlan(
+            File treeFile,
+            int parsedCount,
+            int selectedCount,
+            Set<Integer> retainedSelectedIndices) {
+        private FileTreeSelectionPlan(File treeFile, int parsedCount, int selectedCount) {
+            this(treeFile, parsedCount, selectedCount, Collections.emptySet());
         }
 
-        int burninCount = parsedTrees.size() * burninPercentage / 100;
-        List<PosteriorTreeSample> selected = new ArrayList<>();
-
-        for (int treeIndex = burninCount; treeIndex < parsedTrees.size(); treeIndex += thinInterval) {
-            Tree tree = parsedTrees.get(treeIndex);
-            LoggedPosteriorSample loggedRate = resolveLoggedRate(tree, loggedRatesBySample, orderedLoggedRates, selected.size());
-            selected.add(new PosteriorTreeSample(
-                    tree,
-                    SampledRateContext.fromTree(tree, loggedRate),
-                    LoggedStateContext.fromLoggedPosteriorSample(loggedRate)));
-            if (maxSamples > 0 && selected.size() >= maxSamples) {
-                break;
-            }
+        private FileTreeSelectionPlan withRetainedSelectedIndices(Set<Integer> retainedSelectedIndices) {
+            return new FileTreeSelectionPlan(
+                    treeFile,
+                    parsedCount,
+                    selectedCount,
+                    Collections.unmodifiableSet(retainedSelectedIndices));
         }
-        return selected;
     }
 
-        private List<LoggedPosteriorSample> selectPosteriorLogRows(
-            List<LoggedPosteriorSample> parsedLogRows,
-            int burninPercentage,
-            int thinInterval,
-            int maxSamples) {
-        if (parsedLogRows.isEmpty()) {
-            return Collections.emptyList();
+    private record RetainedPosteriorTrees(List<Tree> trees, List<Long> sampleNumbers) {
+        private static RetainedPosteriorTrees empty() {
+            return new RetainedPosteriorTrees(Collections.emptyList(), Collections.emptyList());
         }
-        int burninCount = parsedLogRows.size() * burninPercentage / 100;
-        List<LoggedPosteriorSample> selected = new ArrayList<>();
-        for (int rowIndex = burninCount; rowIndex < parsedLogRows.size(); rowIndex += thinInterval) {
-            selected.add(parsedLogRows.get(rowIndex));
-            if (maxSamples > 0 && selected.size() >= maxSamples) {
-                break;
+    }
+
+    private record TreeBlockContext(Map<String, String> translationMap, int origin, List<String> taxa) {
+        private TreeBlockContext withTranslation(Map<String, String> translationMap) {
+            int indexedOrigin = getIndexedTranslationMapOrigin(translationMap);
+            List<String> indexedTaxa = indexedOrigin == -1 ? null : getIndexedTranslationMap(translationMap, indexedOrigin);
+            return new TreeBlockContext(translationMap, indexedOrigin, indexedTaxa);
+        }
+    }
+
+    private record NexusTreeCommand(String command, String arguments) {
+        private NexusTreeCommand(String commandString) {
+            this(
+                    commandString.trim().replaceAll("\\s+", " ").split(" ")[0].toLowerCase(),
+                    extractArguments(commandString));
+        }
+
+        private static String extractArguments(String commandString) {
+            String normalized = commandString.trim().replaceAll("\\s+", " ");
+            String command = normalized.split(" ")[0].toLowerCase();
+            try {
+                return normalized.substring(command.length() + 1);
+            } catch (IndexOutOfBoundsException ex) {
+                return "";
             }
         }
-        return selected;
+
+        private boolean isCommand(String commandName) {
+            return command.equals(commandName.toLowerCase());
+        }
+
+        private boolean isEndOfBlock() {
+            return command.equals("end");
+        }
+    }
+
+    private record ParsedTreeCommand(Tree tree, String id) {
     }
 
     private LoggedPosteriorSample resolveLoggedRate(
@@ -551,49 +1040,6 @@ public class LearnedWeightsTreeTrainer {
             return orderedLoggedRates.get(selectedIndex);
         }
         return null;
-    }
-
-    private LoggedPosteriorSamples loadLoggedPosteriorSamples(File logFile) throws IOException {
-        List<LoggedPosteriorSample> orderedSamples = new ArrayList<>();
-        try (BufferedReader reader = new BufferedReader(new FileReader(logFile))) {
-            String line;
-            String[] headers = null;
-            int sampleIndex = -1;
-            int targetLogLikelihoodIndex = -1;
-            List<LoggedParameterBinding> parameterBindings = Collections.emptyList();
-            while ((line = reader.readLine()) != null) {
-                String trimmed = line.trim();
-                if (trimmed.isEmpty() || trimmed.startsWith("#")) {
-                    continue;
-                }
-                String[] fields = trimmed.split("\\t");
-                if (headers == null) {
-                    headers = fields;
-                    sampleIndex = findColumnIndex(headers, "Sample");
-                    if (sampleIndex < 0) {
-                        throw new IllegalArgumentException("Could not find Sample column in training log "
-                                + logFile.getAbsolutePath());
-                    }
-                    targetLogLikelihoodIndex = resolveTargetLogLikelihoodColumn(headers, logFile);
-                    parameterBindings = resolveLoggedParameterBindings(headers, logFile);
-                    continue;
-                }
-                if (fields.length <= sampleIndex) {
-                    continue;
-                }
-                long sampleNumber = Long.parseLong(fields[sampleIndex]);
-                Double targetLogLikelihood = extractLoggedTargetLogLikelihood(fields, targetLogLikelihoodIndex);
-                List<LoggedParameterSample> parameterSamples = extractLoggedParameterSamples(fields, parameterBindings);
-                double strictClockMeanRate = extractStrictClockMeanRate(parameterSamples);
-                orderedSamples.add(new LoggedPosteriorSample(sampleNumber, strictClockMeanRate, targetLogLikelihood, parameterSamples));
-            }
-        }
-
-        Map<Long, LoggedPosteriorSample> bySample = new LinkedHashMap<>();
-        for (LoggedPosteriorSample sample : orderedSamples) {
-            bySample.put(sample.sampleNumber, sample);
-        }
-        return new LoggedPosteriorSamples(orderedSamples, bySample);
     }
 
     private int resolveTargetLogLikelihoodColumn(String[] headers, File logFile) {
@@ -791,7 +1237,7 @@ public class LearnedWeightsTreeTrainer {
         return String.join(", ", paths);
     }
 
-    private record MatrixFactorization(double[][] precisionMatrix, double logDeterminant) {
+    private record MatrixFactorization(double[][] precisionMatrix, double logDeterminant, int logNormalizerDimension) {
     }
 
     private record PosteriorTreeSample(Tree tree, SampledRateContext rateContext, LoggedStateContext loggedStateContext) {

@@ -13,7 +13,8 @@ import java.util.Locale;
 
 public final class LearnedWeightsTrainingSampleIO {
 
-    private static final String MAGIC = "# LearnedWeightsTrainingSamplesV1";
+    private static final String MAGIC_V1 = "# LearnedWeightsTrainingSamplesV1";
+    private static final String MAGIC_V2 = "# LearnedWeightsTrainingSamplesV2";
 
     private LearnedWeightsTrainingSampleIO() {
     }
@@ -33,7 +34,7 @@ public final class LearnedWeightsTrainingSampleIO {
         }
 
         try (BufferedWriter writer = Files.newBufferedWriter(outputFile)) {
-            writer.write(MAGIC);
+            writer.write(MAGIC_V2);
             writer.newLine();
             writer.write("taxa");
             for (String taxon : canonicalTaxa) {
@@ -44,9 +45,10 @@ public final class LearnedWeightsTrainingSampleIO {
 
             for (LearnedWeightsTreeTrainer.TrainingTreeSample sample : samples) {
                 assert sample.getTaxonCount() == canonicalTaxa.length : "Sample taxon count does not match canonicalTaxa length";
-                writer.write(String.format(Locale.US, "sample\t%.17g\t%.17g",
+                writer.write(String.format(Locale.US, "sample\t%.17g\t%.17g\t%d",
                         sample.targetLogLikelihood,
-                        sample.logDeterminant));
+                    sample.logDeterminant,
+                    sample.logNormalizerDimension));
                 for (int row = 0; row < sample.precisionMatrix.length; row++) {
                     for (int column = 0; column < sample.precisionMatrix[row].length; column++) {
                         writer.write('\t');
@@ -63,7 +65,9 @@ public final class LearnedWeightsTrainingSampleIO {
             String[] expectedCanonicalTaxa) throws IOException {
         try (BufferedReader reader = Files.newBufferedReader(inputFile)) {
             String magic = reader.readLine();
-            if (!MAGIC.equals(magic)) {
+            boolean v1 = MAGIC_V1.equals(magic);
+            boolean v2 = MAGIC_V2.equals(magic);
+            if (!v1 && !v2) {
                 throw new IllegalArgumentException("Unrecognized training sample file format: " + inputFile);
             }
 
@@ -85,7 +89,7 @@ public final class LearnedWeightsTrainingSampleIO {
             }
 
             int taxonCount = fileTaxa.length;
-            int expectedColumns = 3 + taxonCount * taxonCount;
+            int expectedColumns = (v2 ? 4 : 3) + taxonCount * taxonCount;
             List<LearnedWeightsTreeTrainer.TrainingTreeSample> samples = new ArrayList<>();
             String line;
             while ((line = reader.readLine()) != null) {
@@ -99,14 +103,19 @@ public final class LearnedWeightsTrainingSampleIO {
 
                 double targetLogLikelihood = Double.parseDouble(tokens[1]);
                 double logDeterminant = Double.parseDouble(tokens[2]);
+                int logNormalizerDimension = v2 ? Integer.parseInt(tokens[3]) : taxonCount;
                 double[][] precision = new double[taxonCount][taxonCount];
-                int tokenIndex = 3;
+                int tokenIndex = v2 ? 4 : 3;
                 for (int row = 0; row < taxonCount; row++) {
                     for (int column = 0; column < taxonCount; column++) {
                         precision[row][column] = Double.parseDouble(tokens[tokenIndex++]);
                     }
                 }
-                samples.add(new LearnedWeightsTreeTrainer.TrainingTreeSample(targetLogLikelihood, precision, logDeterminant));
+                samples.add(new LearnedWeightsTreeTrainer.TrainingTreeSample(
+                        targetLogLikelihood,
+                        precision,
+                        logDeterminant,
+                        logNormalizerDimension));
             }
             return Collections.unmodifiableList(samples);
         }

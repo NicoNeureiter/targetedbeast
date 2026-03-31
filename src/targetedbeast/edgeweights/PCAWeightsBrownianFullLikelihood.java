@@ -45,6 +45,10 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
             "brownianRate",
             "Brownian diffusion rate used when propagating Gaussian trait messages along branches",
             1.0);
+        final public Input<Double> rootPriorVarianceInput = new Input<>(
+            "rootPriorVariance",
+            "root-state prior variance in Brownian diffusion units; use Infinity for a flat root prior and 0 for a root fixed at 0",
+            Double.POSITIVE_INFINITY);
     final public Input<Double> offsetInput = new Input<>("offset", "offset in weight", 0.01);
 
     private int dim;
@@ -53,6 +57,7 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
     private boolean useInverseMeanDistanceProposal;
     private BranchRateModel.Base branchRateModel;
     private double brownianRate;
+    private double rootPriorVariance;
     private double proposalLogLikelihoodScale = 1.0;
     private double maxWeight;
     private double minWeight;
@@ -84,11 +89,15 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
         branchRateModel = branchRateModelInput.get();
         useInverseMeanDistanceProposal = useInverseMeanDistanceProposalInput.get();
         brownianRate = brownianRateInput.get();
+        rootPriorVariance = rootPriorVarianceInput.get();
         maxWeight = maxWeightInput.get();
         minWeight = minWeightInput.get();
 
         if (branchRateModel == null && (!(brownianRate > 0.0) || !Double.isFinite(brownianRate))) {
             throw new IllegalArgumentException("brownianRate must be finite and > 0, but was " + brownianRate);
+        }
+        if (rootPriorVariance < 0.0 || Double.isNaN(rootPriorVariance)) {
+            throw new IllegalArgumentException("rootPriorVariance must be >= 0 or Infinity, but was " + rootPriorVariance);
         }
 
         if (dataInput.get().getTaxonCount() != treeInput.get().getLeafNodeCount()) {
@@ -230,6 +239,9 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
         GaussianMessage leftUp = propagateMessage(left, node.getLeft(), node.getLeft().getLength());
         GaussianMessage rightUp = propagateMessage(right, node.getRight(), node.getRight().getLength());
         GaussianMessage merged = combineMessages(leftUp, rightUp);
+        if (node.isRoot()) {
+            merged = combineMessages(merged, rootPriorMessage());
+        }
 
         copyMessage(merged, insideMeans[nodeNr], insideVariances[nodeNr]);
         insideLogNorm[nodeNr] = merged.logNorm;
@@ -260,7 +272,7 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
         Node root = treeInput.get().getRoot();
         Node effectiveRoot = becomesUnary(root, ignore) ? getIncludedChild(root, ignore) : root;
         recomputeInsideWithoutRecursive(effectiveRoot, ignore);
-        setNeutralOutside(effectiveRoot.getNr());
+        setRootOutside(effectiveRoot.getNr());
         if (effectiveRoot != root) {
             setNeutralOutside(root.getNr());
         }
@@ -631,6 +643,7 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
 
         Node grandparent = getEffectiveParent(toNode, currentIgnoredNode);
         if (grandparent == null) {
+            combineMessagesWithContributions(parentMessage, getOutsideMessage(toNode.getNr()), contributions);
             return contributions;
         }
 
@@ -780,6 +793,13 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
         outsideValid[nodeNr] = true;
     }
 
+    private void setRootOutside(int nodeNr) {
+        GaussianMessage prior = rootPriorMessage();
+        copyMessage(prior, outsideMeans[nodeNr], outsideVariances[nodeNr]);
+        outsideLogNorm[nodeNr] = prior.logNorm;
+        outsideValid[nodeNr] = true;
+    }
+
     private void setOutside(int nodeNr, GaussianMessage message) {
         copyMessage(message, outsideMeans[nodeNr], outsideVariances[nodeNr]);
         outsideLogNorm[nodeNr] = message.logNorm;
@@ -790,6 +810,16 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
         double[] mean = new double[dim];
         double[] variance = new double[dim];
         Arrays.fill(variance, NEUTRAL_VARIANCE);
+        return new GaussianMessage(mean, variance, 0.0);
+    }
+
+    private GaussianMessage rootPriorMessage() {
+        if (Double.isInfinite(rootPriorVariance)) {
+            return neutralMessage();
+        }
+        double[] mean = new double[dim];
+        double[] variance = new double[dim];
+        Arrays.fill(variance, Math.max(rootPriorVariance, 0.0));
         return new GaussianMessage(mean, variance, 0.0);
     }
 
