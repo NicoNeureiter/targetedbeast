@@ -523,21 +523,37 @@ public class PCAWeightsBrownian extends Distribution implements EdgeWeights {
 	}
 
     @Override
+    public double[] getTargetWeights(int fromNodeNr, List<Node> toNodes, double toHeight) {
+        return getTargetWeightsInteger(fromNodeNr, toNodes.stream().map(Node::getNr).toList(), toHeight);
+    }
+
+    @Override
 	public double[] getTargetWeightsInteger(int fromNodeNr, List<Integer> toNodeNrs, double toHeight) {
-		double[] logScores = new double[toNodeNrs.size()];
+		// double[] logScores = new double[toNodeNrs.size()];
+		double[] distances = new double[toNodeNrs.size()];
 		for (int k = 0; k < toNodeNrs.size(); k++) {
-			logScores[k] = getAttachmentLogScore(fromNodeNr, toNodeNrs.get(k), fromNodeNr, toHeight);
+			// logScores[k] = getAttachmentLogScore(fromNodeNr, toNodeNrs.get(k), fromNodeNr, toHeight);
+            distances[k] = 1. / getMeanDist(fromNodeNr, toNodeNrs.get(k), fromNodeNr, toHeight);
 		}
-		return exponentiateLogScores(logScores);
+		// return exponentiateLogScores(logScores);
+		return distances;
 	}
 
     @Override
+    public double[] getTargetWeights(int fromNodeNr, List<Node> toNodes, List<Double> toHeights) {
+        return getTargetWeightsInteger(fromNodeNr, toNodes.stream().map(Node::getNr).toList(), toHeights);
+    }
+
+    @Override
 	public double[] getTargetWeightsInteger(int fromNodeNr, List<Integer> toNodeNrs, List<Double> toHeights) {
-		double[] logScores = new double[toNodeNrs.size()];
+		// double[] logScores = new double[toNodeNrs.size()];
+		double[] distances = new double[toNodeNrs.size()];
 		for (int k = 0; k < toNodeNrs.size(); k++) {
-			logScores[k] = getAttachmentLogScore(fromNodeNr, toNodeNrs.get(k), fromNodeNr, toHeights.get(k));
+			// logScores[k] = getAttachmentLogScore(fromNodeNr, toNodeNrs.get(k), fromNodeNr, toHeights.get(k));
+            distances[k] = 1. / getMeanDist(fromNodeNr, toNodeNrs.get(k), fromNodeNr, toHeights.get(k));
 		}
-		return exponentiateLogScores(logScores);
+		// return exponentiateLogScores(logScores);
+		return distances;
 	}
 
     /**

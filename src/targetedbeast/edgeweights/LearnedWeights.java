@@ -59,6 +59,10 @@ public class LearnedWeights extends Distribution implements EdgeWeights {
             "whether runtime targeted proposals should use inverse-distance weights instead of scaled surrogate log-likelihood scores",
             false);
     final public Input<Double> offsetInput = new Input<>("offset", "offset in weight", 0.01);
+        final public Input<Double> rootPriorVarianceInput = new Input<>(
+            "rootPriorVariance",
+            "root-state prior variance in Brownian diffusion units; use Infinity for a flat root prior and 0 for a root fixed at 0",
+            Double.POSITIVE_INFINITY);
 
         final public Input<Integer> nTrainingTreesInput = new Input<>("nTrainingTrees", "number of training trees to use when generating samples from the prior or a posterior tree log", 50);
         final public Input<List<File>> trainingTreeFileInput = new Input<>(
@@ -123,6 +127,9 @@ public class LearnedWeights extends Distribution implements EdgeWeights {
         if (offset < 0.0) {
             throw new IllegalArgumentException("offset must be >= 0, but was " + offset);
         }
+        if (rootPriorVarianceInput.get() < 0.0 || Double.isNaN(rootPriorVarianceInput.get())) {
+            throw new IllegalArgumentException("rootPriorVariance must be >= 0 or Infinity, but was " + rootPriorVarianceInput.get());
+        }
         if (!(learningRateInput.get() > 0.0)) {
             throw new IllegalArgumentException("learningRate must be > 0, but was " + learningRateInput.get());
         }
@@ -168,6 +175,7 @@ public class LearnedWeights extends Distribution implements EdgeWeights {
             "minWeight", minWeightInput.get(),
             "dimension", dim,
             "brownianRate", BROWNIAN_RATE,
+            "rootPriorVariance", rootPriorVarianceInput.get(),
             "useInverseMeanDistanceProposal", useInverseMeanDistanceProposalInput.get(),
             "offset", offset,
             "value", value,
@@ -344,7 +352,8 @@ public class LearnedWeights extends Distribution implements EdgeWeights {
             LearnedWeightsTreeTrainer trainer = new LearnedWeightsTreeTrainer(
                     likelihoodInput.get(),
                     dataInput.get(),
-                    nTrainingTreesInput.get());
+                    nTrainingTreesInput.get(),
+                    rootPriorVarianceInput.get());
             try {
                 List<LearnedWeightsTreeTrainer.TrainingTreeSample> samples = trainer.generateTrainingSamplesFromTreeFiles(
                     treeFiles,
@@ -378,7 +387,8 @@ public class LearnedWeights extends Distribution implements EdgeWeights {
         LearnedWeightsTreeTrainer trainer = new LearnedWeightsTreeTrainer(
                 likelihoodInput.get(),
                 dataInput.get(),
-                nTrainingTreesInput.get());
+                nTrainingTreesInput.get(),
+                rootPriorVarianceInput.get());
         List<LearnedWeightsTreeTrainer.TrainingTreeSample> samples = trainer.generateTrainingSamples();
         Log.info.println("LearnedWeights: generated " + samples.size() + " prior-sampled training trees.");
         return samples;
@@ -671,8 +681,19 @@ public class LearnedWeights extends Distribution implements EdgeWeights {
         return runtimeModel.getEdgeWeights(nodeNr);
     }
 
+    @Override
     public double[] getTargetWeights(int fromNodeNr, List<Node> toNodeNrs) {
         return runtimeModel.getTargetWeights(fromNodeNr, toNodeNrs);
+    }
+
+    @Override
+    public double[] getTargetWeights(int fromNodeNr, List<Node> toNodeNrs, double toHeight) {
+        return runtimeModel.getTargetWeights(fromNodeNr, toNodeNrs, toHeight);
+    }
+
+    @Override
+    public double[] getTargetWeights(int fromNodeNr, List<Node> toNodeNrs, List<Double> toHeights) {
+        return runtimeModel.getTargetWeights(fromNodeNr, toNodeNrs, toHeights);
     }
 
     @Override
@@ -680,8 +701,14 @@ public class LearnedWeights extends Distribution implements EdgeWeights {
         return runtimeModel.getTargetWeightsInteger(fromNodeNr, toNodeNrs);
     }
 
+    @Override
     public double[] getTargetWeightsInteger(int fromNodeNr, List<Integer> toNodeNrs, double toHeight) {
         return runtimeModel.getTargetWeightsInteger(fromNodeNr, toNodeNrs, toHeight);
+    }
+
+    @Override
+    public double[] getTargetWeightsInteger(int fromNodeNr, List<Integer> toNodeNrs, List<Double> toHeights) {
+        return runtimeModel.getTargetWeightsInteger(fromNodeNr, toNodeNrs, toHeights);
     }
 
     @Override
@@ -756,5 +783,9 @@ public class LearnedWeights extends Distribution implements EdgeWeights {
 
     public double getBrownianRate() {
         return BROWNIAN_RATE;
+    }
+
+    public double getRootPriorVariance() {
+        return rootPriorVarianceInput.get();
     }
 }

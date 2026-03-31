@@ -517,6 +517,11 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
         return toOperatorReadyWeights(logScores);
     }
 
+    @Override
+    public double[] getTargetWeights(int fromNodeNr, List<Node> toNodes, double toHeight) {
+        return getTargetWeightsInteger(fromNodeNr, toNodes.stream().map(Node::getNr).toList(), toHeight);
+    }
+
     public double[] getTargetWeightsInteger(int fromNodeNr, List<Integer> toNodeNrs, double toHeight) {
         ensureInitialized();
         ensureWithoutNodeMessages(fromNodeNr);
@@ -540,6 +545,11 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
         }
 
         return weights;
+    }
+
+    @Override
+    public double[] getTargetWeights(int fromNodeNr, List<Node> toNodes, List<Double> toHeights) {
+        return getTargetWeightsInteger(fromNodeNr, toNodes.stream().map(Node::getNr).toList(), toHeights);
     }
 
     public double[] getTargetWeightsInteger(int fromNodeNr, List<Integer> toNodeNrs, List<Double> toHeights) {

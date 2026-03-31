@@ -76,18 +76,25 @@ public class TargetedWilsonBalding extends TreeOperator {
 				continue;			
 			totalMutations += edgeWeights.getEdgeWeights(i);		
     	}
+        if (totalMutations < 1E-12) {
+            return Double.NEGATIVE_INFINITY;
+        }
+
         double scaler = Randomizer.nextDouble() * totalMutations;
         int randomNode = -1;
         double currMuts = 0;
         for (int i = 0; i < tree.getNodeCount(); i++) {
+			if (tree.getNode(i).isRoot())
+				continue;	
         	currMuts +=  edgeWeights.getEdgeWeights(i);
 			if (currMuts > scaler) {
 				randomNode = i;
 				break;
 			}
         }
+        assert randomNode > -1;
                 
-        logHastingsRatio -= Math.log(edgeWeights.getEdgeWeights(randomNode) / totalMutations);
+        // logHastingsRatio -= Math.log(edgeWeights.getEdgeWeights(randomNode) / totalMutations);
 
 		Node i = tree.getNode(randomNode);
 		
@@ -96,8 +103,8 @@ public class TargetedWilsonBalding extends TreeOperator {
 			return Double.NEGATIVE_INFINITY;
 		}
 
-		List<Node> coExistingNodes = getCoExistingLineages(i, tree);
-		if (coExistingNodes.size() == 0) {
+		List<Node> candidateNodes = getCoExistingLineages(i, tree);
+		if (candidateNodes.size() == 0) {
 			return Double.NEGATIVE_INFINITY;
 		}
 
@@ -109,7 +116,7 @@ public class TargetedWilsonBalding extends TreeOperator {
 		Node ancestor = i.getParent();
 		while (ancestor != null) {
 			// check if p is in the target
-			if (coExistingNodes.contains(ancestor)) {
+			if (candidateNodes.contains(ancestor)) {
 				ancestors.add(ancestor.getNr());
 			}
 			ancestor = ancestor.getParent();
@@ -120,42 +127,62 @@ public class TargetedWilsonBalding extends TreeOperator {
 		edgeWeights.updateByOperatorWithoutNode(i.getNr(), ancestors);
 
 		// remove p as potential targets
-		coExistingNodes.remove(p);
+		candidateNodes.remove(p);
 		try {
-			coExistingNodes.remove(i);
+			candidateNodes.remove(i);
 		} catch (Exception e) {
 			System.err.println("couldn't find node " + i.getNr() + " among coexisting nodes ");
 			System.err.println(tree +";");
 			return Double.NEGATIVE_INFINITY;
 		}
-//		coExistingNodes.remove(coExistingNodes.indexOf(CiP.getNr()));
 
-		double[] distance = edgeWeights.getTargetWeights(i.getNr(), coExistingNodes);
+        // candidateNodes.remove(candidateNodes.indexOf(CiP.getNr()));
+
+        List<Double> candidateAges = new ArrayList<>();
+        for (Node c : candidateNodes) {
+            double newMinAge = Math.max(i.getHeight(), c.getHeight());
+            double newRange = c.getParent().getHeight() - newMinAge;
+            double newAge = newMinAge + (Randomizer.nextDouble() * newRange);
+            candidateAges.add(newAge);
+        }
+
+		double[] distance = edgeWeights.getTargetWeights(i.getNr(), candidateNodes, candidateAges);
 		
-        int siblingIdx = coExistingNodes.indexOf(CiP);
+        int siblingIdx = candidateNodes.indexOf(CiP);
 		double siblingDistance = distance[siblingIdx];
 		siblingDistance = Math.pow(siblingDistance, 2);
 		distance[siblingIdx] = 0;
 		
 
 		double totalDistance = 0;
-		for (int k = 0; k < coExistingNodes.size(); k++) {
+		for (int k = 0; k < candidateNodes.size(); k++) {
 			distance[k] = Math.pow(distance[k], 2);
 			totalDistance += distance[k];				
 		}
+
+        if (totalDistance < 1E-12) {
+            // Risk of inaccurate Hastings ratio due to rounding errors
+            return Double.NEGATIVE_INFINITY;
+        }
 		
 		Node j = tree.getRoot();
 		double scaler2 = Randomizer.nextDouble() * totalDistance;
 		double currDist = 0;
 		int nodeNr = -1;
-		for (int k = 0; k < coExistingNodes.size(); k++) {
+		for (int k = 0; k < candidateNodes.size(); k++) {
 			currDist += distance[k];
 			if (currDist > scaler2) {				
 				nodeNr = k;
-				j = coExistingNodes.get(nodeNr);
 				break;
 			}
 		}
+        j = candidateNodes.get(nodeNr);
+        double newAge = candidateAges.get(nodeNr);
+
+        if ((totalDistance + siblingDistance - distance[nodeNr]) < 1E-12) {
+            // Risk of inaccurate Hastings ratio due to rounding errors
+            return Double.NEGATIVE_INFINITY;
+        }
 		
 		logHastingsRatio -= Math.log(distance[nodeNr] / totalDistance);
 		logHastingsRatio += Math.log(siblingDistance / (totalDistance + siblingDistance - distance[nodeNr]));	      
@@ -180,7 +207,6 @@ public class TargetedWilsonBalding extends TreeOperator {
 
 		double newMinAge = Math.max(i.getHeight(), j.getHeight());
 		double newRange = jP.getHeight() - newMinAge;
-		double newAge = newMinAge + (Randomizer.nextDouble() * newRange);
 		double oldMinAge = Math.max(i.getHeight(), CiP.getHeight());
 		double oldRange = PiP.getHeight() - oldMinAge;
 		logHastingsRatio += Math.log(newRange / Math.abs(oldRange));
@@ -209,7 +235,7 @@ public class TargetedWilsonBalding extends TreeOperator {
 			totalMutations += edgeWeights.getEdgeWeights(k);	
     	}
     	
-    	logHastingsRatio += Math.log(edgeWeights.getEdgeWeights(randomNode)/ totalMutations);
+        // logHastingsRatio += Math.log(edgeWeights.getEdgeWeights(randomNode)/ totalMutations);
     	
         return logHastingsRatio;
 	}
@@ -248,15 +274,8 @@ public class TargetedWilsonBalding extends TreeOperator {
 
 		double minHeight = i.getHeight();
 
-		List<Integer> coExistingNodes = new ArrayList<>();
-		for (int k = 0; k < tree.getNodeCount(); k++) {
-			if (tree.getNode(k).isRoot())
-				continue;
-
-			if (tree.getNode(k).getParent().getHeight() > minHeight)
-				coExistingNodes.add(k);
-		}
-		if (coExistingNodes.size() == 0) {
+		List<Node> candidateNodes = getCoExistingLineages(i, tree);
+		if (candidateNodes.size() == 0) {
 			return Double.NEGATIVE_INFINITY;
 		}
 
@@ -268,7 +287,7 @@ public class TargetedWilsonBalding extends TreeOperator {
 		Node ancestor = i.getParent();
 		while (ancestor != null) {
 			// check if p is in the target
-			if (coExistingNodes.contains(ancestor.getNr())) {
+			if (candidateNodes.contains(ancestor)) {
 				ancestors.add(ancestor.getNr());
 			}
 			ancestor = ancestor.getParent();
@@ -279,41 +298,60 @@ public class TargetedWilsonBalding extends TreeOperator {
 		edgeWeights.updateByOperatorWithoutNode(i.getNr(), ancestors);
 
 		// remove p as potential targets
-		coExistingNodes.remove(coExistingNodes.indexOf(p.getNr()));
+		candidateNodes.remove(p);
 		try {
-			coExistingNodes.remove(coExistingNodes.indexOf(i.getNr()));
+			candidateNodes.remove(i);
 		} catch (Exception e) {
 			System.err.println("couldn't find node " + i.getNr() + " among coexisting nodes ");
 			System.err.println(tree +";");
 			return Double.NEGATIVE_INFINITY;
 		}
 //		coExistingNodes.remove(coExistingNodes.indexOf(CiP.getNr()));
+        List<Double> candidateAges = new ArrayList<>();
+        for (Node c : candidateNodes) {
+            double newMinAge = Math.max(i.getHeight(), c.getHeight());
+            double newRange = c.getParent().getHeight() - newMinAge;
+            double newAge = newMinAge + (Randomizer.nextDouble() * newRange);
+            candidateAges.add(newAge);
+        }
 
-		double[] distance = edgeWeights.getTargetWeightsInteger(i.getNr(), coExistingNodes);
+		double[] distance = edgeWeights.getTargetWeights(i.getNr(), candidateNodes, candidateAges);
 		
-		double siblingDistance = distance[coExistingNodes.indexOf(CiP.getNr())];
+        int siblingIdx = candidateNodes.indexOf(CiP);
+		double siblingDistance = distance[siblingIdx];
 		siblingDistance = Math.pow(siblingDistance, 2);
-		distance[coExistingNodes.indexOf(CiP.getNr())] = 0;
+		distance[siblingIdx] = 0;
 		
 		
 		double totalDistance = 0;
-		for (int k = 0; k < coExistingNodes.size(); k++) {
+		for (int k = 0; k < candidateNodes.size(); k++) {
 			distance[k] = Math.pow(distance[k], 2);
 			totalDistance += distance[k];				
 		}
+
+        if (totalDistance < 1E-12) {
+            // Risk of inaccurate Hastings ratio due to rounding errors
+            return Double.NEGATIVE_INFINITY;
+        }
 		
 		Node j = tree.getRoot();
 		double scaler2 = Randomizer.nextDouble() * totalDistance;
 		double currDist = 0;
 		int nodeNr = -1;
-		for (int k = 0; k < coExistingNodes.size(); k++) {
+		for (int k = 0; k < candidateNodes.size(); k++) {
 			currDist += distance[k];
 			if (currDist > scaler2) {				
 				nodeNr = k;
-				j = treeInput.get().getNode(coExistingNodes.get(nodeNr));
 				break;
 			}
 		}
+        j = candidateNodes.get(nodeNr);
+        double newAge = candidateAges.get(nodeNr);
+
+        if ((totalDistance + siblingDistance - distance[nodeNr]) < 1E-12) {
+            // Risk of inaccurate Hastings ratio due to rounding errors
+            return Double.NEGATIVE_INFINITY;
+        }
 		
 		logHastingsRatio -= Math.log(distance[nodeNr] / totalDistance);
 		logHastingsRatio += Math.log(siblingDistance / (totalDistance + siblingDistance - distance[nodeNr]));	      
@@ -338,7 +376,6 @@ public class TargetedWilsonBalding extends TreeOperator {
 
 		double newMinAge = Math.max(i.getHeight(), j.getHeight());
 		double newRange = jP.getHeight() - newMinAge;
-		double newAge = newMinAge + (Randomizer.nextDouble() * newRange);
 		double oldMinAge = Math.max(i.getHeight(), CiP.getHeight());
 		double oldRange = PiP.getHeight() - oldMinAge;
 		logHastingsRatio += Math.log(newRange / Math.abs(oldRange));
