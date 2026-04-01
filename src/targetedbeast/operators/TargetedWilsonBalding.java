@@ -49,9 +49,9 @@ public class TargetedWilsonBalding extends TreeOperator {
     @Override
     public double proposal() {
 		if (useEdgeLengthInput.get()) {
-			return EdgeWeightsTreeProposal();
-		} else {
 			return LengthWeightedTreeProposal();
+		} else {
+			return EdgeWeightsTreeProposal();
 		}
     }
 
