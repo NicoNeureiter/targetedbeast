@@ -48,8 +48,8 @@ public class TargetedWilsonBaldingFixedHeight extends TreeOperator {
     
     @Override
     public double proposal() {
-        if (Randomizer.nextDouble() < 0.0001)
-            System.out.println(_rejects);
+        // if (Randomizer.nextDouble() < 0.0001)
+        //     System.out.println(_rejects);
 
 		if (useEdgeLengthInput.get()) {
 			return lengthWeightedTreeProposal();
