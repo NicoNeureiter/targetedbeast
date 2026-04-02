@@ -28,11 +28,15 @@ public class TargetedWilsonBalding extends TreeOperator {
     public Input<EdgeWeights> edgeWeightsInput = new Input<>("edgeWeights", "input of weights to be used for targetedn tree operations");
 
     public Input<Double> mutationLimitInput = new Input<>("mutationLimit", "Input of the number of mutations to be used as a limit", 15.0);
-	
-    public Input<Boolean> useRepeatedMutationsInput = new Input<>("useRepeatedMutations", "flag to indicate if repeated mutations should be used as weights for operations", false);
-    
-    public Input<Boolean> useEdgeLengthInput = new Input<>("useEdgeLength", "if true, it uses the relative edge lengths for operations", false);
 
+	public Input<Double> maxHeightRatioInput = new Input<>("maxHeightRatio", "optional upper bound on the multiplicative change in the parent height of the moved subtree", Double.POSITIVE_INFINITY);
+	    
+	public Input<Boolean> useAttachmentIntervalLengthInput = new Input<>(
+			"useAttachmentIntervalLength",
+			"if true, target-edge selection is weighted by the valid attachment-interval length",
+			true);
+
+    public Input<Boolean> useEdgeLengthInput = new Input<>("useEdgeLength", "if true, it uses the relative edge lengths for operations", false);
     
     double limit;
     
@@ -43,236 +47,129 @@ public class TargetedWilsonBalding extends TreeOperator {
     public void initAndValidate() {
 		limit = mutationLimitInput.get();
 		edgeWeights = edgeWeightsInput.get();
-    }
-
-    
-    @Override
-    public double proposal() {
-		if (useEdgeLengthInput.get()) {
-			return LengthWeightedTreeProposal();
-		} else {
-			return EdgeWeightsTreeProposal();
+		double maxHeightRatio = maxHeightRatioInput.get();
+		if (!(maxHeightRatio >= 1.0)) {
+			throw new IllegalArgumentException("maxHeightRatio must be >= 1.0");
 		}
     }
 
-	/**
-	 * WARNING: Assumes strictly bifurcating beast.tree.
-	 */
-	/**
-	 * override this for proposals,
-	 *
-	 * @return log of Hastings Ratio, or Double.NEGATIVE_INFINITY if proposal should
-	 *         not be accepted *
-	 */
-	private double EdgeWeightsTreeProposal() {
-        Tree tree = (Tree) InputUtil.get(treeInput, this);
+	private static final class AttachmentInterval {
+		final double minAge;
+		final double maxAge;
 
-        double logHastingsRatio = 0.0;
-
-        // choose a random node avoiding root
-        double totalMutations = 0;
-    	for (int i = 0; i < tree.getNodeCount(); i++) {
-			if (tree.getNode(i).isRoot())
-				continue;			
-			totalMutations += edgeWeights.getEdgeWeights(i);		
-    	}
-        if (totalMutations < 1E-12) {
-            return Double.NEGATIVE_INFINITY;
-        }
-
-        double scaler = Randomizer.nextDouble() * totalMutations;
-        int randomNode = -1;
-        double currMuts = 0;
-        for (int i = 0; i < tree.getNodeCount(); i++) {
-			if (tree.getNode(i).isRoot())
-				continue;	
-        	currMuts +=  edgeWeights.getEdgeWeights(i);
-			if (currMuts > scaler) {
-				randomNode = i;
-				break;
-			}
-        }
-        assert randomNode > -1;
-                
-        // logHastingsRatio -= Math.log(edgeWeights.getEdgeWeights(randomNode) / totalMutations);
-
-		Node i = tree.getNode(randomNode);
-		
-		Node p = i.getParent();
-		if (p.isRoot()) {
-			return Double.NEGATIVE_INFINITY;
+		AttachmentInterval(double minAge, double maxAge) {
+			this.minAge = minAge;
+			this.maxAge = maxAge;
 		}
 
-		List<Node> candidateNodes = getCoExistingLineages(i, tree);
-		if (candidateNodes.size() == 0) {
-			return Double.NEGATIVE_INFINITY;
+		double range() {
+			return Math.max(0, maxAge - minAge);
 		}
 
-		final Node CiP = getOtherChild(p, i);
-
-		// get all nodes in target that are ancestors to p
-		List<Integer> ancestors = new ArrayList<>();
-		// make a copy of p
-		Node ancestor = i.getParent();
-		while (ancestor != null) {
-			// check if p is in the target
-			if (candidateNodes.contains(ancestor)) {
-				ancestors.add(ancestor.getNr());
-			}
-			ancestor = ancestor.getParent();
+		boolean contains(double age) {
+			return age >= minAge && age <= maxAge;
 		}
-
-		// calculate the consensus sequences without the node i
-		edgeWeights.prestore();
-		edgeWeights.updateByOperatorWithoutNode(i.getNr(), ancestors);
-
-		// remove p as potential targets
-		candidateNodes.remove(p);
-		try {
-			candidateNodes.remove(i);
-		} catch (Exception e) {
-			System.err.println("couldn't find node " + i.getNr() + " among coexisting nodes ");
-			System.err.println(tree +";");
-			return Double.NEGATIVE_INFINITY;
-		}
-
-        // candidateNodes.remove(candidateNodes.indexOf(CiP.getNr()));
-
-        List<Double> candidateAges = new ArrayList<>();
-        for (Node c : candidateNodes) {
-            double newMinAge = Math.max(i.getHeight(), c.getHeight());
-            double newRange = c.getParent().getHeight() - newMinAge;
-            double newAge = newMinAge + (Randomizer.nextDouble() * newRange);
-            candidateAges.add(newAge);
-        }
-
-		double[] distance = edgeWeights.getTargetWeights(i.getNr(), candidateNodes, candidateAges);
-		
-        int siblingIdx = candidateNodes.indexOf(CiP);
-		double siblingDistance = distance[siblingIdx];
-		siblingDistance = Math.pow(siblingDistance, 2);
-		distance[siblingIdx] = 0;
-		
-
-		double totalDistance = 0;
-		for (int k = 0; k < candidateNodes.size(); k++) {
-			distance[k] = Math.pow(distance[k], 2);
-			totalDistance += distance[k];				
-		}
-
-        if (totalDistance < 1E-12) {
-            // Risk of inaccurate Hastings ratio due to rounding errors
-            return Double.NEGATIVE_INFINITY;
-        }
-		
-		Node j = tree.getRoot();
-		double scaler2 = Randomizer.nextDouble() * totalDistance;
-		double currDist = 0;
-		int nodeNr = -1;
-		for (int k = 0; k < candidateNodes.size(); k++) {
-			currDist += distance[k];
-			if (currDist > scaler2) {				
-				nodeNr = k;
-				break;
-			}
-		}
-        j = candidateNodes.get(nodeNr);
-        double newAge = candidateAges.get(nodeNr);
-
-        if ((totalDistance + siblingDistance - distance[nodeNr]) < 1E-12) {
-            // Risk of inaccurate Hastings ratio due to rounding errors
-            return Double.NEGATIVE_INFINITY;
-        }
-		
-		logHastingsRatio -= Math.log(distance[nodeNr] / totalDistance);
-		logHastingsRatio += Math.log(siblingDistance / (totalDistance + siblingDistance - distance[nodeNr]));	      
-      
-		edgeWeights.reset();
-
-		Node jP = j.getParent();
-
-		// disallow moves that change the root.
-		if (j.isRoot()) {
-			return Double.NEGATIVE_INFINITY;
-		}
-
-		final int pnr = p.getNr();
-		final int jPnr = jP.getNr();
-
-		if (jPnr == pnr || j.getNr() == pnr || jPnr == i.getNr()) {
-			return Double.NEGATIVE_INFINITY;
-		}
-
-		final Node PiP = p.getParent();
-
-		double newMinAge = Math.max(i.getHeight(), j.getHeight());
-		double newRange = jP.getHeight() - newMinAge;
-		double oldMinAge = Math.max(i.getHeight(), CiP.getHeight());
-		double oldRange = PiP.getHeight() - oldMinAge;
-		logHastingsRatio += Math.log(newRange / Math.abs(oldRange));
-		
-		p.setHeight(newAge);
-
-		// remove p from PiP, add the other child of p to PiP, frees p
-		replace(PiP, p, CiP);
-		// add j as child to p, removing CiP as child of p
-		replace(p, CiP, j);
-		// then parent node of j to p
-		replace(jP, j, p);
-
-		// mark paths to common ancestor as changed
-		Node mrca = getMRCA(PiP, p);
-		mrca.makeDirty(3 - mrca.isDirty());
-		
-        edgeWeights.prestore();
-        edgeWeights.updateByOperator();
-        // recalculate hasting ratio
-        // calculate tree length
-        totalMutations = 0;
-    	for (int k = 0; k < tree.getNodeCount(); k++) {
-			if (tree.getNode(k).isRoot())
-				continue;			
-			totalMutations += edgeWeights.getEdgeWeights(k);	
-    	}
-    	
-        // logHastingsRatio += Math.log(edgeWeights.getEdgeWeights(randomNode)/ totalMutations);
-    	
-        return logHastingsRatio;
 	}
 
-	
-	private double LengthWeightedTreeProposal() {
+	private AttachmentInterval getAttachmentInterval(double movingNodeHeight, double movingParentHeight,
+			double candidateHeight, double candidateParentHeight) {
+		double minAge = Math.max(movingNodeHeight, candidateHeight);
+		double maxAge = candidateParentHeight;
+
+		double maxHeightRatio = maxHeightRatioInput.get();
+		if (Double.isFinite(maxHeightRatio)) {
+			minAge = Math.max(minAge, movingParentHeight / maxHeightRatio);
+			maxAge = Math.min(maxAge, movingParentHeight * maxHeightRatio);
+		}
+
+		return new AttachmentInterval(minAge, maxAge);
+	}
+
+	private AttachmentInterval getAttachmentInterval(Node movingNode, Node candidate) {
+		return getAttachmentInterval(
+				movingNode.getHeight(),
+				movingNode.getParent().getHeight(),
+				candidate.getHeight(),
+				candidate.getParent().getHeight());
+	}
+
+	private double sampleAttachmentAge(AttachmentInterval interval) {
+		return interval.minAge + (Randomizer.nextDouble() * interval.range());
+	}
+
+	private double getAttachmentSelectionWeight(AttachmentInterval interval, boolean useAttachmentIntervalLength) {
+		double range = interval.range();
+		if (range <= 0.0) {
+			return 0.0;
+		}
+		return useAttachmentIntervalLength ? range : 1.0;
+	}
+
+	private boolean hasAttachmentRange(AttachmentInterval interval) {
+		return interval.range() > 0.0;
+	}
+
+	private static final class SourceSelection {
+		final Node node;
+		final double totalWeight;
+		final double selectedWeight;
+
+		SourceSelection(Node node, double totalWeight, double selectedWeight) {
+			this.node = node;
+			this.totalWeight = totalWeight;
+			this.selectedWeight = selectedWeight;
+		}
+	}
+
+	private double getSourceWeight(Node node, boolean useEdgeLength) {
+		if (node.isRoot()) {
+			return 0.0;
+		}
+		return useEdgeLength ? node.getLength() : edgeWeights.getEdgeWeights(node.getNr());
+	}
+
+	private SourceSelection selectSourceNode(Tree tree, boolean useEdgeLength) {
+		double totalWeight = 0.0;
+		for (int nodeNr = 0; nodeNr < tree.getNodeCount(); nodeNr++) {
+			totalWeight += getSourceWeight(tree.getNode(nodeNr), useEdgeLength);
+		}
+		if (totalWeight < 1E-12) {
+			throw new IllegalStateException("TargetedWilsonBalding has no selectable source edges");
+		}
+
+		double scaler = Randomizer.nextDouble() * totalWeight;
+		double cumulativeWeight = 0.0;
+		for (int nodeNr = 0; nodeNr < tree.getNodeCount(); nodeNr++) {
+			Node node = tree.getNode(nodeNr);
+			double nodeWeight = getSourceWeight(node, useEdgeLength);
+			cumulativeWeight += nodeWeight;
+			if (cumulativeWeight > scaler) {
+				return new SourceSelection(node, totalWeight, nodeWeight);
+			}
+		}
+
+		throw new IllegalStateException("Failed to select source node despite positive total weight");
+	}
+
+    @Override
+    public double proposal() {
+        boolean useEdgeLength = useEdgeLengthInput.get();
+		boolean useAttachmentIntervalLength = useAttachmentIntervalLengthInput.get();
         Tree tree = (Tree) InputUtil.get(treeInput, this);
 
         double logHastingsRatio = 0.0;
 
-        // choose a random node avoiding root
-        double totalLength = 0;
-    	for (int i = 0; i < tree.getNodeCount(); i++) {
-    		totalLength += tree.getNode(i).getLength();		
-    	}
-        double scaler = Randomizer.nextDouble() * totalLength;
-        int randomNode = -1;
-        double currLength = 0;
-        for (int i = 0; i < tree.getNodeCount(); i++) {
-        	currLength += tree.getNode(i).getLength();
-			if (currLength > scaler) {
-				randomNode = i;
-				break;
-			}
-        }
-                
-        logHastingsRatio -= Math.log( tree.getNode(randomNode).getLength() / totalLength);
-        totalLength -= tree.getNode(randomNode).getLength();
-		
-		Node i = tree.getNode(randomNode);
+		SourceSelection sourceSelection = selectSourceNode(tree, useEdgeLength);
+
+		Node i = sourceSelection.node;
+		if (useEdgeLength) {
+			logHastingsRatio -= Math.log(sourceSelection.selectedWeight / sourceSelection.totalWeight);
+		}
 		
 		Node p = i.getParent();
 		if (p.isRoot()) {
 			return Double.NEGATIVE_INFINITY;
 		}
-
-		double minHeight = i.getHeight();
 
 		List<Node> candidateNodes = getCoExistingLineages(i, tree);
 		if (candidateNodes.size() == 0) {
@@ -297,64 +194,66 @@ public class TargetedWilsonBalding extends TreeOperator {
 		edgeWeights.prestore();
 		edgeWeights.updateByOperatorWithoutNode(i.getNr(), ancestors);
 
-		// remove p as potential targets
+		// remove i and p as potential targets
+        candidateNodes.remove(i);
 		candidateNodes.remove(p);
-		try {
-			candidateNodes.remove(i);
-		} catch (Exception e) {
-			System.err.println("couldn't find node " + i.getNr() + " among coexisting nodes ");
-			System.err.println(tree +";");
+
+		List<Node> feasibleCandidateNodes = new ArrayList<>();
+		List<Double> candidateAges = new ArrayList<>();
+		List<AttachmentInterval> candidateIntervals = new ArrayList<>();
+		for (Node c : candidateNodes) {
+			AttachmentInterval interval = getAttachmentInterval(i, c);
+			if (!hasAttachmentRange(interval)) {
+				continue;
+			}
+			feasibleCandidateNodes.add(c);
+			candidateAges.add(sampleAttachmentAge(interval));
+			candidateIntervals.add(interval);
+		}
+		candidateNodes = feasibleCandidateNodes;
+		if (candidateNodes.size() == 0) {
+			edgeWeights.reset();
 			return Double.NEGATIVE_INFINITY;
 		}
-//		coExistingNodes.remove(coExistingNodes.indexOf(CiP.getNr()));
-        List<Double> candidateAges = new ArrayList<>();
-        for (Node c : candidateNodes) {
-            double newMinAge = Math.max(i.getHeight(), c.getHeight());
-            double newRange = c.getParent().getHeight() - newMinAge;
-            double newAge = newMinAge + (Randomizer.nextDouble() * newRange);
-            candidateAges.add(newAge);
-        }
 
 		double[] distance = edgeWeights.getTargetWeights(i.getNr(), candidateNodes, candidateAges);
-		
-        int siblingIdx = candidateNodes.indexOf(CiP);
-		double siblingDistance = distance[siblingIdx];
-		siblingDistance = Math.pow(siblingDistance, 2);
-		distance[siblingIdx] = 0;
-		
-		
-		double totalDistance = 0;
-		for (int k = 0; k < candidateNodes.size(); k++) {
+		double[] forwardMass = new double[distance.length];
+        for (int k=0; k<distance.length; k++) {
 			distance[k] = Math.pow(distance[k], 2);
-			totalDistance += distance[k];				
-		}
-
-        if (totalDistance < 1E-12) {
-            // Risk of inaccurate Hastings ratio due to rounding errors
-            return Double.NEGATIVE_INFINITY;
+			double intervalWeight = getAttachmentSelectionWeight(candidateIntervals.get(k), useAttachmentIntervalLength);
+			forwardMass[k] = distance[k] * intervalWeight;
         }
 		
-		Node j = tree.getRoot();
+        int siblingIdx = candidateNodes.indexOf(CiP);
+		double[] selectionMass = forwardMass.clone();
+		selectionMass[siblingIdx] = 0;
+		
+
+		double totalDistance = 0;
+		for (int k = 0; k < candidateNodes.size(); k++) {
+			totalDistance += selectionMass[k];				
+		}
+
+		if (totalDistance < 1E-12) {
+			return Double.NEGATIVE_INFINITY;
+		}
+
 		double scaler2 = Randomizer.nextDouble() * totalDistance;
 		double currDist = 0;
 		int nodeNr = -1;
 		for (int k = 0; k < candidateNodes.size(); k++) {
-			currDist += distance[k];
+			currDist += selectionMass[k];
 			if (currDist > scaler2) {				
 				nodeNr = k;
 				break;
 			}
 		}
-        j = candidateNodes.get(nodeNr);
+        Node j = candidateNodes.get(nodeNr);
         double newAge = candidateAges.get(nodeNr);
-
-        if ((totalDistance + siblingDistance - distance[nodeNr]) < 1E-12) {
-            // Risk of inaccurate Hastings ratio due to rounding errors
-            return Double.NEGATIVE_INFINITY;
-        }
-		
-		logHastingsRatio -= Math.log(distance[nodeNr] / totalDistance);
-		logHastingsRatio += Math.log(siblingDistance / (totalDistance + siblingDistance - distance[nodeNr]));	      
+        AttachmentInterval forwardInterval = candidateIntervals.get(nodeNr);
+		assert forwardInterval != null;
+		logHastingsRatio -= Math.log(1. / forwardInterval.range());
+		logHastingsRatio -= Math.log(selectionMass[nodeNr] / totalDistance);
       
 		edgeWeights.reset();
 
@@ -374,11 +273,32 @@ public class TargetedWilsonBalding extends TreeOperator {
 
 		final Node PiP = p.getParent();
 
-		double newMinAge = Math.max(i.getHeight(), j.getHeight());
-		double newRange = jP.getHeight() - newMinAge;
-		double oldMinAge = Math.max(i.getHeight(), CiP.getHeight());
-		double oldRange = PiP.getHeight() - oldMinAge;
-		logHastingsRatio += Math.log(newRange / Math.abs(oldRange));
+		double oldAge = p.getHeight();
+		double reverseTotalDistance = 0;
+		double reverseSiblingDistance = 0;
+		AttachmentInterval reverseInterval = null;
+		for (int k = 0; k < candidateNodes.size(); k++) {
+			Node candidate = candidateNodes.get(k);
+			double candidateParentHeight = candidate == CiP ? PiP.getHeight() : candidate.getParent().getHeight();
+			AttachmentInterval candidateReverseInterval = getAttachmentInterval(
+					i.getHeight(),
+					newAge,
+					candidate.getHeight(),
+					candidateParentHeight);
+			double reverseMass = distance[k] * getAttachmentSelectionWeight(candidateReverseInterval, useAttachmentIntervalLength);
+			if (k != nodeNr) {
+				reverseTotalDistance += reverseMass;
+			}
+			if (k == siblingIdx) {
+				reverseSiblingDistance = reverseMass;
+				reverseInterval = candidateReverseInterval;
+			}
+		}
+
+		if (reverseTotalDistance < 1E-12 || reverseSiblingDistance < 1E-12) {
+			return Double.NEGATIVE_INFINITY;
+		}
+		logHastingsRatio += Math.log(reverseSiblingDistance / reverseTotalDistance);
 		
 		p.setHeight(newAge);
 
@@ -389,13 +309,18 @@ public class TargetedWilsonBalding extends TreeOperator {
 		// then parent node of j to p
 		replace(jP, j, p);
 
+        assert reverseInterval != null;
+        assert reverseInterval.contains(oldAge);
+		logHastingsRatio += Math.log(1. / reverseInterval.range());
+
 		// mark paths to common ancestor as changed
 		Node mrca = getMRCA(PiP, p);
 		mrca.makeDirty(3 - mrca.isDirty());
 		
-		totalLength += i.getLength();
-    	
-    	logHastingsRatio += Math.log(i.getLength()/ totalLength);
+		if (useEdgeLength) {
+			double reverseTotalWeight = sourceSelection.totalWeight - sourceSelection.selectedWeight + i.getLength();
+			logHastingsRatio += Math.log(i.getLength() / reverseTotalWeight);
+		}
     	
         return logHastingsRatio;
 	}
