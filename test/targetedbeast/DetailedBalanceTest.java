@@ -1,424 +1,246 @@
 package targetedbeast;
 
-import targetedbeast.alignment.ConsensusAlignment;
-import targetedbeast.edgeweights.ConstantWeights;
-import targetedbeast.edgeweights.FelsensteinWeights;
-import targetedbeast.edgeweights.PCAWeights;
-import targetedbeast.edgeweights.ParsimonyWeights2;
-import targetedbeast.likelihood.SlowTreeLikelihood;
-import targetedbeast.operators.TargetedWilsonBalding;
-import targetedbeast.operators.TargetedWilsonBaldingFixedHeight;
 import targetedbeast.util.Counter;
 import targetedbeast.util.DefaultHashMap;
 import org.junit.Assert;
-import org.junit.BeforeClass;
-import org.junit.Test;
-import beast.base.evolution.alignment.Alignment;
-import beast.base.evolution.alignment.Sequence;
-import beast.base.evolution.alignment.Taxon;
-import beast.base.evolution.alignment.TaxonSet;
-import beast.base.evolution.operator.TreeOperator;
-import beast.base.evolution.sitemodel.SiteModel;
-import beast.base.evolution.speciation.YuleModel;
-import beast.base.evolution.substitutionmodel.JukesCantor;
-import beast.base.evolution.tree.Node;
-import beast.base.evolution.tree.Tree;
-import beast.base.evolution.tree.TreeDistribution;
-import beast.base.evolution.tree.TreeUtils;
-import beast.base.inference.DirectSimulator;
 import beast.base.inference.Distribution;
 import java.util.*;
+import java.util.function.Function;
 
 
-public class DetailedBalanceTest {
+/**
+ * Generic detailed-balance test harness.
+ *
+ * <p>Operators that move between "classes" of states (where the class is defined
+ * by some quantisation/grouping function) should satisfy detailed balance
+ * between those classes under their target distribution:
+ * {@code p_i * q_ij = p_j * q_ji}. This class draws samples from a prior, applies
+ * a proposal, and accumulates the Metropolis-Hastings acceptance mass flowing
+ * between classes in both directions, then asserts the forward and backward flows
+ * agree within a statistically estimated tolerance.
+ *
+ * <p>The harness is deliberately agnostic to:
+ * <ul>
+ *   <li>the operator being tested,</li>
+ *   <li>the prior used to draw and score states,</li>
+ *   <li>the quantisation method that maps a state to its class.</li>
+ * </ul>
+ * A subclass supplies these via {@link #getStateMappers()} and a {@link Trial}
+ * per operator (passed to {@link #testDetailedBalance(Trial)}), and defines the
+ * actual JUnit {@code @Test} methods.
+ *
+ * @param <S> the type of state being sampled and grouped (e.g. a tree or network)
+ */
+public abstract class DetailedBalanceTest<S> {
 
-    protected static final int NUM_SAMPLES = 200_000;
-    protected static final int NUM_TAXA = 5;
-    protected static final double BIRTH_DIFF_RATE = 2.0;
-    protected static final double TOLERANCE = 0.001;
-    protected static Alignment alignment;
+    /**
+     * A named quantisation: maps a state to a string label identifying the class it
+     * belongs to. Subclasses provide these to specify what classes to test balance over.
+     * The classifier is a plain function, so mappers can be written as lambdas.
+     */
+    public static final class StateMapper<S> {
+        private final String name;
+        private final Function<S, String> classifier;
 
-    public interface TreeGroupMapper {
-        public String op(Tree tree);
-    }
-
-    public static Map<String, TreeGroupMapper> treeGroupers;
-
-    @BeforeClass
-    public static void setUpClass() {
-        alignment = createDummyAlignment();
-
-        treeGroupers = new HashMap<>();
-
-        // treeGroupers.put("RootHeight1Decimal", tree -> String.format("%.1f", (1 * tree.getRoot().getHeight())));
-        treeGroupers.put("RootFirstChildHeight", tree -> {
-            List<Node> rootChildren = tree.getRoot().getChildren();
-            double firstChildHeight = Math.max(rootChildren.get(0).getHeight(),
-                                               rootChildren.get(1).getHeight());
-            return String.format("%.0f", 2 * firstChildHeight);
-        });
-
-        treeGroupers.put("TreeLength", tree -> {
-            double treeLength = TreeUtils.getTreeLength(tree, tree.getRoot());
-            return String.format("%.0f", 2 * treeLength);
-        });
-
-        treeGroupers.put("TreeImbalance", tree -> String.valueOf(rootImbalance(tree.getRoot())));
-    }
-
-    @Test
-    public void testWilsonBalding() throws Exception {
-        TargetedWilsonBaldingConstFactory opFactory = new TargetedWilsonBaldingConstFactory();
-        testDetailedBalance(opFactory);
-    }
-
-    @Test
-    public void testTargWilsonBalding() throws Exception {
-        TargetedWilsonBaldingFactory opFactory = new TargetedWilsonBaldingFactory();
-        testDetailedBalance(opFactory);
-    }
-
-    @Test
-    public void testTargWilsonBaldingFelsenstein() throws Exception {
-        TargetedWilsonBaldingFelsensteinFactory opFactory = new TargetedWilsonBaldingFelsensteinFactory();
-        testDetailedBalance(opFactory);
-    }
-
-    @Test
-    public void testTargWilsonBaldingFixedHeight() throws Exception {
-        TargetedWilsonBaldingFactory opFactory = new TargetedWilsonBaldingFactory();
-        testDetailedBalance(opFactory);
-    }
-
-    public void testDetailedBalance(OperatorFactory operatorFactory) throws Exception {
-        // Create a map from mapper name to data structures
-        Map<String, Counter<String>> groupCounters = new HashMap<>();
-        Map<String, Counter<String>> proposalCounters = new HashMap<>();
-        Map<String, DefaultHashMap<String, Double>> flows = new HashMap<>();
-
-        // Initialize data structures for each mapper
-        for (String mapperName : treeGroupers.keySet()) {
-            groupCounters.put(mapperName, new Counter<>());
-            proposalCounters.put(mapperName, new Counter<>());
-            flows.put(mapperName, new DefaultHashMap<>(0.0));
+        public StateMapper(String name, Function<S, String> classifier) {
+            this.name = name;
+            this.classifier = classifier;
         }
 
-        Tree tree = new Tree();
-        tree.initByName("taxonset", getTaxonSet(NUM_TAXA));
+        public String name() {
+            return name;
+        }
 
-        Distribution prior = getPrior(tree);
-        DirectSimulator simulator = new DirectSimulator();
-        simulator.initByName("distribution", prior, "nSamples", 1);
+        public String classify(S state) {
+            return classifier.apply(state);
+        }
+    }
 
-        // Create operator once outside the loop to avoid memory issues
-        TreeOperator operator = operatorFactory.getOperator(tree);
+    /**
+     * Drives a single operator over the course of one detailed-balance test.
+     *
+     * <p>Created once per operator and reused across all samples, so that
+     * expensive operator/prior set-up happens only once. Each iteration the
+     * harness calls {@link #nextSample()} to (re)draw a state, evaluates
+     * {@link #prior()} before and after a {@link #proposal()}.
+     */
+    public interface Trial<S> {
+        /** Draw or refresh the state to test for the next iteration. */
+        S nextSample() throws Exception;
 
-        for (int i = 0; i < NUM_SAMPLES; i++) {
+        /** The prior used to score the current state (may be constant across iterations). */
+        Distribution prior();
 
-            simulator.run();
+        /** Perform the proposal on the current state and return the log Hastings ratio. */
+        double proposal();
+    }
 
-            // Compute all beforeKeys for all mappers
-            Map<String, String> beforeKeys = new HashMap<>();
-            for (String mapperName : treeGroupers.keySet()) {
-                TreeGroupMapper mapper = treeGroupers.get(mapperName);
-                String beforeKey = mapper.op(tree);
-                beforeKeys.put(mapperName, beforeKey);
-                groupCounters.get(mapperName).increment(beforeKey);
+    /** Number of samples to draw per test. */
+    protected abstract int getNumSamples();
+
+    /** Number of standard deviations of slack allowed when comparing forward/backward flow. */
+    protected double getFlowSigmaMultiplier() {
+        return 2.0;
+    }
+
+    /** The named quantisation functions to verify detailed balance over. */
+    protected abstract List<StateMapper<S>> getStateMappers();
+
+    /**
+     * Hook invoked after every proposal with its acceptance probability.
+     * Default is a no-op; subclasses may override to gather extra diagnostics.
+     */
+    protected void onProposal(Trial<S> trial, double pAccept) {
+    }
+
+    /**
+     * Hook invoked once after all samples have been drawn, before the balance
+     * assertions. Default is a no-op; subclasses may override to add extra
+     * sanity checks (e.g. that a secondary counter behaved as expected).
+     */
+    protected void afterSampling() {
+    }
+
+    protected void testDetailedBalance(Trial<S> trial) throws Exception {
+        List<StateMapper<S>> mappers = getStateMappers();
+
+        // One accumulator per quantisation, gathering its own statistics.
+        Map<StateMapper<S>, BalanceAccumulator> accumulators = new LinkedHashMap<>();
+        for (StateMapper<S> mapper : mappers) {
+            accumulators.put(mapper, new BalanceAccumulator());
+        }
+
+        // Draw samples, propose, and feed the observed class transitions to each accumulator.
+        int numSamples = getNumSamples();
+        double totalAcceptanceMass = 0.0;
+        for (int i = 0; i < numSamples; i++) {
+            S state = trial.nextSample();
+            Distribution prior = trial.prior();
+
+            // The class each mapper assigns to the state before the proposal.
+            Map<StateMapper<S>, String> beforeKeys = new LinkedHashMap<>();
+            for (StateMapper<S> mapper : mappers) {
+                String beforeKey = mapper.classify(state);
+                beforeKeys.put(mapper, beforeKey);
+                accumulators.get(mapper).recordState(beforeKey);
             }
 
             double logPBefore = prior.calculateLogP();
-
-            double logHR = operator.proposal();
-
+            double logHR = trial.proposal();
             double logPAfter = prior.calculateLogP();
-
             double pAccept = Math.min(1, Math.exp(logPAfter - logPBefore + logHR));
 
-            // Compute all afterKeys for all mappers and update flow counters
-            for (String mapperName : treeGroupers.keySet()) {
-                TreeGroupMapper mapper = treeGroupers.get(mapperName);
-                String afterKey = mapper.op(tree);
-                String beforeKey = beforeKeys.get(mapperName);
+            totalAcceptanceMass += pAccept;
 
-                String transitionKey = beforeKey + "-" + afterKey;
-                // String keyNoTransition = beforeKey + "-" + beforeKey;
+            onProposal(trial, pAccept);
 
-                // Count number of proposals
-                proposalCounters.get(mapperName).increment(transitionKey);
-
-                // Update the expected flow
-                flows.get(mapperName).put(transitionKey, flows.get(mapperName).get(transitionKey) + pAccept);
-                // flows.get(mapperName).put(keyNoTransition, flows.get(mapperName).get(keyNoTransition) + (1 - pAccept));
-
+            // The class each mapper assigns after the proposal, plus its acceptance mass.
+            for (StateMapper<S> mapper : mappers) {
+                String afterKey = mapper.classify(state);
+                accumulators.get(mapper).recordTransition(beforeKeys.get(mapper), afterKey, pAccept);
             }
         }
 
-        // Verify detailed balance for each mapper
-        for (String mapperName : treeGroupers.keySet()) {
-            System.out.println("\n=== Detailed balance test for mapper: " + mapperName + " ===");
-            Counter<String> groupCounter = groupCounters.get(mapperName);
-            Counter<String> proposalCounter = proposalCounters.get(mapperName);
-            DefaultHashMap<String, Double> flow = flows.get(mapperName);
+        Assert.assertTrue(
+            "Operator produced zero acceptance mass across " + numSamples + " proposals",
+            totalAcceptanceMass > 0.0);
 
+        afterSampling();
+
+        // Each accumulator checks detailed balance over the transitions it observed.
+        for (StateMapper<S> mapper : mappers) {
+            accumulators.get(mapper).assertBalanced(mapper.name());
+        }
+    }
+
+    /**
+     * Gathers, for a single quantisation, the per-class state counts and the
+     * Metropolis-Hastings acceptance mass flowing between classes, and asserts
+     * detailed balance over what it has seen.
+     */
+    protected class BalanceAccumulator {
+        private final Counter<String> groupCounter = new Counter<>();
+        private final Counter<String> proposalCounter = new Counter<>();
+        private final DefaultHashMap<String, Double> flow = new DefaultHashMap<>(0.0);
+        private final DefaultHashMap<String, Double> flowSquares = new DefaultHashMap<>(0.0);
+
+        /** Record the class a sampled state belongs to (before any proposal). */
+        void recordState(String groupKey) {
+            groupCounter.increment(groupKey);
+        }
+
+        /** Record a proposed transition between classes and its acceptance mass. */
+        void recordTransition(String beforeKey, String afterKey, double pAccept) {
+            String transitionKey = beforeKey + "-" + afterKey;
+            proposalCounter.increment(transitionKey);
+            flow.put(transitionKey, flow.get(transitionKey) + pAccept);
+            // Sum of squared per-sample contributions, for the empirical flow variance.
+            flowSquares.put(transitionKey, flowSquares.get(transitionKey) + pAccept * pAccept);
+        }
+
+        /**
+         * Assert detailed balance between classes: {@code p_i * q_ij = p_j * q_ji}.
+         * Forward and backward acceptance flow must agree within a tolerance derived
+         * from their estimated sampling variance.
+         */
+        void assertBalanced(String mapperName) {
+            System.out.println("\n=== Detailed balance test for mapper: " + mapperName + " ===");
             System.out.println(groupCounter);
             System.err.println(proposalCounter);
 
-            for (String group : groupCounter.keySet()) {
+            double flowSigmaMultiplier = getFlowSigmaMultiplier();
+            for (String fromGroup : groupCounter.keySet()) {
                 for (String toGroup : groupCounter.keySet()) {
-                    // Only check each pair once (by excluding on order of the pair)
-                    if (group.compareTo(toGroup) < 0 ) 
-                        continue;
-                    
-                    // Skip self-loops (trivially symmetric)
-                    if (group.equals(toGroup)) 
+                    // Check each unordered pair once, skipping trivially symmetric self-loops.
+                    if (fromGroup.compareTo(toGroup) <= 0)
                         continue;
 
-                    String keyForward = group + "-" + toGroup;
-                    String keyBackward = toGroup + "-" + group;
+                    String keyForward = fromGroup + "-" + toGroup;
+                    String keyBackward = toGroup + "-" + fromGroup;
 
                     double transitionsForward = flow.get(keyForward);
                     double transitionsBackward = flow.get(keyBackward);
 
                     // Skip low count/high variance groups
-                    if (Math.min(groupCounter.getCount(group), groupCounter.getCount(toGroup)) < 20) 
+                    if (Math.min(groupCounter.getCount(fromGroup), groupCounter.getCount(toGroup)) < 20)
                         continue;
 
-                    // Skip low count/high variance groups
-                    if (Math.min(proposalCounter.getCount(keyForward), proposalCounter.getCount(keyBackward)) < 20) 
+                    // Skip low count/high variance transitions
+                    if (Math.min(proposalCounter.getCount(keyForward), proposalCounter.getCount(keyBackward)) < 20)
                         continue;
 
-                    double forwVariance = estimateFlowVariance(groupCounter.getCount(group), proposalCounter.getCount(keyForward), transitionsForward);
-                    double backVariance = estimateFlowVariance(groupCounter.getCount(toGroup), proposalCounter.getCount(keyBackward), transitionsBackward);
-                    double tolerance = 3 * Math.sqrt(forwVariance + backVariance);
-
-                    /*
-                    Operator steps should follow detailed balance between classes
-                    Detailed balance: p_i * q_ij = p_j * q_ji
-                    */
+                    double forwVariance = estimateFlowVariance(flowSquares.get(keyForward), transitionsForward);
+                    double backVariance = estimateFlowVariance(flowSquares.get(keyBackward), transitionsBackward);
+                    double tolerance = flowSigmaMultiplier * Math.sqrt(forwVariance + backVariance);
 
                     if (Math.max(transitionsForward, transitionsBackward) > 0)
                         System.out.println(
                             String.format("%-8s:  %8.4f <-> %8.4f    (tol=%8.4f     diff=%8.4f)", keyForward, transitionsForward, transitionsBackward, tolerance, Math.abs(transitionsForward - transitionsBackward))
                         );
                     Assert.assertEquals(
-                        "Detailed balance [" + mapperName + "] " + group + "-" + toGroup,
+                        "Detailed balance [" + mapperName + "] " + fromGroup + "-" + toGroup,
                         transitionsForward, transitionsBackward, tolerance);
                 }
             }
         }
     }
 
-    double estimateFlowVariance(int stateCounts, int proposalCounts, double totalFlow) {
-        double proposalFrequency = (double) proposalCounts / stateCounts;
-        double meanAcceptRate = (totalFlow / proposalCounts);
-        System.err.println(meanAcceptRate);
-        return NUM_SAMPLES * meanAcceptRate * proposalFrequency * (1 - proposalFrequency);
-    }
-
-    protected TaxonSet getTaxonSet(int numTaxa) {
-        TaxonSet taxonSet = new TaxonSet();
-        for (int i = 0; i < numTaxa; i++) {
-            taxonSet.initByName("taxon", new Taxon(String.valueOf(i)));
-        }
-        return taxonSet;
-    }
-
-    protected TreeDistribution getPrior(Tree tree) {
-        YuleModel treePrior = new YuleModel();
-        treePrior.initByName(
-                "tree", tree,
-                "birthDiffRate", "" + BIRTH_DIFF_RATE
-        );
-        return treePrior;
-    }
-
-    static public Alignment createDummyAlignment() {
-        Sequence seq0 = new Sequence("0", "TGATAAAGAGTTACTAGAGTAAATAATAGGAGCTCCCCCTAGACTATG");
-        Sequence seq1 = new Sequence("1", "CGATACAGAATTACTAGAGTAAATAATAGGAGTATCCCCCTGACTATA");
-        Sequence seq2 = new Sequence("2", "TGATAAAGAAATACTAGAGTAAATAATAGGAGTTTCCCCTTGACTAAG");
-        Sequence seq3 = new Sequence("3", "AGATATAGAGTTACTAGAGTAAATAATAGAGGTACCCGCTTGACAATG");
-        Sequence seq4 = new Sequence("4", "TGACA-AGAGTTACTAGAGTAAAAAATAGAGGTCTCCCCTTCAGTATG");
-        // Sequence seq5 = new Sequence("5", "CGACGAAGAGTTACTAGAGTAAATAACAGGGGTTTCCCCTTAACCATAGGAGTCGAACCCATCCTTGAGAATCCCTGCCACCCGTCGCACCCTGTTCTAAGTAAGGGGTTATACCCTTCCCATACTAAGAAATTTAGGTTAAACACAGACCAAGAGCC");
-
-        Alignment data = new Alignment();
-        data.initByName(
-            "sequence", seq0,
-            "sequence", seq1,
-            "sequence", seq2,
-            "sequence", seq3,
-            "sequence", seq4,
-            // "sequence", seq5,
-            "dataType", "nucleotide"
-        );
-        return data;
-    }
-
-    /*
-     * Factories to pass to the test function to create various operators 
-     */
-
-    abstract class OperatorFactory {
-
-        abstract public TreeOperator getOperator(Tree tree);
-
-        SiteModel getSiteModel() {
-            SiteModel siteModel = new SiteModel();
-            siteModel.initByName("substModel", new JukesCantor());
-            return siteModel;
-        }
-
-        ConstantWeights getConstantWeights(Tree tree) {
-            ConstantWeights edgeWeights = new ConstantWeights();
-            edgeWeights.initByName("tree", tree);
-            return edgeWeights;
-        }
-
-        ParsimonyWeights2 getParsimonyWeights(Tree tree) {
-            ConsensusAlignment consAlignment = new ConsensusAlignment();
-            consAlignment.initByName("data", alignment);
-            ParsimonyWeights2 edgeWeights = new ParsimonyWeights2();
-            edgeWeights.initByName("tree", tree, "data", consAlignment);
-            return edgeWeights;
-        }
-
-        PCAWeights getPCAWeights(Tree tree) {
-            PCAWeights edgeWeights = new PCAWeights();
-            edgeWeights.initByName("tree", tree, "data", alignment, "dimension", 3);
-            return edgeWeights;
-        }
-        
-        FelsensteinWeights getLikelihoodWeights(Tree tree) {
-            SlowTreeLikelihood treeLikelihood = new SlowTreeLikelihood();
-            treeLikelihood.initByName("tree", tree, "siteModel", getSiteModel(), "data", alignment, "implementation", "SlowBeerLikelihoodCore4");
-            FelsensteinWeights edgeWeights = new FelsensteinWeights();
-            edgeWeights.initByName("tree", tree, "likelihood", treeLikelihood, "data", alignment);
-            return edgeWeights;
-        }
-        
-    }
-
-    class TargetedWilsonBaldingConstFactory extends OperatorFactory {
-
-        @Override
-        public TargetedWilsonBalding getOperator(Tree tree) {
-            // alignment = new SimulatedAlignment();
-            // alignment.initByName("tree", tree, "siteModel", getSiteModel(), "sequenceLength", 5, "dataType", "nucleotide");
-            TargetedWilsonBalding operator = new TargetedWilsonBalding();
-            operator.initByName("tree", tree, "weight", 1.0, "edgeWeights", getConstantWeights(tree));
-            return operator;
-        }
-    }
-
-    class TargetedWilsonBaldingFactory extends OperatorFactory {
-
-        @Override
-        public TargetedWilsonBalding getOperator(Tree tree) {
-            TargetedWilsonBalding operator = new TargetedWilsonBalding();
-            operator.initByName("tree", tree, "weight", 1.0, "edgeWeights", getParsimonyWeights(tree));
-            return operator;
-        }
-    }
-
-    class TargetedWilsonBaldingFelsensteinFactory extends OperatorFactory {
-
-        @Override
-        public TargetedWilsonBalding getOperator(Tree tree) {
-            TargetedWilsonBalding operator = new TargetedWilsonBalding();
-            operator.initByName("tree", tree, "weight", 1.0, "edgeWeights", getLikelihoodWeights(tree));
-            return operator;
-        }
-    }
-
-
-    class TargetedWilsonBaldingFixedHeightFactory extends OperatorFactory {
-
-        @Override
-        public TargetedWilsonBaldingFixedHeight getOperator(Tree tree) {
-            TargetedWilsonBaldingFixedHeight operator = new TargetedWilsonBaldingFixedHeight();
-            operator.initByName("tree", tree, "weight", 1.0, "edgeWeights", getPCAWeights(tree));
-            return operator;
-        }
-    }
-
-
     /**
-     * Compute tree-level imbalance as weighted sum of node imbalances
-     * @param tree The tree to compute imbalance for
-     * @return Weighted sum of node imbalances
+     * Empirical variance of a transition flow.
+     *
+     * <p>The flow {@code F = sum_s X_s} is a sum over the {@code N} iid samples of the
+     * per-sample contribution {@code X_s = 1{transition observed} * pAccept_s}, so
+     * {@code Var(F) = N * Var(X)}, estimated by the (Bessel-corrected) sample variance:
+     * {@code N/(N-1) * (sum_s X_s^2 - F^2/N)}. No assumptions are made about how
+     * {@code pAccept} is distributed within a transition class; its spread is measured
+     * directly through the sum of squares.
+     *
+     * @param sumSquaredFlow {@code sum_s X_s^2}, the sum of squared acceptance masses
+     * @param totalFlow      {@code F}, the total acceptance mass for the transition
      */
-    static public double treeImbalance(Tree tree) {
-        double weightedSum = 0.0;
-        double totalWeight = 0.0;
-        
-        // Traverse all internal nodes and compute weighted imbalance
-        for (Node node : tree.getNodesAsArray()) {
-            if (!node.isLeaf()) {
-                ImbalanceResult result = nodeImbalance(node);
-                if (!Double.isNaN(result.imbalance)) {
-                    weightedSum += result.imbalance * result.weight;
-                    totalWeight += result.weight;
-                }
-            }
-        }
-        
-        // Return weighted average if there are any internal nodes
-        return totalWeight > 0 ? weightedSum / totalWeight : 0.0;
-    }
-
-    static public int rootImbalance(Node root) {
-        return Math.abs(root.getLeft().getLeafNodeCount() - root.getRight().getLeafNodeCount());
-    }
-
-    /**
-     * Helper class to hold imbalance and weight values
-     */
-    static class ImbalanceResult {
-        public final double imbalance;
-        public final double weight;
-        
-        public ImbalanceResult(double imbalance, double weight) {
-            this.imbalance = imbalance;
-            this.weight = weight;
-        }
-    }
-    
-    /**
-     * Compute node imbalance metric
-     * @param node The node to compute imbalance for
-     * @return ImbalanceResult containing imbalance and weight
-     */
-    static public ImbalanceResult nodeImbalance(Node node) {
-        int size = node.getLeafNodeCount();
-        double I;
-        double w = 1.0;
-
-        if (node.getChildCount() < 2 || size < 4) {
-            I = Double.NaN;
-        } else {
-            Node c1 = node.getChild(0);
-            Node c2 = node.getChild(1);
-
-            int bigger = Math.max(c1.getLeafNodeCount(), c2.getLeafNodeCount());
-            double m = Math.ceil(size / 2.0);
-
-            I = (bigger - m) / (size - m - 1);
-        }
-
-        if (size % 2 == 1) {  // odd
-            w = 1.0;
-        } else {              // even
-            w = 1.0 - 1.0 / size;
-            if (I == 0) {
-                w *= 2;
-            } else {
-                assert Double.isNaN(I) || I > 0 : "I should be NaN or positive, but was: " + I;
-            }
-        }
-        if (Double.isNaN(I)) {
-            I = 0.0;
-            w = 0.0;
-        }
-        return new ImbalanceResult(I, w);
+    protected double estimateFlowVariance(final double sumSquaredFlow, final double totalFlow) {
+        final int n = getNumSamples();
+        return (sumSquaredFlow - totalFlow * totalFlow / n) * n / (n - 1.0);
     }
 
 }

@@ -33,7 +33,14 @@ public interface EdgeWeights {
 	double getEdgeWeights(int nodeNr);
 	
 	/**
-	 * Get the distance from one node to a list of nodes
+	 * Get per-candidate target weights for moving one lineage to a list of targets.
+	 *
+	 * Implementations must return intrinsic weights for each candidate move. In particular,
+	 * a candidate weight must not depend on the current tree state's baseline score or on
+	 * centering against the full candidate set, because targeted operators square and
+	 * renormalize these values and may compare forward and backward masses built from
+	 * different states or candidate lists.
+	 *
 	 * @param fromNodeNr
 	 * @param toNodeNrs
 	 * @return
@@ -49,7 +56,9 @@ public interface EdgeWeights {
     }
 	
 	/**
-	 * Get the distance from one node to a list of nodes
+	 * Get per-candidate target weights for moving one lineage to a list of targets.
+	 *
+	 * The same intrinsic-weight contract as above applies to these integer-indexed targets.
 	 * 
 	 * @param fromNodeNr
 	 * @param toNodeNrs

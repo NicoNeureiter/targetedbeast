@@ -115,30 +115,25 @@ public class CombinedEdgeWeights extends Distribution implements EdgeWeights {
 		if (toNodes.isEmpty()) {
 			return new double[0];
 		}
-		
-		// Get weights from first source
-		double[] combined = edgeWeightsList.get(0).getTargetWeights(fromNodeNr, toNodes);
-		
-		// Multiply with weights from remaining sources
-		for (int i = 1; i < edgeWeightsList.size(); i++) {
-			double[] weights = edgeWeightsList.get(i).getTargetWeights(fromNodeNr, toNodes);
-			for (int k = 0; k < combined.length; k++) {
-				combined[k] *= weights[k];
-			}
+		return combineTargetWeights(fromNodeNr, toNodes, edgeWeights -> edgeWeights.getTargetWeights(fromNodeNr, toNodes));
+	}
+
+	@Override
+	public double[] getTargetWeights(int fromNodeNr, List<Node> toNodes, double toHeight) {
+		if (toNodes.isEmpty()) {
+			return new double[0];
 		}
-		
-		// Renormalize to sum to 1
-		double sum = 0.0;
-		for (double w : combined) {
-			sum += w;
+		return combineTargetWeights(fromNodeNr, toNodes,
+				edgeWeights -> edgeWeights.getTargetWeights(fromNodeNr, toNodes, toHeight));
+	}
+
+	@Override
+	public double[] getTargetWeights(int fromNodeNr, List<Node> toNodes, List<Double> toHeights) {
+		if (toNodes.isEmpty()) {
+			return new double[0];
 		}
-		if (sum > 0) {
-			for (int k = 0; k < combined.length; k++) {
-				combined[k] /= sum;
-			}
-		}
-		
-		return combined;
+		return combineTargetWeights(fromNodeNr, toNodes,
+				edgeWeights -> edgeWeights.getTargetWeights(fromNodeNr, toNodes, toHeights));
 	}
 
 	@Override
@@ -146,30 +141,51 @@ public class CombinedEdgeWeights extends Distribution implements EdgeWeights {
 		if (toNodeNrs.isEmpty()) {
 			return new double[0];
 		}
-		
-		// Get weights from first source
-		double[] combined = edgeWeightsList.get(0).getTargetWeightsInteger(fromNodeNr, toNodeNrs);
-		
-		// Multiply with weights from remaining sources
+		return combineTargetWeights(fromNodeNr, toNodeNrs,
+				edgeWeights -> edgeWeights.getTargetWeightsInteger(fromNodeNr, toNodeNrs));
+	}
+
+	@Override
+	public double[] getTargetWeightsInteger(int fromNodeNr, List<Integer> toNodeNrs, double toHeight) {
+		if (toNodeNrs.isEmpty()) {
+			return new double[0];
+		}
+		return combineTargetWeights(fromNodeNr, toNodeNrs,
+				edgeWeights -> edgeWeights.getTargetWeightsInteger(fromNodeNr, toNodeNrs, toHeight));
+	}
+
+	@Override
+	public double[] getTargetWeightsInteger(int fromNodeNr, List<Integer> toNodeNrs, List<Double> toHeights) {
+		if (toNodeNrs.isEmpty()) {
+			return new double[0];
+		}
+		return combineTargetWeights(fromNodeNr, toNodeNrs,
+				edgeWeights -> edgeWeights.getTargetWeightsInteger(fromNodeNr, toNodeNrs, toHeights));
+	}
+
+	private double[] combineTargetWeights(int fromNodeNr, List<?> targets,
+			java.util.function.Function<EdgeWeights, double[]> getter) {
+		double[] combined = getter.apply(edgeWeightsList.get(0));
 		for (int i = 1; i < edgeWeightsList.size(); i++) {
-			double[] weights = edgeWeightsList.get(i).getTargetWeightsInteger(fromNodeNr, toNodeNrs);
+			double[] weights = getter.apply(edgeWeightsList.get(i));
 			for (int k = 0; k < combined.length; k++) {
 				combined[k] *= weights[k];
 			}
 		}
-		
-		// Renormalize to sum to 1
+		renormalize(combined);
+		return combined;
+	}
+
+	private void renormalize(double[] weights) {
 		double sum = 0.0;
-		for (double w : combined) {
-			sum += w;
+		for (double weight : weights) {
+			sum += weight;
 		}
-		if (sum > 0) {
-			for (int k = 0; k < combined.length; k++) {
-				combined[k] /= sum;
+		if (sum > 0.0) {
+			for (int k = 0; k < weights.length; k++) {
+				weights[k] /= sum;
 			}
 		}
-		
-		return combined;
 	}
 
 	@Override
