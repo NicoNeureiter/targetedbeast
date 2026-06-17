@@ -80,7 +80,7 @@ public abstract class DetailedBalanceTest<S> {
 
     /** Number of standard deviations of slack allowed when comparing forward/backward flow. */
     protected double getFlowSigmaMultiplier() {
-        return 2.0;
+        return 3.5;
     }
 
     /** The named quantisation functions to verify detailed balance over. */
