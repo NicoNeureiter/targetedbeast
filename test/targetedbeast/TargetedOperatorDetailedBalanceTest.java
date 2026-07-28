@@ -523,4 +523,77 @@ public class TargetedOperatorDetailedBalanceTest extends DetailedBalanceTest<Tre
         }));
     }
 
+    /**
+     * Detailed balance for the source-selection path under a transform.
+     *
+     * <p>StructuralSourceWeights gives uniform target weights (so the target term cancels)
+     * and strongly depth-dependent, uncached source weights, so a mistake in the reverse
+     * source term cannot be blamed on stale caches.
+     */
+    @Test
+    public void testTargWilsonBaldingSourceTransform() throws Exception {
+        testDetailedBalance(new TreeTrial(tree -> {
+            targetedbeast.edgeweights.StructuralSourceWeights edgeWeights =
+                    new targetedbeast.edgeweights.StructuralSourceWeights();
+            edgeWeights.initByName("tree", tree);
+
+            targetedbeast.weighttransform.PowerOffsetTransform transform =
+                    new targetedbeast.weighttransform.PowerOffsetTransform();
+            transform.initByName("exponent", 0.6, "offset", 0.4, "optimise", false);
+
+            TreeOperator operator = new TargetedWilsonBalding();
+            operator.initByName(
+                    "tree", tree,
+                    "weight", 1.0,
+                    "edgeWeights", edgeWeights,
+                    "useEdgeLength", false,
+                    "edgeWeightTransform", transform);
+            return operator;
+        }));
+    }
+
+    /**
+     * The source transform with useEdgeLength=true. This path used to update the reverse
+     * total incrementally, which is only valid when the total is a plain sum; a transform
+     * makes it nonlinear, so the whole vector must be recomputed.
+     */
+    @Test
+    public void testTargWilsonBaldingSourceTransformEdgeLength() throws Exception {
+        testDetailedBalance(new TreeTrial(tree -> {
+            targetedbeast.weighttransform.PowerOffsetTransform transform =
+                    new targetedbeast.weighttransform.PowerOffsetTransform();
+            transform.initByName("exponent", 2.5, "offset", 0.2, "optimise", false);
+
+            TreeOperator operator = new TargetedWilsonBalding();
+            operator.initByName(
+                    "tree", tree,
+                    "weight", 1.0,
+                    "edgeWeights", getPCAWeights(tree),
+                    "useEdgeLength", true,
+                    "edgeWeightTransform", transform);
+            return operator;
+        }));
+    }
+
+    /** The transform must never make the root selectable as a source edge. */
+    @Test
+    public void testTargWilsonBaldingSourceTransformNeverSelectsRoot() throws Exception {
+        testDetailedBalance(new TreeTrial(tree -> {
+            targetedbeast.weighttransform.PowerOffsetTransform transform =
+                    new targetedbeast.weighttransform.PowerOffsetTransform();
+            // A huge offset makes the proposal nearly uniform over source edges, which is
+            // when a wrongly-included root would be picked most often.
+            transform.initByName("exponent", 1.0, "offset", 50.0, "optimise", false);
+
+            TreeOperator operator = new TargetedWilsonBalding();
+            operator.initByName(
+                    "tree", tree,
+                    "weight", 1.0,
+                    "edgeWeights", getPCAWeights(tree),
+                    "useEdgeLength", false,
+                    "edgeWeightTransform", transform);
+            return operator;
+        }));
+    }
+
 }

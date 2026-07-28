@@ -189,23 +189,74 @@ public class TargetedWilsonBalding extends TreeOperator {
 		return useEdgeLength ? node.getLength() : edgeWeights.getEdgeWeights(node.getNr());
 	}
 
-	private SourceSelection selectSourceNode(Tree tree, boolean useEdgeLength) {
-		double totalWeight = 0.0;
-		for (int nodeNr = 0; nodeNr < tree.getNodeCount(); nodeNr++) {
-			totalWeight += getSourceWeight(tree.getNode(nodeNr), useEdgeLength);
+	/**
+	 * Transformed source weights over the feasible (non-root) nodes.
+	 *
+	 * <p>The root is left out of the vector entirely rather than given weight zero: a
+	 * transform adds its offset to every entry it receives, so a zero-weight root would
+	 * become selectable and break the {@code p = i.getParent()} that follows.
+	 */
+	private static final class SourceWeights {
+		final int[] nodeNrs;
+		final double[] weights;
+		final double total;
+
+		SourceWeights(int[] nodeNrs, double[] weights) {
+			this.nodeNrs = nodeNrs;
+			this.weights = weights;
+			double sum = 0.0;
+			for (double w : weights) {
+				sum += w;
+			}
+			this.total = sum;
 		}
-		if (totalWeight < 1E-12) {
+
+		double weightFor(int nodeNr) {
+			for (int m = 0; m < nodeNrs.length; m++) {
+				if (nodeNrs[m] == nodeNr) {
+					return weights[m];
+				}
+			}
+			throw new IllegalArgumentException("node " + nodeNr + " is not a feasible source edge");
+		}
+	}
+
+	/** Build and transform the source weights of every non-root node, in node-number order. */
+	private SourceWeights getSourceWeights(Tree tree, boolean useEdgeLength) {
+		int nodeCount = tree.getNodeCount();
+		int[] nodeNrs = new int[nodeCount - 1];
+		double[] raw = new double[nodeCount - 1];
+
+		int m = 0;
+		for (int nodeNr = 0; nodeNr < nodeCount; nodeNr++) {
+			Node node = tree.getNode(nodeNr);
+			if (node.isRoot()) {
+				continue;
+			}
+			nodeNrs[m] = nodeNr;
+			raw[m] = useEdgeLength ? node.getLength() : edgeWeights.getEdgeWeights(nodeNr);
+			m++;
+		}
+
+		double[] weights = edgeWeightTransform == null ? raw : edgeWeightTransform.apply(raw);
+		return new SourceWeights(nodeNrs, weights);
+	}
+
+	private SourceSelection selectSourceNode(Tree tree, boolean useEdgeLength) {
+		SourceWeights sourceWeights = getSourceWeights(tree, useEdgeLength);
+		if (sourceWeights.total < 1E-12) {
 			throw new IllegalStateException("TargetedWilsonBalding has no selectable source edges");
 		}
 
-		double scaler = Randomizer.nextDouble() * totalWeight;
+		double scaler = Randomizer.nextDouble() * sourceWeights.total;
 		double cumulativeWeight = 0.0;
-		for (int nodeNr = 0; nodeNr < tree.getNodeCount(); nodeNr++) {
-			Node node = tree.getNode(nodeNr);
-			double nodeWeight = getSourceWeight(node, useEdgeLength);
-			cumulativeWeight += nodeWeight;
+		for (int m = 0; m < sourceWeights.weights.length; m++) {
+			cumulativeWeight += sourceWeights.weights[m];
 			if (cumulativeWeight > scaler) {
-				return new SourceSelection(node, totalWeight, nodeWeight);
+				return new SourceSelection(
+						tree.getNode(sourceWeights.nodeNrs[m]),
+						sourceWeights.total,
+						sourceWeights.weights[m]);
 			}
 		}
 
@@ -478,21 +529,22 @@ public class TargetedWilsonBalding extends TreeOperator {
 		// Reverse source-selection probability, evaluated on the moved tree T'.
 		double iWeight;
 		double reverseTotalWeight;
-		if (useEdgeLength) {
-			// A Wilson-Balding move only changes the moved subtree's parent edge length,
-			// so the reverse total length is the forward total with that one edge updated.
+		if (useEdgeLength && edgeWeightTransform == null) {
+			// A Wilson-Balding move only changes the moved subtree's parent edge length, and
+			// without a transform the total is a plain sum, so one term can be swapped out.
 			iWeight = getSourceWeight(i, useEdgeLength);
 			reverseTotalWeight = sourceSelection.totalWeight - sourceSelection.selectedWeight + iWeight;
 		} else {
-			// Edge weights change for many edges after the move, so re-evaluate the full
-			// source-weight sum on the moved tree. Sync the cached weights to T' first.
-			edgeWeights.prestore();
-			edgeWeights.updateByOperator();
-			iWeight = getSourceWeight(i, useEdgeLength);
-			reverseTotalWeight = 0.0;
-			for (int nr = 0; nr < tree.getNodeCount(); nr++) {
-				reverseTotalWeight += getSourceWeight(tree.getNode(nr), useEdgeLength);
+			// Either many edge weights changed, or the transform makes the total a nonlinear
+			// function of the whole vector. Recompute it in full.
+			if (!useEdgeLength) {
+				// Sync the cached weights to T' before reading them.
+				edgeWeights.prestore();
+				edgeWeights.updateByOperator();
 			}
+			SourceWeights reverseWeights = getSourceWeights(tree, useEdgeLength);
+			iWeight = reverseWeights.weightFor(i.getNr());
+			reverseTotalWeight = reverseWeights.total;
 		}
 		if (reverseTotalWeight < 1E-12) {
 			return Double.NEGATIVE_INFINITY;
