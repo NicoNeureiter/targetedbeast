@@ -3,7 +3,9 @@ package targetedbeast.operators;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 import beast.base.core.Description;
 import beast.base.core.Input;
@@ -13,6 +15,7 @@ import beast.base.evolution.tree.Tree;
 import beast.base.inference.util.InputUtil;
 import beast.base.util.Randomizer;
 import targetedbeast.edgeweights.EdgeWeights;
+import targetedbeast.weighttransform.WeightTransform;
 
 /**
  * WILSON, I. J. and D. J. BALDING, 1998 Genealogical inference from
@@ -37,12 +40,22 @@ public class TargetedWilsonBalding extends TreeOperator {
 			true);
 
     public Input<Boolean> useEdgeLengthInput = new Input<>("useEdgeLength", "if true, it uses the relative edge lengths for operations", false);
-    
+
+	public Input<WeightTransform> targetWeightTransformInput = new Input<>("targetWeightTransform",
+			"optional transform applied to the target weights before they are normalized; "
+					+ "when absent the target weights are squared, as they always have been");
+
+	public Input<WeightTransform> edgeWeightTransformInput = new Input<>("edgeWeightTransform",
+			"optional transform applied to the source-edge weights before they are normalized");
+
     double limit;
-    
+
     EdgeWeights edgeWeights;
-    
-    
+
+	WeightTransform targetWeightTransform;
+	WeightTransform edgeWeightTransform;
+
+
     @Override
     public void initAndValidate() {
 		limit = mutationLimitInput.get();
@@ -50,6 +63,25 @@ public class TargetedWilsonBalding extends TreeOperator {
 		double maxHeightRatio = maxHeightRatioInput.get();
 		if (!(maxHeightRatio >= 1.0)) {
 			throw new IllegalArgumentException("maxHeightRatio must be >= 1.0");
+		}
+
+		targetWeightTransform = targetWeightTransformInput.get();
+		edgeWeightTransform = edgeWeightTransformInput.get();
+
+		if (targetWeightTransform != null
+				&& targetWeightTransform.requiresLogSpace() != edgeWeights.isLogSpace()) {
+			throw new IllegalArgumentException("targetWeightTransform expects "
+					+ (targetWeightTransform.requiresLogSpace() ? "log" : "real")
+					+ "-space weights but " + edgeWeights.getClass().getSimpleName()
+					+ " returns " + (edgeWeights.isLogSpace() ? "log" : "real") + "-space weights");
+		}
+		// getEdgeWeights is real-space by contract in every implementation, and with
+		// useEdgeLength=true the source weights are branch lengths rather than EdgeWeights
+		// output, so a log-space transform is never correct here.
+		if (edgeWeightTransform != null && edgeWeightTransform.requiresLogSpace()) {
+			throw new IllegalArgumentException(
+					"edgeWeightTransform must be a real-space transform; source edge weights are "
+							+ "never in log space");
 		}
     }
 
@@ -94,7 +126,22 @@ public class TargetedWilsonBalding extends TreeOperator {
 	}
 
 	private double sampleAttachmentAge(AttachmentInterval interval) {
-		return interval.minAge + (Randomizer.nextDouble() * interval.range());
+		double range = interval.range();
+		if (range <= 0.0) {
+			return interval.minAge;
+		}
+		double epsilon = Math.max(1e-10, 1e-6 * range);
+		double lower = interval.minAge + epsilon;
+		double upper = interval.maxAge - epsilon;
+		if (lower >= upper) {
+			return 0.5 * (interval.minAge + interval.maxAge);
+		}
+		return lower + (Randomizer.nextDouble() * (upper - lower));
+	}
+
+	private boolean sameInterval(AttachmentInterval first, AttachmentInterval second) {
+		return Math.abs(first.minAge - second.minAge) < 1e-12
+				&& Math.abs(first.maxAge - second.maxAge) < 1e-12;
 	}
 
 	private double getAttachmentSelectionWeight(AttachmentInterval interval, boolean useAttachmentIntervalLength) {
@@ -107,6 +154,20 @@ public class TargetedWilsonBalding extends TreeOperator {
 
 	private boolean hasAttachmentRange(AttachmentInterval interval) {
 		return interval.range() > 0.0;
+	}
+
+	private void assertAgesWithinIntervals(List<Double> ages, List<AttachmentInterval> intervals, String context) {
+		assert ages.size() == intervals.size() : "Age/interval size mismatch in " + context
+				+ ": ages=" + ages.size() + ", intervals=" + intervals.size();
+		for (int idx = 0; idx < ages.size(); idx++) {
+			double age = ages.get(idx);
+			AttachmentInterval interval = intervals.get(idx);
+			assert interval.contains(age) : "Attachment age outside interval in " + context
+					+ ": age=" + age
+					+ ", minAge=" + interval.minAge
+					+ ", maxAge=" + interval.maxAge
+					+ ", index=" + idx;
+		}
 	}
 
 	private static final class SourceSelection {
@@ -151,8 +212,38 @@ public class TargetedWilsonBalding extends TreeOperator {
 		throw new IllegalStateException("Failed to select source node despite positive total weight");
 	}
 
+	/**
+	 * Reshape a target-weight vector.
+	 *
+	 * <p>Without a transform this is the squaring that has always been applied. With a
+	 * transform, the transform's own exponent replaces it, so the two must never both run.
+	 *
+	 * <p>Every entry must be a genuinely selectable candidate: the transform's offset is
+	 * added to all entries, so an infeasible candidate passed in as zero would acquire
+	 * positive selection probability.
+	 */
+	private double[] applyTargetTransform(double[] rawWeights) {
+		if (targetWeightTransform == null) {
+			double[] out = new double[rawWeights.length];
+			for (int k = 0; k < rawWeights.length; k++) {
+				out[k] = rawWeights[k] * rawWeights[k];
+			}
+			return out;
+		}
+		return targetWeightTransform.apply(rawWeights);
+	}
+
     @Override
     public double proposal() {
+		// Freeze the transform coefficients for this proposal, so the forward and reverse
+		// probabilities below are computed with identical weights.
+		if (targetWeightTransform != null) {
+			targetWeightTransform.startProposal();
+		}
+		if (edgeWeightTransform != null) {
+			edgeWeightTransform.startProposal();
+		}
+
         boolean useEdgeLength = useEdgeLengthInput.get();
 		boolean useAttachmentIntervalLength = useAttachmentIntervalLengthInput.get();
         Tree tree = (Tree) InputUtil.get(treeInput, this);
@@ -162,9 +253,7 @@ public class TargetedWilsonBalding extends TreeOperator {
 		SourceSelection sourceSelection = selectSourceNode(tree, useEdgeLength);
 
 		Node i = sourceSelection.node;
-		if (useEdgeLength) {
-			logHastingsRatio -= Math.log(sourceSelection.selectedWeight / sourceSelection.totalWeight);
-		}
+		logHastingsRatio -= Math.log(sourceSelection.selectedWeight / sourceSelection.totalWeight);
 		
 		Node p = i.getParent();
 		if (p.isRoot()) {
@@ -215,14 +304,15 @@ public class TargetedWilsonBalding extends TreeOperator {
 			edgeWeights.reset();
 			return Double.NEGATIVE_INFINITY;
 		}
+		assertAgesWithinIntervals(candidateAges, candidateIntervals, "forward candidate scoring");
 
-		double[] distance = edgeWeights.getTargetWeights(i.getNr(), candidateNodes, candidateAges);
+		double[] rawTargetWeights = edgeWeights.getTargetWeights(i.getNr(), candidateNodes, candidateAges);
+		double[] distance = applyTargetTransform(rawTargetWeights);
 		double[] forwardMass = new double[distance.length];
-        for (int k=0; k<distance.length; k++) {
-			distance[k] = Math.pow(distance[k], 2);
+		for (int k = 0; k < distance.length; k++) {
 			double intervalWeight = getAttachmentSelectionWeight(candidateIntervals.get(k), useAttachmentIntervalLength);
 			forwardMass[k] = distance[k] * intervalWeight;
-        }
+		}
 		
         int siblingIdx = candidateNodes.indexOf(CiP);
 		double[] selectionMass = forwardMass.clone();
@@ -249,9 +339,13 @@ public class TargetedWilsonBalding extends TreeOperator {
 			}
 		}
         Node j = candidateNodes.get(nodeNr);
-        double newAge = candidateAges.get(nodeNr);
         AttachmentInterval forwardInterval = candidateIntervals.get(nodeNr);
+		double newAge = sampleAttachmentAge(forwardInterval);
 		assert forwardInterval != null;
+		assert forwardInterval.contains(newAge) : "Sampled forward attachment age outside interval"
+				+ ": newAge=" + newAge
+				+ ", minAge=" + forwardInterval.minAge
+				+ ", maxAge=" + forwardInterval.maxAge;
 		logHastingsRatio -= Math.log(1. / forwardInterval.range());
 		logHastingsRatio -= Math.log(selectionMass[nodeNr] / totalDistance);
       
@@ -274,32 +368,6 @@ public class TargetedWilsonBalding extends TreeOperator {
 		final Node PiP = p.getParent();
 
 		double oldAge = p.getHeight();
-		double reverseTotalDistance = 0;
-		double reverseSiblingDistance = 0;
-		AttachmentInterval reverseInterval = null;
-		for (int k = 0; k < candidateNodes.size(); k++) {
-			Node candidate = candidateNodes.get(k);
-			double candidateParentHeight = candidate == CiP ? PiP.getHeight() : candidate.getParent().getHeight();
-			AttachmentInterval candidateReverseInterval = getAttachmentInterval(
-					i.getHeight(),
-					newAge,
-					candidate.getHeight(),
-					candidateParentHeight);
-			double reverseMass = distance[k] * getAttachmentSelectionWeight(candidateReverseInterval, useAttachmentIntervalLength);
-			if (k != nodeNr) {
-				reverseTotalDistance += reverseMass;
-			}
-			if (k == siblingIdx) {
-				reverseSiblingDistance = reverseMass;
-				reverseInterval = candidateReverseInterval;
-			}
-		}
-
-		if (reverseTotalDistance < 1E-12 || reverseSiblingDistance < 1E-12) {
-			return Double.NEGATIVE_INFINITY;
-		}
-		logHastingsRatio += Math.log(reverseSiblingDistance / reverseTotalDistance);
-		
 		p.setHeight(newAge);
 
 		// remove p from PiP, add the other child of p to PiP, frees p
@@ -309,6 +377,96 @@ public class TargetedWilsonBalding extends TreeOperator {
 		// then parent node of j to p
 		replace(jP, j, p);
 
+		List<Node> reverseCandidateNodes = getCoExistingLineages(i, tree);
+		reverseCandidateNodes.remove(i);
+		reverseCandidateNodes.remove(p);
+		if (reverseCandidateNodes.size() == 0) {
+			return Double.NEGATIVE_INFINITY;
+		}
+
+		List<Integer> reverseAncestors = new ArrayList<>();
+		Node reverseAncestor = i.getParent();
+		while (reverseAncestor != null) {
+			if (reverseCandidateNodes.contains(reverseAncestor)) {
+				reverseAncestors.add(reverseAncestor.getNr());
+			}
+			reverseAncestor = reverseAncestor.getParent();
+		}
+
+		edgeWeights.prestore();
+		edgeWeights.updateByOperatorWithoutNode(i.getNr(), reverseAncestors);
+
+		Map<Integer, AttachmentInterval> forwardIntervalsByNode = new HashMap<>();
+		Map<Integer, Double> forwardAgesByNode = new HashMap<>();
+		for (int k = 0; k < candidateNodes.size(); k++) {
+			forwardIntervalsByNode.put(candidateNodes.get(k).getNr(), candidateIntervals.get(k));
+			forwardAgesByNode.put(candidateNodes.get(k).getNr(), candidateAges.get(k));
+		}
+
+		List<Node> feasibleReverseCandidateNodes = new ArrayList<>();
+		List<AttachmentInterval> reverseCandidateIntervals = new ArrayList<>();
+		List<Double> reverseCandidateAges = new ArrayList<>();
+		for (Node candidate : reverseCandidateNodes) {
+			AttachmentInterval reverseCandidateInterval = getAttachmentInterval(i, candidate);
+			if (!hasAttachmentRange(reverseCandidateInterval)) {
+				continue;
+			}
+			feasibleReverseCandidateNodes.add(candidate);
+			reverseCandidateIntervals.add(reverseCandidateInterval);
+			if (candidate == CiP) {
+				reverseCandidateAges.add(oldAge);
+				continue;
+			}
+
+			AttachmentInterval previousInterval = forwardIntervalsByNode.get(candidate.getNr());
+			Double forwardAge = forwardAgesByNode.get(candidate.getNr());
+			if (previousInterval != null && forwardAge != null && sameInterval(previousInterval, reverseCandidateInterval)) {
+				reverseCandidateAges.add(forwardAge);
+			} else {
+				reverseCandidateAges.add(sampleAttachmentAge(reverseCandidateInterval));
+			}
+		}
+		reverseCandidateNodes = feasibleReverseCandidateNodes;
+		if (reverseCandidateNodes.size() == 0) {
+			edgeWeights.reset();
+			return Double.NEGATIVE_INFINITY;
+		}
+		assertAgesWithinIntervals(reverseCandidateAges, reverseCandidateIntervals, "reverse candidate scoring");
+
+		int reverseSiblingIdx = reverseCandidateNodes.indexOf(CiP);
+		if (reverseSiblingIdx < 0) {
+			edgeWeights.reset();
+			return Double.NEGATIVE_INFINITY;
+		}
+		int reverseNoOpIdx = reverseCandidateNodes.indexOf(j);
+
+		double[] rawReverseWeights = edgeWeights.getTargetWeights(i.getNr(), reverseCandidateNodes, reverseCandidateAges);
+		double[] reverseDistance = applyTargetTransform(rawReverseWeights);
+		double[] reverseMass = new double[reverseDistance.length];
+		for (int k = 0; k < reverseDistance.length; k++) {
+			double intervalWeight = getAttachmentSelectionWeight(reverseCandidateIntervals.get(k), useAttachmentIntervalLength);
+			reverseMass[k] = reverseDistance[k] * intervalWeight;
+		}
+
+		double[] reverseSelectionMass = reverseMass.clone();
+		if (reverseNoOpIdx >= 0) {
+			reverseSelectionMass[reverseNoOpIdx] = 0;
+		}
+
+		double reverseTotalDistance = 0;
+		for (double mass : reverseSelectionMass) {
+			reverseTotalDistance += mass;
+		}
+		double reverseSiblingDistance = reverseSelectionMass[reverseSiblingIdx];
+		edgeWeights.reset();
+
+		if (reverseTotalDistance < 1E-12 || reverseSiblingDistance < 1E-12) {
+			return Double.NEGATIVE_INFINITY;
+		}
+		logHastingsRatio += Math.log(reverseSiblingDistance / reverseTotalDistance);
+
+		AttachmentInterval reverseInterval = reverseCandidateIntervals.get(reverseSiblingIdx);
+
         assert reverseInterval != null;
         assert reverseInterval.contains(oldAge);
 		logHastingsRatio += Math.log(1. / reverseInterval.range());
@@ -317,12 +475,43 @@ public class TargetedWilsonBalding extends TreeOperator {
 		Node mrca = getMRCA(PiP, p);
 		mrca.makeDirty(3 - mrca.isDirty());
 		
+		// Reverse source-selection probability, evaluated on the moved tree T'.
+		double iWeight;
+		double reverseTotalWeight;
 		if (useEdgeLength) {
-			double reverseTotalWeight = sourceSelection.totalWeight - sourceSelection.selectedWeight + i.getLength();
-			logHastingsRatio += Math.log(i.getLength() / reverseTotalWeight);
+			// A Wilson-Balding move only changes the moved subtree's parent edge length,
+			// so the reverse total length is the forward total with that one edge updated.
+			iWeight = getSourceWeight(i, useEdgeLength);
+			reverseTotalWeight = sourceSelection.totalWeight - sourceSelection.selectedWeight + iWeight;
+		} else {
+			// Edge weights change for many edges after the move, so re-evaluate the full
+			// source-weight sum on the moved tree. Sync the cached weights to T' first.
+			edgeWeights.prestore();
+			edgeWeights.updateByOperator();
+			iWeight = getSourceWeight(i, useEdgeLength);
+			reverseTotalWeight = 0.0;
+			for (int nr = 0; nr < tree.getNodeCount(); nr++) {
+				reverseTotalWeight += getSourceWeight(tree.getNode(nr), useEdgeLength);
+			}
 		}
-    	
+		if (reverseTotalWeight < 1E-12) {
+			return Double.NEGATIVE_INFINITY;
+		}
+		logHastingsRatio += Math.log(iWeight / reverseTotalWeight);
+
         return logHastingsRatio;
+	}
+
+	@Override
+	public void optimize(final double logAlpha) {
+		if (targetWeightTransform != null) {
+			targetWeightTransform.optimize(logAlpha);
+		}
+		// Guard against the same object being wired to both inputs, which would otherwise
+		// take two adaptation steps from one observation.
+		if (edgeWeightTransform != null && edgeWeightTransform != targetWeightTransform) {
+			edgeWeightTransform.optimize(logAlpha);
+		}
 	}
 	
 	/**
