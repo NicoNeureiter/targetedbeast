@@ -100,4 +100,90 @@ public class WeightTransformTest {
 	public void powerTransformDeclaresRealSpace() {
 		Assert.assertFalse(power(2.0, 0.0).requiresLogSpace());
 	}
+
+	private static ExpOffsetTransform exp(double exponent, double offset) {
+		ExpOffsetTransform t = new ExpOffsetTransform();
+		t.initByName("exponent", exponent, "offset", offset, "optimise", false);
+		return t;
+	}
+
+	private static double[] softmax(double[] x) {
+		double max = Double.NEGATIVE_INFINITY;
+		for (double v : x) {
+			max = Math.max(max, v);
+		}
+		double[] e = new double[x.length];
+		double sum = 0.0;
+		for (int i = 0; i < x.length; i++) {
+			e[i] = Math.exp(x[i] - max);
+			sum += e[i];
+		}
+		for (int i = 0; i < x.length; i++) {
+			e[i] /= sum;
+		}
+		return e;
+	}
+
+	/**
+	 * Log-space weights are only defined up to an additive constant, because every consumer
+	 * normalizes. The transform must therefore be invariant to shifting them.
+	 */
+	@Test
+	public void expTransformIsInvariantToShiftingLogWeights() {
+		double[] logRaw = { -3.2, 0.0, -1.1, -7.4 };
+		double[] shifted = new double[logRaw.length];
+		for (int i = 0; i < logRaw.length; i++) {
+			shifted[i] = logRaw[i] + 12.7;
+		}
+
+		double[] a = normalize(exp(1.6, 0.3).apply(logRaw));
+		double[] b = normalize(exp(1.6, 0.3).apply(shifted));
+		Assert.assertArrayEquals(a, b, TOL);
+	}
+
+	/**
+	 * The power form on softmax output is exactly temperature scaling:
+	 * normalize(softmax(x)^b) == softmax(b*x).
+	 */
+	@Test
+	public void powerOnSoftmaxOutputIsTemperatureScaling() {
+		double[] x = { -3.2, 0.0, -1.1, -7.4 };
+		double b = 2.4;
+
+		double[] scaled = new double[x.length];
+		for (int i = 0; i < x.length; i++) {
+			scaled[i] = b * x[i];
+		}
+		double[] expected = softmax(scaled);
+
+		double[] got = normalize(power(b, 0.0).apply(softmax(x)));
+		Assert.assertArrayEquals(expected, got, 1e-10);
+	}
+
+	/** A log-weight of negative infinity means an impossible candidate and must stay at the offset. */
+	@Test
+	public void expTransformHandlesNegativeInfinity() {
+		double[] logRaw = { -1.0, Double.NEGATIVE_INFINITY, 0.0 };
+		double[] got = exp(1.0, 0.5).apply(logRaw);
+
+		for (double v : got) {
+			Assert.assertTrue("expected finite, got " + v, Double.isFinite(v));
+		}
+		// The impossible candidate carries only the offset, so it is the smallest entry.
+		Assert.assertTrue(got[1] < got[0]);
+		Assert.assertTrue(got[1] < got[2]);
+	}
+
+	/** An all-impossible candidate set must degrade to uniform rather than to NaN. */
+	@Test
+	public void expTransformOnAllNegativeInfinityIsUniform() {
+		double[] logRaw = { Double.NEGATIVE_INFINITY, Double.NEGATIVE_INFINITY };
+		double[] got = normalize(exp(1.0, 0.01).apply(logRaw));
+		Assert.assertArrayEquals(new double[] { 0.5, 0.5 }, got, TOL);
+	}
+
+	@Test
+	public void expTransformDeclaresLogSpace() {
+		Assert.assertTrue(exp(1.0, 0.0).requiresLogSpace());
+	}
 }
