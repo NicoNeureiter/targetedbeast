@@ -76,4 +76,19 @@ public interface EdgeWeights {
 
 	double minEdgeWeight();
 
+	/**
+	 * Whether {@link #getTargetWeights} and {@link #getTargetWeightsInteger} return weights
+	 * in log space.
+	 *
+	 * <p>This describes the <em>target</em> weights only. {@link #getEdgeWeights} returns a
+	 * real-space, non-negative scalar in every implementation and must continue to do so.
+	 *
+	 * <p>A {@code targetWeightTransform} on an operator must agree with this flag: a
+	 * transform written for real-space input applied to log-space weights, or the reverse,
+	 * silently produces a wrong proposal distribution rather than an error.
+	 */
+	default boolean isLogSpace() {
+		return false;
+	}
+
 }
