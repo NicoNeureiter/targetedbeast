@@ -6,6 +6,7 @@ import beast.base.core.BEASTObject;
 import beast.base.core.Description;
 import beast.base.core.Input;
 import beast.base.core.Loggable;
+import beast.base.util.Randomizer;
 
 @Description("Reshapes raw edge or target weights before a targeted operator normalizes them. "
 		+ "The pointiness coefficient controls how greedy the resulting proposal is; the offset "
@@ -30,6 +31,16 @@ public abstract class WeightTransform extends BEASTObject implements Loggable {
 			0.01);
 	final public Input<Boolean> optimiseInput = new Input<>("optimise",
 			"if true, the coefficients are adapted during the MCMC to raise the acceptance rate", true);
+	final public Input<Double> stepSizeInput = new Input<>("stepSize",
+			"SPSA gain numerator A; the step taken per proposal is A/(n+n0)^0.602 divided by the "
+					+ "current perturbation", 0.05);
+	final public Input<Double> perturbationInput = new Input<>("perturbation",
+			"SPSA perturbation numerator C; coefficients are jittered by C/(n+n0)^0.101 in log space "
+					+ "each proposal", 0.2);
+	final public Input<Integer> stabilityConstantInput = new Input<>("stabilityConstant",
+			"SPSA stability constant n0; larger values make the early adaptation gentler", 100);
+	final public Input<Double> baselineRateInput = new Input<>("baselineRate",
+			"EWMA rate for the running acceptance baseline used as an SPSA control variate", 0.01);
 
 	/** Coefficients in log space. Adapted by optimize(); never read directly by apply(). */
 	protected double[] theta;
@@ -40,10 +51,22 @@ public abstract class WeightTransform extends BEASTObject implements Loggable {
 	/** True once apply() has been called since the last startProposal(). */
 	private boolean used;
 
+	/** Rademacher perturbation directions drawn for the current proposal. */
+	private double[] signs;
+
+	/** Running mean acceptance, used as a control variate in the SPSA update. */
+	private double baseline;
+
+	/** Number of completed adaptation steps. */
+	private long adaptationCount;
+
 	@Override
 	public void initAndValidate() {
 		theta = new double[COEFFICIENT_NAMES.length];
 		effective = new double[COEFFICIENT_NAMES.length];
+		signs = new double[COEFFICIENT_NAMES.length];
+		baseline = 0.0;
+		adaptationCount = 0;
 		setCoefficients(new double[] { exponentInput.get(), offsetInput.get() });
 	}
 
@@ -80,19 +103,91 @@ public abstract class WeightTransform extends BEASTObject implements Loggable {
 	/** True if this transform expects log-space input weights. */
 	public abstract boolean requiresLogSpace();
 
-	/** Called by the operator at the start of every proposal, before any call to apply(). */
+	/**
+	 * Called by the operator at the start of every proposal, before any call to apply().
+	 *
+	 * <p>Draws the SPSA perturbation and freezes the resulting coefficients for the whole
+	 * proposal. Freezing is what keeps the forward and reverse probabilities of a single
+	 * proposal mutually consistent, so the Hastings ratio stays correct.
+	 */
 	public void startProposal() {
 		used = false;
+		if (!optimiseInput.get()) {
+			return;
+		}
+		double c = getPerturbationSize();
+		for (int i = 0; i < theta.length; i++) {
+			signs[i] = Randomizer.nextBoolean() ? 1.0 : -1.0;
+			effective[i] = Math.exp(clamp(theta[i] + c * signs[i], i));
+		}
 	}
 
 	/**
-	 * One adaptation step, called from the operator's optimize().
+	 * One SPSA step toward higher acceptance.
+	 *
+	 * <p>Because the perturbation directions are symmetric, the expectation of
+	 * {@code (alpha - baseline) * signs} is proportional to the gradient of the expected
+	 * acceptance with respect to the log coefficients. The baseline is a control variate:
+	 * without it the update is dominated by the magnitude of alpha rather than by its
+	 * dependence on the coefficients.
 	 *
 	 * @param logAlpha difference in posterior between previous and proposed state, plus the
 	 *                 Hastings ratio
 	 */
 	public void optimize(double logAlpha) {
-		// Adaptation is added in a later task.
+		// A proposal that aborted before touching the weights says nothing about the
+		// coefficients; counting it would inject pure noise.
+		if (!optimiseInput.get() || !wasUsed()) {
+			return;
+		}
+		double alpha = Math.exp(Math.min(logAlpha, 0.0));
+		if (Double.isNaN(alpha)) {
+			return;
+		}
+
+		double gain = getStepSize() / getPerturbationSize();
+		for (int i = 0; i < theta.length; i++) {
+			theta[i] = clamp(theta[i] + gain * (alpha - baseline) * signs[i], i);
+		}
+		baseline += baselineRateInput.get() * (alpha - baseline);
+		adaptationCount++;
+		refreshEffective();
+	}
+
+	/** Current SPSA step gain a_n. */
+	protected double getStepSize() {
+		return stepSizeInput.get() / Math.pow(adaptationCount + stabilityConstantInput.get(), 0.602);
+	}
+
+	/**
+	 * Current SPSA perturbation size c_n.
+	 *
+	 * <p>Both a_n/c_n and c_n tend to zero, which is what gives diminishing adaptation.
+	 */
+	public double getPerturbationSize() {
+		return perturbationInput.get() / Math.pow(adaptationCount + stabilityConstantInput.get(), 0.101);
+	}
+
+	/** Perturbed coefficients in use for the current proposal, in natural space. */
+	public double[] getEffectiveCoefficients() {
+		return effective.clone();
+	}
+
+	/** Number of completed adaptation steps. */
+	public long getAdaptationCount() {
+		return adaptationCount;
+	}
+
+	/** Running mean acceptance used as the SPSA control variate. */
+	public double getAcceptanceBaseline() {
+		return baseline;
+	}
+
+	/** Restore a previously persisted adaptation state (see the operator's state file). */
+	public void setAdaptationState(double[] naturalCoefficients, long n, double acceptanceBaseline) {
+		setCoefficients(naturalCoefficients);
+		this.adaptationCount = n;
+		this.baseline = acceptanceBaseline;
 	}
 
 	/** True if apply() has been called since the last startProposal(). */
