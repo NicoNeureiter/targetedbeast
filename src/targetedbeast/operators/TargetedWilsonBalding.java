@@ -1,12 +1,17 @@
 
 package targetedbeast.operators;
 
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
 import beast.base.core.Description;
 import beast.base.core.Input;
 import beast.base.evolution.operator.TreeOperator;
@@ -565,7 +570,83 @@ public class TargetedWilsonBalding extends TreeOperator {
 			edgeWeightTransform.optimize(logAlpha);
 		}
 	}
-	
+
+	/**
+	 * Persist the transform tuning alongside the standard operator statistics, using the
+	 * nested-JSON convention documented on {@link beast.base.inference.Operator#storeToFile}.
+	 *
+	 * <p>The iteration count matters as much as the coefficients: without it a resumed chain
+	 * resets the SPSA gain sequences to their maximum and takes a burst of large adaptation
+	 * steps mid-run.
+	 */
+	@Override
+	public void storeToFile(final PrintWriter out) {
+		if (targetWeightTransform == null && edgeWeightTransform == null) {
+			super.storeToFile(out);
+			return;
+		}
+
+		StringWriter buffer = new StringWriter();
+		PrintWriter bufferedOut = new PrintWriter(buffer);
+		super.storeToFile(bufferedOut);
+		bufferedOut.flush();
+
+		try {
+			JSONObject json = new JSONObject(buffer.toString());
+			JSONArray transforms = new JSONArray();
+			appendTransform(transforms, "target", targetWeightTransform);
+			appendTransform(transforms, "edge", edgeWeightTransform);
+			json.put("transforms", transforms);
+			out.print(json.toString());
+		} catch (JSONException e) {
+			// Match the base class: report and carry on rather than killing the chain.
+			e.printStackTrace();
+			out.print(buffer.toString());
+		}
+	}
+
+	private void appendTransform(JSONArray transforms, String role, WeightTransform transform)
+			throws JSONException {
+		if (transform == null) {
+			return;
+		}
+		double[] coefficients = transform.getCoefficients();
+		JSONObject entry = new JSONObject();
+		entry.put("role", role);
+		entry.put("exponent", coefficients[0]);
+		entry.put("offset", coefficients[1]);
+		entry.put("n", transform.getAdaptationCount());
+		entry.put("baseline", transform.getAcceptanceBaseline());
+		transforms.put(entry);
+	}
+
+	@Override
+	public void restoreFromFile(JSONObject o) {
+		super.restoreFromFile(o);
+		if (!o.has("transforms")) {
+			return;
+		}
+		try {
+			JSONArray transforms = o.getJSONArray("transforms");
+			for (int k = 0; k < transforms.length(); k++) {
+				JSONObject entry = transforms.getJSONObject(k);
+				WeightTransform transform = "target".equals(entry.getString("role"))
+						? targetWeightTransform
+						: edgeWeightTransform;
+				if (transform == null) {
+					continue;
+				}
+				transform.setAdaptationState(
+						new double[] { entry.getDouble("exponent"), entry.getDouble("offset") },
+						entry.getLong("n"),
+						entry.getDouble("baseline"));
+			}
+		} catch (JSONException e) {
+			// Failed to restore tuning; report and continue with the configured defaults.
+			e.printStackTrace();
+		}
+	}
+
 	/**
 	 * Returns all nodes in the given tree whose parent's height exceeds the given node's height,
 	 * excluding the root node.
