@@ -49,3 +49,6 @@ TODO.md
 /examples/primates*.xml
 .snakemake/
 __pycache__/
+
+# Written by MCMC runs in the tests.
+state.backup.xml

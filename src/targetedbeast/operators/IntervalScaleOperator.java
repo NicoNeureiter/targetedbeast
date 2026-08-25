@@ -14,7 +14,6 @@ import beast.base.inference.parameter.RealParameter;
 import beast.base.inference.util.InputUtil;
 import beast.base.util.Randomizer;
 import targetedbeast.edgeweights.EdgeWeights;
-import targetedbeast.likelihood.RapidTreeLikelihood;
 
 
 /**
