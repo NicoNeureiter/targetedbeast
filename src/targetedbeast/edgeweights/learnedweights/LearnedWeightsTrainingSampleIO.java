@@ -15,6 +15,8 @@ public final class LearnedWeightsTrainingSampleIO {
 
     private static final String MAGIC_V1 = "# LearnedWeightsTrainingSamplesV1";
     private static final String MAGIC_V2 = "# LearnedWeightsTrainingSamplesV2";
+    private static final String MAGIC_V3 = "# LearnedWeightsTrainingSamplesV3";
+    private static final String MAGIC_V4 = "# LearnedWeightsTrainingSamplesV4";
 
     private LearnedWeightsTrainingSampleIO() {
     }
@@ -33,8 +35,19 @@ public final class LearnedWeightsTrainingSampleIO {
             Files.createDirectories(outputFile.getParent());
         }
 
+        boolean writeV4 = true;
+        for (LearnedWeightsTreeTrainer.TrainingTreeSample sample : samples) {
+            if (!sample.hasRootFreeFactorization()) {
+                throw new IllegalArgumentException("Training sample is missing root-free covariance data required by cache output");
+            }
+            if (sample.rootFreeCovarianceCholeskyLower == null) {
+                writeV4 = false;
+                break;
+            }
+        }
+
         try (BufferedWriter writer = Files.newBufferedWriter(outputFile)) {
-            writer.write(MAGIC_V2);
+            writer.write(writeV4 ? MAGIC_V4 : MAGIC_V3);
             writer.newLine();
             writer.write("taxa");
             for (String taxon : canonicalTaxa) {
@@ -45,14 +58,29 @@ public final class LearnedWeightsTrainingSampleIO {
 
             for (LearnedWeightsTreeTrainer.TrainingTreeSample sample : samples) {
                 assert sample.getTaxonCount() == canonicalTaxa.length : "Sample taxon count does not match canonicalTaxa length";
-                writer.write(String.format(Locale.US, "sample\t%.17g\t%.17g\t%d",
+                writer.write(String.format(Locale.US, "sample\t%.8g\t%.8g\t%d\t%.8g\t%d",
                         sample.targetLogLikelihood,
                     sample.logDeterminant,
-                    sample.logNormalizerDimension));
+                    sample.logNormalizerDimension,
+                    sample.rootFreeLogDeterminant,
+                    sample.rootFreeLogNormalizerDimension));
                 for (int row = 0; row < sample.precisionMatrix.length; row++) {
                     for (int column = 0; column < sample.precisionMatrix[row].length; column++) {
                         writer.write('\t');
-                        writer.write(String.format(Locale.US, "%.17g", sample.precisionMatrix[row][column]));
+                        writer.write(String.format(Locale.US, "%.8g", sample.precisionMatrix[row][column]));
+                    }
+                }
+                if (writeV4) {
+                    for (int index = 0; index < sample.rootFreeCovarianceCholeskyLower.length; index++) {
+                        writer.write('\t');
+                        writer.write(String.format(Locale.US, "%.8g", sample.rootFreeCovarianceCholeskyLower[index]));
+                    }
+                } else {
+                    for (int row = 0; row < sample.rootFreePrecisionMatrix.length; row++) {
+                        for (int column = 0; column < sample.rootFreePrecisionMatrix[row].length; column++) {
+                            writer.write('\t');
+                            writer.write(String.format(Locale.US, "%.8g", sample.rootFreePrecisionMatrix[row][column]));
+                        }
                     }
                 }
                 writer.newLine();
@@ -67,7 +95,9 @@ public final class LearnedWeightsTrainingSampleIO {
             String magic = reader.readLine();
             boolean v1 = MAGIC_V1.equals(magic);
             boolean v2 = MAGIC_V2.equals(magic);
-            if (!v1 && !v2) {
+            boolean v3 = MAGIC_V3.equals(magic);
+            boolean v4 = MAGIC_V4.equals(magic);
+            if (!v1 && !v2 && !v3 && !v4) {
                 throw new IllegalArgumentException("Unrecognized training sample file format: " + inputFile);
             }
 
@@ -89,7 +119,10 @@ public final class LearnedWeightsTrainingSampleIO {
             }
 
             int taxonCount = fileTaxa.length;
-            int expectedColumns = (v2 ? 4 : 3) + taxonCount * taxonCount;
+            int packedLowerLength = taxonCount * (taxonCount + 1) / 2;
+            int expectedColumns = (v4 ? 6 : (v3 ? 6 : (v2 ? 4 : 3)))
+                    + taxonCount * taxonCount
+                    + (v4 ? packedLowerLength : (v3 ? taxonCount * taxonCount : 0));
             List<LearnedWeightsTreeTrainer.TrainingTreeSample> samples = new ArrayList<>();
             String line;
             while ((line = reader.readLine()) != null) {
@@ -103,19 +136,56 @@ public final class LearnedWeightsTrainingSampleIO {
 
                 double targetLogLikelihood = Double.parseDouble(tokens[1]);
                 double logDeterminant = Double.parseDouble(tokens[2]);
-                int logNormalizerDimension = v2 ? Integer.parseInt(tokens[3]) : taxonCount;
+                int logNormalizerDimension = (v2 || v3 || v4) ? Integer.parseInt(tokens[3]) : taxonCount;
+                double rootFreeLogDeterminant = (v3 || v4) ? Double.parseDouble(tokens[4]) : Double.NaN;
+                int rootFreeLogNormalizerDimension = (v3 || v4) ? Integer.parseInt(tokens[5]) : 0;
                 double[][] precision = new double[taxonCount][taxonCount];
-                int tokenIndex = v2 ? 4 : 3;
+                int tokenIndex = (v3 || v4) ? 6 : (v2 ? 4 : 3);
                 for (int row = 0; row < taxonCount; row++) {
                     for (int column = 0; column < taxonCount; column++) {
                         precision[row][column] = Double.parseDouble(tokens[tokenIndex++]);
                     }
                 }
-                samples.add(new LearnedWeightsTreeTrainer.TrainingTreeSample(
-                        targetLogLikelihood,
-                        precision,
-                        logDeterminant,
-                        logNormalizerDimension));
+                double[][] rootFreePrecision = null;
+                double[] rootFreeCovarianceCholeskyLower = null;
+                if (v3) {
+                    rootFreePrecision = new double[taxonCount][taxonCount];
+                    for (int row = 0; row < taxonCount; row++) {
+                        for (int column = 0; column < taxonCount; column++) {
+                            rootFreePrecision[row][column] = Double.parseDouble(tokens[tokenIndex++]);
+                        }
+                    }
+                } else if (v4) {
+                    rootFreeCovarianceCholeskyLower = new double[packedLowerLength];
+                    for (int index = 0; index < packedLowerLength; index++) {
+                        rootFreeCovarianceCholeskyLower[index] = Double.parseDouble(tokens[tokenIndex++]);
+                    }
+                }
+                if (v4) {
+                    samples.add(new LearnedWeightsTreeTrainer.TrainingTreeSample(
+                            targetLogLikelihood,
+                            precision,
+                            logDeterminant,
+                            logNormalizerDimension,
+                            rootFreeCovarianceCholeskyLower,
+                            rootFreeLogDeterminant,
+                            rootFreeLogNormalizerDimension,
+                            Double.NaN,
+                            Double.NaN,
+                            Double.NaN));
+                } else {
+                    samples.add(new LearnedWeightsTreeTrainer.TrainingTreeSample(
+                            targetLogLikelihood,
+                            precision,
+                            logDeterminant,
+                            logNormalizerDimension,
+                            rootFreePrecision,
+                            rootFreeLogDeterminant,
+                            rootFreeLogNormalizerDimension,
+                            Double.NaN,
+                            Double.NaN,
+                            Double.NaN));
+                }
             }
             return Collections.unmodifiableList(samples);
         }
