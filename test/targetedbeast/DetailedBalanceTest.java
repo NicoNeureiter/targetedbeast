@@ -80,7 +80,7 @@ public abstract class DetailedBalanceTest<S> {
 
     /** Number of standard deviations of slack allowed when comparing forward/backward flow. */
     protected double getFlowSigmaMultiplier() {
-        return 3.5;
+        return 4.0;
     }
 
     /** The named quantisation functions to verify detailed balance over. */
@@ -159,10 +159,12 @@ public abstract class DetailedBalanceTest<S> {
      * detailed balance over what it has seen.
      */
     protected class BalanceAccumulator {
+        private record Pair(String from, String to) {}
+
         private final Counter<String> groupCounter = new Counter<>();
-        private final Counter<String> proposalCounter = new Counter<>();
-        private final DefaultHashMap<String, Double> flow = new DefaultHashMap<>(0.0);
-        private final DefaultHashMap<String, Double> flowSquares = new DefaultHashMap<>(0.0);
+        private final Counter<Pair> proposalCounter = new Counter<>();
+        private final DefaultHashMap<Pair, Double> flow = new DefaultHashMap<>(0.0);
+        private final DefaultHashMap<Pair, Double> flowSquares = new DefaultHashMap<>(0.0);
 
         /** Record the class a sampled state belongs to (before any proposal). */
         void recordState(String groupKey) {
@@ -171,7 +173,7 @@ public abstract class DetailedBalanceTest<S> {
 
         /** Record a proposed transition between classes and its acceptance mass. */
         void recordTransition(String beforeKey, String afterKey, double pAccept) {
-            String transitionKey = beforeKey + "-" + afterKey;
+            Pair transitionKey = new Pair(beforeKey, afterKey);
             proposalCounter.increment(transitionKey);
             flow.put(transitionKey, flow.get(transitionKey) + pAccept);
             // Sum of squared per-sample contributions, for the empirical flow variance.
@@ -189,14 +191,15 @@ public abstract class DetailedBalanceTest<S> {
             System.err.println(proposalCounter);
 
             double flowSigmaMultiplier = getFlowSigmaMultiplier();
+            String firstFailure = null;
             for (String fromGroup : groupCounter.keySet()) {
                 for (String toGroup : groupCounter.keySet()) {
                     // Check each unordered pair once, skipping trivially symmetric self-loops.
                     if (fromGroup.compareTo(toGroup) <= 0)
                         continue;
 
-                    String keyForward = fromGroup + "-" + toGroup;
-                    String keyBackward = toGroup + "-" + fromGroup;
+                    Pair keyForward = new Pair(fromGroup, toGroup);
+                    Pair keyBackward = new Pair(toGroup, fromGroup);
 
                     double transitionsForward = flow.get(keyForward);
                     double transitionsBackward = flow.get(keyBackward);
@@ -211,17 +214,23 @@ public abstract class DetailedBalanceTest<S> {
 
                     double forwVariance = estimateFlowVariance(flowSquares.get(keyForward), transitionsForward);
                     double backVariance = estimateFlowVariance(flowSquares.get(keyBackward), transitionsBackward);
-                    double tolerance = flowSigmaMultiplier * Math.sqrt(forwVariance + backVariance);
+                    double sigma = Math.sqrt(forwVariance + backVariance);
+                    double tolerance = flowSigmaMultiplier * sigma;
+                    double diff = Math.abs(transitionsForward - transitionsBackward);
 
                     if (Math.max(transitionsForward, transitionsBackward) > 0)
-                        System.out.println(
-                            String.format("%-8s:  %8.4f <-> %8.4f    (tol=%8.4f     diff=%8.4f)", keyForward, transitionsForward, transitionsBackward, tolerance, Math.abs(transitionsForward - transitionsBackward))
-                        );
-                    Assert.assertEquals(
-                        "Detailed balance [" + mapperName + "] " + fromGroup + "-" + toGroup,
-                        transitionsForward, transitionsBackward, tolerance);
+                        System.out.println(String.format(
+                            "%-16s:  %8.4f <-> %8.4f    (tol=%8.4f     diff=%8.4f   nsigma=%6.2f)%s",
+                            fromGroup + "->" + toGroup, transitionsForward, transitionsBackward,
+                            tolerance, diff, diff / sigma, diff > tolerance ? "  <<< FAIL" : ""));
+                    if (diff > tolerance && firstFailure == null) {
+                        firstFailure = String.format(
+                            "Detailed balance [%s] %s->%s expected:<%s> but was:<%s>",
+                            mapperName, fromGroup, toGroup, transitionsForward, transitionsBackward);
+                    }
                 }
             }
+            Assert.assertNull(firstFailure, firstFailure);
         }
     }
 

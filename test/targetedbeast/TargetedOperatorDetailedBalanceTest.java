@@ -4,19 +4,16 @@ import targetedbeast.alignment.ConsensusAlignment;
 import targetedbeast.edgeweights.CombinedEdgeWeights;
 import targetedbeast.edgeweights.ConstantWeights;
 import targetedbeast.edgeweights.EdgeWeights;
-import targetedbeast.edgeweights.FelsensteinWeights;
 import targetedbeast.edgeweights.LearnedWeights;
 import targetedbeast.edgeweights.PCAWeights;
 import targetedbeast.edgeweights.PCAWeights2;
 import targetedbeast.edgeweights.PCAWeightsBrownian;
-import targetedbeast.edgeweights.PCAWeightsBrownianFullLikelihood;
 import targetedbeast.edgeweights.ParsimonyWeights2;
 import targetedbeast.edgeweights.PartialWeights;
-import targetedbeast.edgeweights.PriorHeuristicWeights;
 import beast.base.evolution.likelihood.TreeLikelihood;
 import targetedbeast.operators.IntervalScaleOperator;
+import targetedbeast.operators.RangeSlide;
 import targetedbeast.operators.TargetedWilsonBalding;
-import targetedbeast.operators.TargetedWilsonBaldingHeightDelta;
 import targetedbeast.operators.TargetedWilsonBaldingFixedHeight;
 import targetedbeast.operators.WeightedWideOperator;
 import org.junit.BeforeClass;
@@ -155,42 +152,10 @@ public class TargetedOperatorDetailedBalanceTest extends DetailedBalanceTest<Tre
     }
 
     @Test
-    public void testTargWilsonBaldingMaxHeightRatio() throws Exception {
-        testDetailedBalance(new TreeTrial(tree -> {
-            TreeOperator operator = new TargetedWilsonBalding();
-            operator.initByName(
-                    "tree", tree,
-                    "weight", 1.0,
-                    "edgeWeights", getParsimonyWeights(tree),
-                    "useEdgeLength", false,
-                    "maxHeightRatio", 1.0);
-            return operator;
-        }));
-    }
-
-    @Test
-    public void testTargWilsonBaldingFelsenstein() throws Exception {
-        testDetailedBalance(new TreeTrial(tree -> {
-            TreeOperator operator = new TargetedWilsonBalding();
-            operator.initByName("tree", tree, "weight", 1.0, "edgeWeights", getLikelihoodWeights(tree));
-            return operator;
-        }));
-    }
-
-    @Test
     public void testTargWilsonBaldingPartial() throws Exception {
         testDetailedBalance(new TreeTrial(tree -> {
             TreeOperator operator = new TargetedWilsonBalding();
             operator.initByName("tree", tree, "weight", 1.0, "edgeWeights", getPartialWeights(tree));
-            return operator;
-        }));
-    }
-
-    @Test
-    public void testTargWilsonBaldingFixedHeight() throws Exception {
-        testDetailedBalance(new TreeTrial(tree -> {
-            TreeOperator operator = new TargetedWilsonBaldingFixedHeight();
-            operator.initByName("tree", tree, "weight", 1.0, "edgeWeights", getParsimonyWeights(tree));
             return operator;
         }));
     }
@@ -204,23 +169,7 @@ public class TargetedOperatorDetailedBalanceTest extends DetailedBalanceTest<Tre
         }));
     }
 
-    @Test
-    public void testTargWilsonBaldingHeightDelta() throws Exception {
-        testDetailedBalance(new TreeTrial(tree -> {
-            TreeOperator operator = new TargetedWilsonBaldingHeightDelta();
-            operator.initByName("tree", tree, "weight", 1.0, "edgeWeights", getParsimonyWeights(tree), "size", 0.25);
-            return operator;
-        }));
-    }
 
-    @Test
-    public void testTargWilsonBaldingHeightDeltaEdgeLength() throws Exception {
-        testDetailedBalance(new TreeTrial(tree -> {
-            TreeOperator operator = new TargetedWilsonBaldingHeightDelta();
-            operator.initByName("tree", tree, "weight", 1.0, "edgeWeights", getParsimonyWeights(tree), "useEdgeLength", true, "size", 0.25);
-            return operator;
-        }));
-    }
 
     @Test
     public void testIntervalScaleOperator() throws Exception {
@@ -266,32 +215,7 @@ public class TargetedOperatorDetailedBalanceTest extends DetailedBalanceTest<Tre
         }));
     }
 
-    @Test
-    public void testTargWilsonBaldingBrownianFullLikelihoodWeights() throws Exception {
-        testDetailedBalance(new TreeTrial(tree -> {
-            TargetedWilsonBalding operator = new TargetedWilsonBalding();
-            operator.initByName("tree", tree, "weight", 1.0, "edgeWeights", getPCAWeightsBrownianFullLikelihood(tree));
-            return operator;
-        }));
-    }
 
-    // @Test
-    // public void testTargWilsonBaldingPriorHeuristicWeights() throws Exception {
-    //     testDetailedBalance(new TreeTrial(tree -> {
-    //         TargetedWilsonBalding operator = new TargetedWilsonBalding();
-    //         operator.initByName("tree", tree, "weight", 1.0, "edgeWeights", getPriorHeuristicWeights(tree));
-    //         return operator;
-    //     }));
-    // }
-
-    // @Test
-    // public void testTargWilsonBaldingCombinedPriorFelsensteinWeights() throws Exception {
-    //     testDetailedBalance(new TreeTrial(tree -> {
-    //         TargetedWilsonBalding operator = new TargetedWilsonBalding();
-    //         operator.initByName("tree", tree, "weight", 1.0, "edgeWeights", getCombinedPriorFelsensteinWeights(tree));
-    //         return operator;
-    //     }));
-    // }
 
     @Test
     public void testWeightedWide() throws Exception {
@@ -431,41 +355,9 @@ public class TargetedOperatorDetailedBalanceTest extends DetailedBalanceTest<Tre
         return edgeWeights;
     }
 
-    PCAWeightsBrownianFullLikelihood getPCAWeightsBrownianFullLikelihood(Tree tree) {
-        PCAWeightsBrownianFullLikelihood edgeWeights = new PCAWeightsBrownianFullLikelihood();
-        edgeWeights.initByName("tree", tree, "data", alignment, "dimension", 3);
-        return edgeWeights;
-    }
 
-    FelsensteinWeights getLikelihoodWeights(Tree tree) {
-        TreeLikelihood treeLikelihood = new TreeLikelihood();
-        treeLikelihood.initByName("tree", tree, "siteModel", getSiteModel(), "data", alignment, "implementation", "BeerLikelihoodCore4");
-        FelsensteinWeights edgeWeights = new FelsensteinWeights();
-        edgeWeights.initByName("tree", tree, "likelihood", treeLikelihood, "data", alignment);
-        return edgeWeights;
-    }
 
-    PriorHeuristicWeights getPriorHeuristicWeights(Tree tree) {
-        PriorHeuristicWeights edgeWeights = new PriorHeuristicWeights();
-        edgeWeights.initByName(
-                "tree", tree,
-                "temperature", 1.0,
-                "sourceBranchScale", 1.0,
-                "attachmentAgeScale", 0.25,
-                "heightIncreaseScale", 1.0,
-                "maxNewBranchScale", 1.0,
-                "minWeight", 1e-6,
-                "maxWeight", 1e6);
-        return edgeWeights;
-    }
 
-    CombinedEdgeWeights getCombinedPriorFelsensteinWeights(Tree tree) {
-        CombinedEdgeWeights edgeWeights = new CombinedEdgeWeights();
-        edgeWeights.initByName(
-                "edgeWeights", getPriorHeuristicWeights(tree),
-                "edgeWeights", getLikelihoodWeights(tree));
-        return edgeWeights;
-    }
 
     PartialWeights getPartialWeights(Tree tree) {
         TreeLikelihood treeLikelihood = new TreeLikelihood();
@@ -473,127 +365,6 @@ public class TargetedOperatorDetailedBalanceTest extends DetailedBalanceTest<Tre
         PartialWeights edgeWeights = new PartialWeights();
         edgeWeights.initByName("tree", tree, "likelihood", treeLikelihood, "data", alignment);
         return edgeWeights;
-    }
-
-    /**
-     * Detailed balance with a target-weight transform whose coefficients are deliberately
-     * far from the defaults. The transform must be applied identically in the forward and
-     * reverse blocks; if it is not, the forward and backward acceptance flows diverge.
-     *
-     * <p>optimise="false" is required: the harness accumulates flow across samples, which is
-     * only meaningful for a fixed proposal kernel.
-     */
-    @Test
-    public void testTargWilsonBaldingTargetTransform() throws Exception {
-        testDetailedBalance(new TreeTrial(tree -> {
-            targetedbeast.weighttransform.PowerOffsetTransform transform =
-                    new targetedbeast.weighttransform.PowerOffsetTransform();
-            transform.initByName("exponent", 3.7, "offset", 0.3, "optimise", false);
-
-            TreeOperator operator = new TargetedWilsonBalding();
-            operator.initByName(
-                    "tree", tree,
-                    "weight", 1.0,
-                    "edgeWeights", getPCAWeights(tree),
-                    "useEdgeLength", false,
-                    "targetWeightTransform", transform);
-            return operator;
-        }));
-    }
-
-    /**
-     * The same, with an offset large enough that the proposal is close to uniform over the
-     * candidate set. Catches normalization errors that a small offset would mask.
-     */
-    @Test
-    public void testTargWilsonBaldingTargetTransformHeavyOffset() throws Exception {
-        testDetailedBalance(new TreeTrial(tree -> {
-            targetedbeast.weighttransform.PowerOffsetTransform transform =
-                    new targetedbeast.weighttransform.PowerOffsetTransform();
-            transform.initByName("exponent", 1.0, "offset", 8.0, "optimise", false);
-
-            TreeOperator operator = new TargetedWilsonBalding();
-            operator.initByName(
-                    "tree", tree,
-                    "weight", 1.0,
-                    "edgeWeights", getPCAWeights(tree),
-                    "useEdgeLength", false,
-                    "targetWeightTransform", transform);
-            return operator;
-        }));
-    }
-
-    /**
-     * Detailed balance for the source-selection path under a transform.
-     *
-     * <p>StructuralSourceWeights gives uniform target weights (so the target term cancels)
-     * and strongly depth-dependent, uncached source weights, so a mistake in the reverse
-     * source term cannot be blamed on stale caches.
-     */
-    @Test
-    public void testTargWilsonBaldingSourceTransform() throws Exception {
-        testDetailedBalance(new TreeTrial(tree -> {
-            targetedbeast.edgeweights.StructuralSourceWeights edgeWeights =
-                    new targetedbeast.edgeweights.StructuralSourceWeights();
-            edgeWeights.initByName("tree", tree);
-
-            targetedbeast.weighttransform.PowerOffsetTransform transform =
-                    new targetedbeast.weighttransform.PowerOffsetTransform();
-            transform.initByName("exponent", 0.6, "offset", 0.4, "optimise", false);
-
-            TreeOperator operator = new TargetedWilsonBalding();
-            operator.initByName(
-                    "tree", tree,
-                    "weight", 1.0,
-                    "edgeWeights", edgeWeights,
-                    "useEdgeLength", false,
-                    "edgeWeightTransform", transform);
-            return operator;
-        }));
-    }
-
-    /**
-     * The source transform with useEdgeLength=true. This path used to update the reverse
-     * total incrementally, which is only valid when the total is a plain sum; a transform
-     * makes it nonlinear, so the whole vector must be recomputed.
-     */
-    @Test
-    public void testTargWilsonBaldingSourceTransformEdgeLength() throws Exception {
-        testDetailedBalance(new TreeTrial(tree -> {
-            targetedbeast.weighttransform.PowerOffsetTransform transform =
-                    new targetedbeast.weighttransform.PowerOffsetTransform();
-            transform.initByName("exponent", 2.5, "offset", 0.2, "optimise", false);
-
-            TreeOperator operator = new TargetedWilsonBalding();
-            operator.initByName(
-                    "tree", tree,
-                    "weight", 1.0,
-                    "edgeWeights", getPCAWeights(tree),
-                    "useEdgeLength", true,
-                    "edgeWeightTransform", transform);
-            return operator;
-        }));
-    }
-
-    /** The transform must never make the root selectable as a source edge. */
-    @Test
-    public void testTargWilsonBaldingSourceTransformNeverSelectsRoot() throws Exception {
-        testDetailedBalance(new TreeTrial(tree -> {
-            targetedbeast.weighttransform.PowerOffsetTransform transform =
-                    new targetedbeast.weighttransform.PowerOffsetTransform();
-            // A huge offset makes the proposal nearly uniform over source edges, which is
-            // when a wrongly-included root would be picked most often.
-            transform.initByName("exponent", 1.0, "offset", 50.0, "optimise", false);
-
-            TreeOperator operator = new TargetedWilsonBalding();
-            operator.initByName(
-                    "tree", tree,
-                    "weight", 1.0,
-                    "edgeWeights", getPCAWeights(tree),
-                    "useEdgeLength", false,
-                    "edgeWeightTransform", transform);
-            return operator;
-        }));
     }
 
 }

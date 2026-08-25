@@ -19,6 +19,7 @@ import beast.base.evolution.tree.Tree;
 import beast.base.inference.DirectSimulator;
 import beast.base.evolution.speciation.YuleModel;
 import targetedbeast.DetailedBalanceTest;
+import targetedbeast.TargetedOperatorDetailedBalanceTest;
 import targetedbeast.likelihood.SlowTreeLikelihood;
 import targetedbeast.util.LinearAlgebra;
 
@@ -36,7 +37,7 @@ public class FelsensteinWeightsWithoutNodeTest {
 
     @BeforeClass
     public static void setUpClass() {
-        alignment = DetailedBalanceTest.createDummyAlignment();
+        alignment = TargetedOperatorDetailedBalanceTest.createDummyAlignment();
     }
 
     /**
