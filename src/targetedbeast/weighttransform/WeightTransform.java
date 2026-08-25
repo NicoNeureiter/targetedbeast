@@ -2,47 +2,59 @@ package targetedbeast.weighttransform;
 
 import java.io.PrintStream;
 
+import org.json.JSONException;
+import org.json.JSONObject;
+
 import beast.base.core.BEASTObject;
 import beast.base.core.Description;
 import beast.base.core.Input;
 import beast.base.core.Loggable;
-import beast.base.util.Randomizer;
 
 @Description("Reshapes raw edge or target weights before a targeted operator normalizes them. "
 		+ "The pointiness coefficient controls how greedy the resulting proposal is; the offset "
 		+ "coefficient mixes in a uniform distribution and is an adaptive replacement for the "
-		+ "minWeight input of the EdgeWeights implementations.")
+		+ "minWeight input of the EdgeWeights implementations. How the coefficients are tuned is "
+		+ "delegated to a CoefficientTuner, so the shape of the transform and the search strategy "
+		+ "can be chosen independently.")
 public abstract class WeightTransform extends BEASTObject implements Loggable {
 
-	/** Fixed coefficient order, used by the SPSA vector, the log and the state file. */
+	/** Fixed coefficient order, used by the tuners, the log and the state file. */
 	protected static final int EXPONENT = 0;
 	protected static final int OFFSET = 1;
 	protected static final String[] COEFFICIENT_NAMES = { "exponent", "offset" };
 
 	protected static final double[] LOWER_BOUND = { 0.1, 1e-6 };
-	protected static final double[] UPPER_BOUND = { 20.0, 100.0 };
+	protected static final double[] DEFAULT_UPPER_BOUND = { 20.0, 100.0 };
+
+	/**
+	 * Per-instance upper bounds, so the exponent ceiling can be raised without touching the
+	 * offset's. Only the exponent entry is configurable; see {@link #maxExponentInput}.
+	 */
+	private final double[] upperBound = DEFAULT_UPPER_BOUND.clone();
 
 	final public Input<Double> exponentInput = new Input<>("exponent",
 			"starting value of the pointiness coefficient b; 2.0 reproduces the exponent "
 					+ "hardcoded in TargetedWilsonBalding today", 2.0);
 	final public Input<Double> offsetInput = new Input<>("offset",
-			"starting value of the offset coefficient a, as a proportion of the mean transformed "
-					+ "weight; the resulting proposal is a mixture with weight a/(1+a) on the uniform",
-			0.01);
+			"value of the offset coefficient a, as a proportion of the mean transformed weight; the "
+					+ "resulting proposal is a mixture with weight a/(1+a) on the uniform. The "
+					+ "default of 0 means no uniform mixture at all",
+			0.0);
+	final public Input<Double> maxExponentInput = new Input<>("maxExponent",
+			"upper bound on the pointiness coefficient b. This is what keeps the family of "
+					+ "fixed-coefficient kernels compact, which the diminishing-adaptation "
+					+ "argument needs, and it also guards against a proposal so pointy that it "
+					+ "oscillates between a handful of topologies at high acceptance. The default "
+					+ "of 20 is a conservative guess rather than a measured limit; raise it if a "
+					+ "sweep shows the reward still climbing at the bound", 20.0);
 	final public Input<Boolean> optimiseInput = new Input<>("optimise",
-			"if true, the coefficients are adapted during the MCMC to raise the acceptance rate", true);
-	final public Input<Double> stepSizeInput = new Input<>("stepSize",
-			"SPSA gain numerator A; the step taken per proposal is A/(n+n0)^0.602 divided by the "
-					+ "current perturbation", 0.05);
-	final public Input<Double> perturbationInput = new Input<>("perturbation",
-			"SPSA perturbation numerator C; coefficients are jittered by C/(n+n0)^0.101 in log space "
-					+ "each proposal", 0.2);
-	final public Input<Integer> stabilityConstantInput = new Input<>("stabilityConstant",
-			"SPSA stability constant n0; larger values make the early adaptation gentler", 100);
-	final public Input<Double> baselineRateInput = new Input<>("baselineRate",
-			"EWMA rate for the running acceptance baseline used as an SPSA control variate", 0.01);
+			"if true, the coefficients are adapted during the MCMC by the tuner. Set it to false "
+					+ "to pin the transform at its configured coefficients", true);
+	final public Input<CoefficientTuner> tunerInput = new Input<>("tuner",
+			"strategy for adapting the coefficients. Defaults to SPSA with its own defaults, "
+					+ "which is what this transform did before tuners were separable");
 
-	/** Coefficients in log space. Adapted by optimize(); never read directly by apply(). */
+	/** Coefficients in log space. Updated by the tuner; never read directly by apply(). */
 	protected double[] theta;
 
 	/** Coefficients in natural space, frozen for the duration of one proposal. */
@@ -51,23 +63,31 @@ public abstract class WeightTransform extends BEASTObject implements Loggable {
 	/** True once apply() has been called since the last startProposal(). */
 	private boolean used;
 
-	/** Rademacher perturbation directions drawn for the current proposal. */
-	private double[] signs;
-
-	/** Running mean acceptance, used as a control variate in the SPSA update. */
-	private double baseline;
-
-	/** Number of completed adaptation steps. */
-	private long adaptationCount;
+	private CoefficientTuner tuner;
 
 	@Override
 	public void initAndValidate() {
 		theta = new double[COEFFICIENT_NAMES.length];
 		effective = new double[COEFFICIENT_NAMES.length];
-		signs = new double[COEFFICIENT_NAMES.length];
-		baseline = 0.0;
-		adaptationCount = 0;
+
+		if (maxExponentInput.get() <= LOWER_BOUND[EXPONENT]) {
+			throw new IllegalArgumentException("maxExponent must exceed the lower bound of "
+					+ LOWER_BOUND[EXPONENT] + ", got " + maxExponentInput.get());
+		}
+		upperBound[EXPONENT] = maxExponentInput.get();
+
+		// Must follow the bound assignment, since setCoefficients clamps: a starting exponent
+		// above the default ceiling has to be honoured, not silently pulled back to 20.
 		setCoefficients(new double[] { exponentInput.get(), offsetInput.get() });
+
+		tuner = tunerInput.get();
+		if (tuner == null) {
+			tuner = new SpsaTuner();
+			tuner.initAndValidate();
+		}
+		// The tuner needs the bounds, which live here, so it can only be finished off once this
+		// object is valid.
+		tuner.setTransform(this);
 	}
 
 	/**
@@ -106,88 +126,44 @@ public abstract class WeightTransform extends BEASTObject implements Loggable {
 	/**
 	 * Called by the operator at the start of every proposal, before any call to apply().
 	 *
-	 * <p>Draws the SPSA perturbation and freezes the resulting coefficients for the whole
-	 * proposal. Freezing is what keeps the forward and reverse probabilities of a single
-	 * proposal mutually consistent, so the Hastings ratio stays correct.
+	 * <p>Delegates the choice of coefficients to the tuner and freezes the result for the whole
+	 * proposal, which is what keeps the forward and reverse probabilities of a single proposal
+	 * mutually consistent so the Hastings ratio stays correct.
 	 */
 	public void startProposal() {
 		used = false;
 		if (!optimiseInput.get()) {
 			return;
 		}
-		double c = getPerturbationSize();
-		for (int i = 0; i < theta.length; i++) {
-			signs[i] = Randomizer.nextBoolean() ? 1.0 : -1.0;
-			effective[i] = Math.exp(clamp(theta[i] + c * signs[i], i));
-		}
+		tuner.startProposal(theta, effective);
 	}
 
 	/**
-	 * One SPSA step toward higher acceptance.
-	 *
-	 * <p>Because the perturbation directions are symmetric, the expectation of
-	 * {@code (alpha - baseline) * signs} is proportional to the gradient of the expected
-	 * acceptance with respect to the log coefficients. The baseline is a control variate:
-	 * without it the update is dominated by the magnitude of alpha rather than by its
-	 * dependence on the coefficients.
+	 * Report the outcome of one proposal to the tuner.
 	 *
 	 * @param logAlpha difference in posterior between previous and proposed state, plus the
 	 *                 Hastings ratio
 	 */
 	public void optimize(double logAlpha) {
-		// A proposal that aborted before touching the weights says nothing about the
-		// coefficients; counting it would inject pure noise.
-		if (!optimiseInput.get() || !wasUsed()) {
+		if (!optimiseInput.get()) {
 			return;
 		}
-		double alpha = Math.exp(Math.min(logAlpha, 0.0));
-		if (Double.isNaN(alpha)) {
-			return;
-		}
-
-		double gain = getStepSize() / getPerturbationSize();
-		for (int i = 0; i < theta.length; i++) {
-			theta[i] = clamp(theta[i] + gain * (alpha - baseline) * signs[i], i);
-		}
-		baseline += baselineRateInput.get() * (alpha - baseline);
-		adaptationCount++;
-		refreshEffective();
+		tuner.optimize(logAlpha, used, theta);
 	}
 
-	/** Current SPSA step gain a_n. */
-	protected double getStepSize() {
-		return stepSizeInput.get() / Math.pow(adaptationCount + stabilityConstantInput.get(), 0.602);
+	/** The tuner adapting this transform's coefficients. Never null after initAndValidate(). */
+	public CoefficientTuner getTuner() {
+		return tuner;
 	}
 
-	/**
-	 * Current SPSA perturbation size c_n.
-	 *
-	 * <p>Both a_n/c_n and c_n tend to zero, which is what gives diminishing adaptation.
-	 */
-	public double getPerturbationSize() {
-		return perturbationInput.get() / Math.pow(adaptationCount + stabilityConstantInput.get(), 0.101);
-	}
-
-	/** Perturbed coefficients in use for the current proposal, in natural space. */
+	/** Coefficients in use for the current proposal, in natural space. */
 	public double[] getEffectiveCoefficients() {
 		return effective.clone();
 	}
 
 	/** Number of completed adaptation steps. */
 	public long getAdaptationCount() {
-		return adaptationCount;
-	}
-
-	/** Running mean acceptance used as the SPSA control variate. */
-	public double getAcceptanceBaseline() {
-		return baseline;
-	}
-
-	/** Restore a previously persisted adaptation state (see the operator's state file). */
-	public void setAdaptationState(double[] naturalCoefficients, long n, double acceptanceBaseline) {
-		setCoefficients(naturalCoefficients);
-		this.adaptationCount = n;
-		this.baseline = acceptanceBaseline;
+		return tuner.getAdaptationCount();
 	}
 
 	/** True if apply() has been called since the last startProposal(). */
@@ -222,6 +198,20 @@ public abstract class WeightTransform extends BEASTObject implements Loggable {
 		refreshEffective();
 	}
 
+	/** Write the adaptation state into the owning operator's state-file entry. */
+	public void storeState(JSONObject entry) throws JSONException {
+		double[] coefficients = getCoefficients();
+		entry.put("exponent", coefficients[EXPONENT]);
+		entry.put("offset", coefficients[OFFSET]);
+		tuner.storeState(entry);
+	}
+
+	/** Read back what {@link #storeState} wrote. */
+	public void restoreState(JSONObject entry) throws JSONException {
+		setCoefficients(new double[] { entry.getDouble("exponent"), entry.getDouble("offset") });
+		tuner.restoreState(entry);
+	}
+
 	/** Recompute the natural-space coefficients used by apply() from theta. */
 	protected void refreshEffective() {
 		for (int i = 0; i < theta.length; i++) {
@@ -230,8 +220,8 @@ public abstract class WeightTransform extends BEASTObject implements Loggable {
 	}
 
 	/** Clamp a log-space coefficient to the bounds declared for index i. */
-	protected static double clamp(double logValue, int i) {
-		return Math.max(Math.log(LOWER_BOUND[i]), Math.min(Math.log(UPPER_BOUND[i]), logValue));
+	protected double clamp(double logValue, int i) {
+		return Math.max(Math.log(LOWER_BOUND[i]), Math.min(Math.log(upperBound[i]), logValue));
 	}
 
 	@Override
@@ -240,12 +230,18 @@ public abstract class WeightTransform extends BEASTObject implements Loggable {
 		for (String name : COEFFICIENT_NAMES) {
 			out.print(prefix + "." + name + "\t");
 		}
+		for (String name : tuner.getLogNames()) {
+			out.print(prefix + "." + name + "\t");
+		}
 	}
 
 	@Override
 	public void log(long sample, PrintStream out) {
 		for (double c : getCoefficients()) {
 			out.print(c + "\t");
+		}
+		for (double v : tuner.getLogValues()) {
+			out.print(v + "\t");
 		}
 	}
 

@@ -35,6 +35,10 @@ public class WeightTransformPersistenceTest {
 		return t;
 	}
 
+	private static double baselineOf(WeightTransform t) {
+		return ((SpsaTuner) t.getTuner()).getAcceptanceBaseline();
+	}
+
 	@Test
 	public void adaptationStateSurvivesAStoreRestoreRoundTrip() throws JSONException {
 		Randomizer.setSeed(7);
@@ -62,7 +66,9 @@ public class WeightTransformPersistenceTest {
 
 		Assert.assertArrayEquals(target.getCoefficients(), restoredTarget.getCoefficients(), 1e-12);
 		Assert.assertEquals(target.getAdaptationCount(), restoredTarget.getAdaptationCount());
-		Assert.assertEquals(target.getAcceptanceBaseline(), restoredTarget.getAcceptanceBaseline(), 1e-12);
+		// The baseline is SPSA's own state, so it round-trips through the tuner rather than
+		// through the transform.
+		Assert.assertEquals(baselineOf(target), baselineOf(restoredTarget), 1e-12);
 		Assert.assertEquals(edge.getAdaptationCount(), restoredEdge.getAdaptationCount());
 	}
 

@@ -95,6 +95,38 @@ public class WeightTransformTest {
 		Assert.assertEquals(1e-6, c[1], TOL);
 	}
 
+	/**
+	 * maxExponent raises the exponent's ceiling without disturbing the offset's, and without
+	 * changing the default. The default of 20 is a guess rather than a measured limit, so a
+	 * sweep that finds the reward still climbing there needs to be able to look further out.
+	 */
+	@Test
+	public void maxExponentRaisesOnlyTheExponentCeiling() {
+		PowerOffsetTransform t = new PowerOffsetTransform();
+		t.initByName("exponent", 40.0, "offset", 1000.0, "optimise", false, "maxExponent", 64.0);
+
+		double[] c = t.getCoefficients();
+		Assert.assertEquals("a starting exponent under the raised ceiling must survive init",
+				40.0, c[0], TOL);
+		Assert.assertEquals("the offset ceiling must be unaffected", 100.0, c[1], TOL);
+
+		// Still clamped, just at the new bound.
+		PowerOffsetTransform over = new PowerOffsetTransform();
+		over.initByName("exponent", 1000.0, "optimise", false, "maxExponent", 64.0);
+		Assert.assertEquals(64.0, over.getCoefficients()[0], TOL);
+	}
+
+	/** A ceiling at or below the lower bound leaves no feasible range and must be rejected. */
+	@Test
+	public void degenerateMaxExponentIsRejected() {
+		PowerOffsetTransform t = new PowerOffsetTransform();
+		// initByName wraps whatever initAndValidate throws in a RuntimeException, so match on
+		// the message rather than the type.
+		RuntimeException e = Assert.assertThrows(RuntimeException.class,
+				() -> t.initByName("exponent", 2.0, "optimise", false, "maxExponent", 0.05));
+		Assert.assertTrue(e.getMessage(), e.getMessage().contains("maxExponent must exceed"));
+	}
+
 	/** The real-space transform must reject being paired with log-space weights. */
 	@Test
 	public void powerTransformDeclaresRealSpace() {

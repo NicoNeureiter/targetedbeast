@@ -1,26 +1,19 @@
 
 package targetedbeast.operators;
 
-import java.io.PrintWriter;
-import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
 import beast.base.core.Description;
 import beast.base.core.Input;
-import beast.base.evolution.operator.TreeOperator;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
 import beast.base.inference.util.InputUtil;
 import beast.base.util.Randomizer;
 import targetedbeast.edgeweights.EdgeWeights;
-import targetedbeast.weighttransform.WeightTransform;
 
 /**
  * WILSON, I. J. and D. J. BALDING, 1998 Genealogical inference from
@@ -31,7 +24,7 @@ import targetedbeast.weighttransform.WeightTransform;
 		+ "This move is similar to one proposed by WILSON and BALDING 1998  "
 		+ "and involves removing a subtree and re-attaching it on a new parent branch. "
 		+ "See <a href='http://www.genetics.org/cgi/content/full/161/3/1307/F1'>picture</a>.")
-public class TargetedWilsonBalding extends TreeOperator {
+public class TargetedWilsonBalding extends TargetedWeightOperator {
 
     public Input<EdgeWeights> edgeWeightsInput = new Input<>("edgeWeights", "input of weights to be used for targetedn tree operations");
 
@@ -46,20 +39,9 @@ public class TargetedWilsonBalding extends TreeOperator {
 
     public Input<Boolean> useEdgeLengthInput = new Input<>("useEdgeLength", "if true, it uses the relative edge lengths for operations", false);
 
-	public Input<WeightTransform> targetWeightTransformInput = new Input<>("targetWeightTransform",
-			"optional transform applied to the target weights before they are normalized; "
-					+ "when absent the target weights are squared, as they always have been");
-
-	public Input<WeightTransform> edgeWeightTransformInput = new Input<>("edgeWeightTransform",
-			"optional transform applied to the source-edge weights before they are normalized");
-
     double limit;
 
     EdgeWeights edgeWeights;
-
-	WeightTransform targetWeightTransform;
-	WeightTransform edgeWeightTransform;
-
 
     @Override
     public void initAndValidate() {
@@ -70,24 +52,8 @@ public class TargetedWilsonBalding extends TreeOperator {
 			throw new IllegalArgumentException("maxHeightRatio must be >= 1.0");
 		}
 
-		targetWeightTransform = targetWeightTransformInput.get();
-		edgeWeightTransform = edgeWeightTransformInput.get();
-
-		if (targetWeightTransform != null
-				&& targetWeightTransform.requiresLogSpace() != edgeWeights.isLogSpace()) {
-			throw new IllegalArgumentException("targetWeightTransform expects "
-					+ (targetWeightTransform.requiresLogSpace() ? "log" : "real")
-					+ "-space weights but " + edgeWeights.getClass().getSimpleName()
-					+ " returns " + (edgeWeights.isLogSpace() ? "log" : "real") + "-space weights");
-		}
-		// getEdgeWeights is real-space by contract in every implementation, and with
-		// useEdgeLength=true the source weights are branch lengths rather than EdgeWeights
-		// output, so a log-space transform is never correct here.
-		if (edgeWeightTransform != null && edgeWeightTransform.requiresLogSpace()) {
-			throw new IllegalArgumentException(
-					"edgeWeightTransform must be a real-space transform; source edge weights are "
-							+ "never in log space");
-		}
+		// Target weights have always been squared here, so that stays the no-transform default.
+		initWeightTransforms(edgeWeights, true);
     }
 
 	private static final class AttachmentInterval {
@@ -201,104 +167,29 @@ public class TargetedWilsonBalding extends TreeOperator {
 	 * transform adds its offset to every entry it receives, so a zero-weight root would
 	 * become selectable and break the {@code p = i.getParent()} that follows.
 	 */
-	private static final class SourceWeights {
-		final int[] nodeNrs;
-		final double[] weights;
-		final double total;
-
-		SourceWeights(int[] nodeNrs, double[] weights) {
-			this.nodeNrs = nodeNrs;
-			this.weights = weights;
-			double sum = 0.0;
-			for (double w : weights) {
-				sum += w;
-			}
-			this.total = sum;
-		}
-
-		double weightFor(int nodeNr) {
-			for (int m = 0; m < nodeNrs.length; m++) {
-				if (nodeNrs[m] == nodeNr) {
-					return weights[m];
-				}
-			}
-			throw new IllegalArgumentException("node " + nodeNr + " is not a feasible source edge");
-		}
-	}
-
-	/** Build and transform the source weights of every non-root node, in node-number order. */
 	private SourceWeights getSourceWeights(Tree tree, boolean useEdgeLength) {
-		int nodeCount = tree.getNodeCount();
-		int[] nodeNrs = new int[nodeCount - 1];
-		double[] raw = new double[nodeCount - 1];
-
-		int m = 0;
-		for (int nodeNr = 0; nodeNr < nodeCount; nodeNr++) {
-			Node node = tree.getNode(nodeNr);
-			if (node.isRoot()) {
-				continue;
-			}
-			nodeNrs[m] = nodeNr;
-			raw[m] = useEdgeLength ? node.getLength() : edgeWeights.getEdgeWeights(nodeNr);
-			m++;
-		}
-
-		double[] weights = edgeWeightTransform == null ? raw : edgeWeightTransform.apply(raw);
-		return new SourceWeights(nodeNrs, weights);
+		return sourceWeights(tree,
+				node -> !node.isRoot(),
+				node -> useEdgeLength ? node.getLength() : edgeWeights.getEdgeWeights(node.getNr()));
 	}
 
 	private SourceSelection selectSourceNode(Tree tree, boolean useEdgeLength) {
 		SourceWeights sourceWeights = getSourceWeights(tree, useEdgeLength);
-		if (sourceWeights.total < 1E-12) {
+		int m = sourceWeights.sampleIndex();
+		if (m < 0) {
 			throw new IllegalStateException("TargetedWilsonBalding has no selectable source edges");
 		}
-
-		double scaler = Randomizer.nextDouble() * sourceWeights.total;
-		double cumulativeWeight = 0.0;
-		for (int m = 0; m < sourceWeights.weights.length; m++) {
-			cumulativeWeight += sourceWeights.weights[m];
-			if (cumulativeWeight > scaler) {
-				return new SourceSelection(
-						tree.getNode(sourceWeights.nodeNrs[m]),
-						sourceWeights.total,
-						sourceWeights.weights[m]);
-			}
-		}
-
-		throw new IllegalStateException("Failed to select source node despite positive total weight");
-	}
-
-	/**
-	 * Reshape a target-weight vector.
-	 *
-	 * <p>Without a transform this is the squaring that has always been applied. With a
-	 * transform, the transform's own exponent replaces it, so the two must never both run.
-	 *
-	 * <p>Every entry must be a genuinely selectable candidate: the transform's offset is
-	 * added to all entries, so an infeasible candidate passed in as zero would acquire
-	 * positive selection probability.
-	 */
-	private double[] applyTargetTransform(double[] rawWeights) {
-		if (targetWeightTransform == null) {
-			double[] out = new double[rawWeights.length];
-			for (int k = 0; k < rawWeights.length; k++) {
-				out[k] = rawWeights[k] * rawWeights[k];
-			}
-			return out;
-		}
-		return targetWeightTransform.apply(rawWeights);
+		return new SourceSelection(
+				tree.getNode(sourceWeights.nodeNrs[m]),
+				sourceWeights.total,
+				sourceWeights.weights[m]);
 	}
 
     @Override
     public double proposal() {
 		// Freeze the transform coefficients for this proposal, so the forward and reverse
 		// probabilities below are computed with identical weights.
-		if (targetWeightTransform != null) {
-			targetWeightTransform.startProposal();
-		}
-		if (edgeWeightTransform != null) {
-			edgeWeightTransform.startProposal();
-		}
+		startTransformProposal();
 
         boolean useEdgeLength = useEdgeLengthInput.get();
 		boolean useAttachmentIntervalLength = useAttachmentIntervalLengthInput.get();
@@ -557,94 +448,6 @@ public class TargetedWilsonBalding extends TreeOperator {
 		logHastingsRatio += Math.log(iWeight / reverseTotalWeight);
 
         return logHastingsRatio;
-	}
-
-	@Override
-	public void optimize(final double logAlpha) {
-		if (targetWeightTransform != null) {
-			targetWeightTransform.optimize(logAlpha);
-		}
-		// Guard against the same object being wired to both inputs, which would otherwise
-		// take two adaptation steps from one observation.
-		if (edgeWeightTransform != null && edgeWeightTransform != targetWeightTransform) {
-			edgeWeightTransform.optimize(logAlpha);
-		}
-	}
-
-	/**
-	 * Persist the transform tuning alongside the standard operator statistics, using the
-	 * nested-JSON convention documented on {@link beast.base.inference.Operator#storeToFile}.
-	 *
-	 * <p>The iteration count matters as much as the coefficients: without it a resumed chain
-	 * resets the SPSA gain sequences to their maximum and takes a burst of large adaptation
-	 * steps mid-run.
-	 */
-	@Override
-	public void storeToFile(final PrintWriter out) {
-		if (targetWeightTransform == null && edgeWeightTransform == null) {
-			super.storeToFile(out);
-			return;
-		}
-
-		StringWriter buffer = new StringWriter();
-		PrintWriter bufferedOut = new PrintWriter(buffer);
-		super.storeToFile(bufferedOut);
-		bufferedOut.flush();
-
-		try {
-			JSONObject json = new JSONObject(buffer.toString());
-			JSONArray transforms = new JSONArray();
-			appendTransform(transforms, "target", targetWeightTransform);
-			appendTransform(transforms, "edge", edgeWeightTransform);
-			json.put("transforms", transforms);
-			out.print(json.toString());
-		} catch (JSONException e) {
-			// Match the base class: report and carry on rather than killing the chain.
-			e.printStackTrace();
-			out.print(buffer.toString());
-		}
-	}
-
-	private void appendTransform(JSONArray transforms, String role, WeightTransform transform)
-			throws JSONException {
-		if (transform == null) {
-			return;
-		}
-		double[] coefficients = transform.getCoefficients();
-		JSONObject entry = new JSONObject();
-		entry.put("role", role);
-		entry.put("exponent", coefficients[0]);
-		entry.put("offset", coefficients[1]);
-		entry.put("n", transform.getAdaptationCount());
-		entry.put("baseline", transform.getAcceptanceBaseline());
-		transforms.put(entry);
-	}
-
-	@Override
-	public void restoreFromFile(JSONObject o) {
-		super.restoreFromFile(o);
-		if (!o.has("transforms")) {
-			return;
-		}
-		try {
-			JSONArray transforms = o.getJSONArray("transforms");
-			for (int k = 0; k < transforms.length(); k++) {
-				JSONObject entry = transforms.getJSONObject(k);
-				WeightTransform transform = "target".equals(entry.getString("role"))
-						? targetWeightTransform
-						: edgeWeightTransform;
-				if (transform == null) {
-					continue;
-				}
-				transform.setAdaptationState(
-						new double[] { entry.getDouble("exponent"), entry.getDouble("offset") },
-						entry.getLong("n"),
-						entry.getDouble("baseline"));
-			}
-		} catch (JSONException e) {
-			// Failed to restore tuning; report and continue with the configured defaults.
-			e.printStackTrace();
-		}
 	}
 
 	/**

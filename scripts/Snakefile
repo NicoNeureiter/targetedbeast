@@ -23,9 +23,12 @@
 # Usage (from this scripts/ directory):
 #   snakemake -j4                 # reps within a subdir run in parallel
 #   snakemake -j1                 # everything strictly sequential
+#   snakemake -j16 --config parallel_subdirs=1   # all settings at once too
+#   snakemake -j16 --config parallel_subdirs=1 beast_threads=2   # 2 cores per chain
 #   snakemake --config beast=/path/to/beast
 #   snakemake --config n_reps=8   # generate/run 8 replicates per subdirectory
 
+import hashlib
 import sys
 from pathlib import Path
 
@@ -40,6 +43,10 @@ QUICK = bool(int(config.get("quick", 0)))
 
 N_REPS = int(config.get("n_reps", 2 if QUICK else 4))
 CHAIN_LENGTH = int(config.get("chain_length", 200_000 if QUICK else 10_000_000))
+# Subsample the alignment to this many taxa. The full lassaL_kli22 alignment has 551, which
+# is far too slow for a development loop: per-iteration cost grows with the tree size, so
+# this is the main knob for trading accuracy against runtime.
+N_TAXA = config.get("n_taxa", 60 if QUICK else None)
 
 # Path to the BEAST launcher (override with --config beast=...).
 BEAST = config.get("beast", "/Applications/BEAST 2.7.7/bin/beast")
@@ -50,6 +57,11 @@ LOGANALYSER = config.get(
     "loganalyser",
     str(_beast_dir / "loganalyser") if str(_beast_dir) not in (".", "") else "loganalyser",
 )
+# Run every setting concurrently instead of one subdirectory at a time; see prev_subdir_done.
+PARALLEL_SUBDIRS = bool(int(config.get("parallel_subdirs", 0)))
+# Cores to reserve per BEAST run. The tree likelihood has useThreads="true", so a chain is not a
+# single-core job, and telling snakemake otherwise oversubscribes the machine.
+BEAST_THREADS = int(config.get("beast_threads", 1))
 # Burn-in percentage discarded by loganalyser when computing ESS.
 BURNIN = int(config.get("burnin", 10))
 # Operator whose acceptance rate is added to the summary statistics.
@@ -71,9 +83,30 @@ JAVA_SOURCES = [str(p) for p in (PACKAGE_ROOT / "src").rglob("*.java")]
 REPS = list(range(N_REPS))
 
 
+def beast_seed(wildcards):
+    """A distinct, reproducible seed per (setting, replicate).
+
+    BEAST defaults to System.currentTimeMillis(), and since the run?.xml files within a
+    subdirectory are byte-identical the seed is the only thing that separates replicates. Reps
+    launched in parallel can land in the same millisecond and produce identical chains, which has
+    already happened. hashlib rather than hash() because the latter is salted per process.
+    """
+    digest = hashlib.md5(f"{wildcards.subdir}/{wildcards.rep}".encode()).hexdigest()
+    return int(digest[:8], 16)
+
+
 def prev_subdir_done(wildcards):
     """A subdir's BEAST runs depend on the previous subdir being finished,
-    which makes the workflow walk the subdirectories sequentially."""
+    which makes the workflow walk the subdirectories sequentially.
+
+    This is the only thing keeping settings from running concurrently, and it is here for the
+    runtime measurement rather than for correctness: ESS per hour is only comparable across
+    settings if they all saw the same machine. With `--config parallel_subdirs=1` the edge is
+    dropped and snakemake schedules every chain against -j at once, which is much faster but
+    makes the runtimes contention-dependent - fine when the comparison is on acceptance or on
+    where the tuner settles, not on speed."""
+    if PARALLEL_SUBDIRS:
+        return []
     idx = SUBDIRS.index(wildcards.subdir)
     if idx == 0:
         return []
@@ -100,6 +133,12 @@ rule build_package:
 
 
 rule generate_xmls:
+    # Both the template and the renderer are inputs, so editing either one invalidates the
+    # XMLs. Without this the rule never re-runs once its outputs exist, and a template change
+    # silently leaves the pipeline running the previous XMLs.
+    input:
+        str(EXAMPLE_ROOT / "template.xml"),
+        str(SCRIPT_DIR / "generate_xmls.py"),
     output:
         expand(
             str(EXAMPLE_ROOT / "{subdir}" / "run{rep}.xml"),
@@ -108,6 +147,7 @@ rule generate_xmls:
         ),
     shell:
         "python {SCRIPT_DIR}/generate_xmls.py --n-reps {N_REPS} --chain-length {CHAIN_LENGTH}"
+        + (f" --n-taxa {N_TAXA}" if N_TAXA else "")
 
 
 rule run_beast:
@@ -115,6 +155,9 @@ rule run_beast:
         xml=str(EXAMPLE_ROOT / "{subdir}" / "run{rep}.xml"),
         prev=prev_subdir_done,
         build=str(INSTALL_MARKER),
+    threads: BEAST_THREADS
+    params:
+        seed=beast_seed,
     output:
         trees=str(EXAMPLE_ROOT / "{subdir}" / "run{rep}.trees"),
         log=str(EXAMPLE_ROOT / "{subdir}" / "run{rep}.log"),
@@ -124,7 +167,8 @@ rule run_beast:
         # Time the BEAST run with the bash SECONDS builtin and record the
         # wall-clock runtime (seconds) only if BEAST succeeds.
         "SECONDS=0; "
-        '"{BEAST}" -version_file ../version.xml -overwrite -working "{input.xml}" && '
+        '"{BEAST}" -version_file ../version.xml -overwrite -seed {params.seed} '
+        '-working "{input.xml}" && '
         'echo $SECONDS > "{output.runtime}"'
 
 

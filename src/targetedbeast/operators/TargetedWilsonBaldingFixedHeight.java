@@ -7,7 +7,6 @@ import java.util.HashMap;
 import java.util.List;
 import beast.base.core.Description;
 import beast.base.core.Input;
-import beast.base.evolution.operator.TreeOperator;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
 import beast.base.inference.util.InputUtil;
@@ -23,9 +22,9 @@ import targetedbeast.edgeweights.EdgeWeights;
 		+ "This move is similar to one proposed by WILSON and BALDING 1998  "
 		+ "and involves removing a subtree and re-attaching it on a new parent branch. "
 		+ "See <a href='http://www.genetics.org/cgi/content/full/161/3/1307/F1'>picture</a>.")
-public class TargetedWilsonBaldingFixedHeight extends TreeOperator {
+public class TargetedWilsonBaldingFixedHeight extends TargetedWeightOperator {
 
-	private static final double WEIGHT_EPS = 1E-16;
+	private static final double WEIGHT_EPS = 1E-12;
 
     public Input<EdgeWeights> edgeWeightsInput = new Input<>("edgeWeights", "input of weights to be used for targetedn tree operations");
     public Input<Double> mutationLimitInput = new Input<>("mutationLimit", "Input of the number of mutations to be used as a limit", 15.0);
@@ -44,12 +43,19 @@ public class TargetedWilsonBaldingFixedHeight extends TreeOperator {
 		limit = mutationLimitInput.get();
 		edgeWeights = edgeWeightsInput.get();
         _rejects = new HashMap<>();
+
+		// Target weights have always been squared here, so that stays the no-transform default.
+		initWeightTransforms(edgeWeights, true);
     }
-    
+
     @Override
     public double proposal() {
-        // if (Randomizer.nextDouble() < 0.0001)
-        //     System.out.println(_rejects);
+        // if (Randomizer.nextDouble() < 0.001)
+        //     System.out.println(getID() + ":  " + _rejects);
+
+		// Freeze the transform coefficients, so the forward and reverse probabilities below
+		// are computed with identical weights.
+		startTransformProposal();
 
 		if (useEdgeLengthInput.get()) {
 			return lengthWeightedTreeProposal();
@@ -83,39 +89,17 @@ public class TargetedWilsonBaldingFixedHeight extends TreeOperator {
 
         double logHastingsRatio = 0.0;
 
-		double totalMutations = 0.0;
-		for (int candidateNr = 0; candidateNr < tree.getNodeCount(); candidateNr++) {
-			if (tree.getNode(candidateNr).isRoot()) { //  || tree.getNode(candidateNr).getParent().isRoot()) {
-				continue;
-			}
-			totalMutations += edgeWeights.getEdgeWeights(candidateNr);
-		}
-		if (totalMutations < WEIGHT_EPS) {
+		SourceWeights sourceWeights = getSourceWeights(tree);
+		int sourceIdx = sourceWeights.sampleIndex();
+		if (sourceIdx < 0) {
 			registerReject("sourceWeightBelowEPS");
 			return Double.NEGATIVE_INFINITY;
 		}
 
-		double scaler = Randomizer.nextDouble() * totalMutations;
-		int randomNode = -1;
-		double currMuts = 0.0;
-		for (int nodeNr = 0; nodeNr < tree.getNodeCount(); nodeNr++) {
-			if (tree.getNode(nodeNr).isRoot()) { // || tree.getNode(nodeNr).getParent().isRoot()) {
-				continue;
-			}
-			currMuts += edgeWeights.getEdgeWeights(nodeNr);
-			if (currMuts > scaler) {
-				randomNode = nodeNr;
-				break;
-			}
-		}
-		if (randomNode < 0) {
-			registerReject("noSourceChosen");
-			return Double.NEGATIVE_INFINITY;
-		}
-
+		int randomNode = sourceWeights.nodeNrs[sourceIdx];
 		Node i = tree.getNode(randomNode);
-		// logHastingsRatio -= Math.log(edgeWeights.getEdgeWeights(randomNode) / totalMutations);
-		
+		logHastingsRatio -= Math.log(sourceWeights.weights[sourceIdx] / sourceWeights.total);
+
 		Node p = i.getParent();
 		if (p.isRoot()) {
             registerReject("pIsRoot");
@@ -152,18 +136,20 @@ public class TargetedWilsonBaldingFixedHeight extends TreeOperator {
 			return Double.NEGATIVE_INFINITY;
 		}
 
-		double[] distance = edgeWeights.getTargetWeightsInteger(i.getNr(), coExistingNodes, toHeight);
-		
+		double[] rawTargetWeights = edgeWeights.getTargetWeightsInteger(i.getNr(), coExistingNodes, toHeight);
+		// Transform the whole feasible vector first, then take the sibling's mass out of it:
+		// the sibling is a genuine candidate for the reverse move, so it has to be present
+		// while the offset is applied, and is only excluded from the forward draw afterwards.
+		double[] distance = applyTargetTransform(rawTargetWeights);
+
 		int siblingIdx = coExistingNodes.indexOf(CiP.getNr());
 		assert siblingIdx >= 0 : "Sibling lineage should be present at the parent height";
 		double siblingDistance = distance[siblingIdx];
-		siblingDistance = Math.pow(siblingDistance, 2);
 		distance[siblingIdx] = 0;
-		
+
 		double totalDistance = 0;
 		for (int k = 0; k < coExistingNodes.size(); k++) {
-			distance[k] = Math.pow(distance[k], 2);
-			totalDistance += distance[k];				
+			totalDistance += distance[k];
         }
 
         if (totalDistance < WEIGHT_EPS) {
@@ -205,17 +191,17 @@ public class TargetedWilsonBaldingFixedHeight extends TreeOperator {
 			return Double.NEGATIVE_INFINITY;
 		}
 
-		final int pnr = p.getNr();
-		final int jPnr = jP.getNr();
+		// final int pnr = p.getNr();
+		// final int jPnr = jP.getNr();
 
-        if (j.getNr() == pnr) {
-            registerReject("j.getNr()==pnr");
-			return Double.NEGATIVE_INFINITY;
-        }
-        if (jPnr == i.getNr()) {
-            registerReject("jPnr==i.getNr()");
-			return Double.NEGATIVE_INFINITY;
-		}
+        // if (j.getNr() == pnr) {
+        //     registerReject("j.getNr()==pnr");
+		// 	return Double.NEGATIVE_INFINITY;
+        // }
+        // if (jPnr == i.getNr()) {
+        //     registerReject("jPnr==i.getNr()");
+		// 	return Double.NEGATIVE_INFINITY;
+		// }
 
 		final Node PiP = p.getParent();
 
@@ -242,28 +228,38 @@ public class TargetedWilsonBaldingFixedHeight extends TreeOperator {
 		edgeWeights.prestore();
 		edgeWeights.updateByOperator();
 
-		// totalMutations = 0.0;
-		// for (int reverseNodeNr = 0; reverseNodeNr < tree.getNodeCount(); reverseNodeNr++) {
-		// 	if (tree.getNode(reverseNodeNr).isRoot() || tree.getNode(reverseNodeNr).getParent().isRoot()) {
-		// 		continue;
-		// 	}
-		// 	totalMutations += edgeWeights.getEdgeWeights(reverseNodeNr);
-		// }
-		// // if (totalMutations < WEIGHT_EPS) {
-		// // 	registerReject("reverseEdgeWeightBelowEPS");
-		// // 	return Double.NEGATIVE_INFINITY;
-		// // }
+		// Reverse source-selection probability, evaluated on the moved tree T'.
+		SourceWeights reverseSourceWeights = getSourceWeights(tree);
+		double reverseWeight = reverseSourceWeights.weightFor(randomNode);
+		if (reverseSourceWeights.isDegenerate() || reverseWeight < WEIGHT_EPS) {
+			registerReject("reverseEdgeWeightBelowEPS");
+			return Double.NEGATIVE_INFINITY;
+		}
+		logHastingsRatio += Math.log(reverseWeight / reverseSourceWeights.total);
 
-		// double reverseWeight = edgeWeights.getEdgeWeights(randomNode);
-
-		// // if (reverseWeight < WEIGHT_EPS) {
-		// // 	registerReject("reverseEdgeWeightBelowEPS");
-		// // 	return Double.NEGATIVE_INFINITY;
-		// // }
-
-		// logHastingsRatio += Math.log(reverseWeight / totalMutations);
-    	
         return logHastingsRatio;
+	}
+
+	/**
+	 * Transformed source weights over the feasible (non-root) nodes.
+	 *
+	 * <p>The root is left out of the vector entirely rather than given weight zero: a
+	 * transform adds its offset to every entry it receives, so a zero-weight root would
+	 * become selectable and break the {@code p = i.getParent()} that follows.
+	 */
+	private SourceWeights getSourceWeights(Tree tree) {
+		return sourceWeights(tree,
+				node -> !node.isRoot(),
+				node -> edgeWeights.getEdgeWeights(node.getNr()));
+	}
+
+	/** Transformed source weights for the branch-length-weighted proposal. */
+	private SourceWeights getLengthSourceWeights(Tree tree) {
+		// A source edge whose parent is the root cannot be moved by this step, so it is left
+		// out of the candidate set rather than drawn and then rejected.
+		return sourceWeights(tree,
+				node -> !(node.isRoot() || node.getParent().isRoot()),
+				Node::getLength);
 	}
 
 	private double lengthWeightedTreeProposal() {
@@ -271,28 +267,16 @@ public class TargetedWilsonBaldingFixedHeight extends TreeOperator {
 
 		double logHastingsRatio = 0.0;
 
-		// choose a random node avoiding root
-		double totalLength = 0;
-		List<Node> fromCandidates = Arrays.stream(tree.getNodesAsArray())
-				.filter(n -> !(n.isRoot() || n.getParent().isRoot()))
-				.toList();
-
-		for (Node n : fromCandidates) {
-			totalLength += n.getLength();
-		}
-		double scaler = Randomizer.nextDouble() * totalLength;
-		Node i = null;
-		double currLength = 0;
-		for (Node n : fromCandidates) {
-			currLength += n.getLength();
-			if (currLength > scaler) {
-				i = n;
-				break;
-			}
+		// choose a random node avoiding the root and its children
+		SourceWeights sourceWeights = getLengthSourceWeights(tree);
+		int sourceIdx = sourceWeights.sampleIndex();
+		if (sourceIdx < 0) {
+			registerReject("sourceWeightBelowEPS");
+			return Double.NEGATIVE_INFINITY;
 		}
 
-		logHastingsRatio -= Math.log(i.getLength() / totalLength);
-		totalLength -= i.getLength();
+		Node i = tree.getNode(sourceWeights.nodeNrs[sourceIdx]);
+		logHastingsRatio -= Math.log(sourceWeights.weights[sourceIdx] / sourceWeights.total);
 
 		Node p = i.getParent();
 		if (p.isRoot()) {
@@ -329,15 +313,16 @@ public class TargetedWilsonBaldingFixedHeight extends TreeOperator {
             throw new RuntimeException("Couldn't find current node among coexisting nodes.");
 		}
 
-		double[] distance = edgeWeights.getTargetWeightsInteger(i.getNr(), coExistingNodes, toHeight);
+		double[] rawTargetWeights = edgeWeights.getTargetWeightsInteger(i.getNr(), coExistingNodes, toHeight);
+		// Transform the whole feasible vector first, then take the sibling's mass out of it;
+		// see the comment on the same step in edgeWeightsTreeProposal.
+		double[] distance = applyTargetTransform(rawTargetWeights);
 
 		double siblingDistance = distance[coExistingNodes.indexOf(CiP.getNr())];
-		siblingDistance = Math.pow(siblingDistance, 2);
 		distance[coExistingNodes.indexOf(CiP.getNr())] = 0;
 
 		double totalDistance = 0;
 		for (int k = 0; k < coExistingNodes.size(); k++) {
-			distance[k] = Math.pow(distance[k], 2);
 			totalDistance += distance[k];
 		}
 
@@ -407,14 +392,17 @@ public class TargetedWilsonBaldingFixedHeight extends TreeOperator {
 		// Node mrca = getMRCA(PiP, p);
 		// mrca.makeDirty(Tree.IS_FILTHY);
 
-		double reverseTotalLength = 0.0;
-		for (Node candidate : Arrays.stream(tree.getNodesAsArray())
-				.filter(n -> !(n.isRoot() || n.getParent().isRoot()))
-				.toList()) {
-			reverseTotalLength += candidate.getLength();
+		// Reverse source-selection probability, evaluated on the moved tree T'. With a
+		// transform the total is a nonlinear function of the whole vector, so it is rebuilt
+		// rather than adjusted term by term.
+		SourceWeights reverseSourceWeights = getLengthSourceWeights(tree);
+		double reverseWeight = reverseSourceWeights.weightFor(i.getNr());
+		if (reverseSourceWeights.isDegenerate() || reverseWeight < WEIGHT_EPS) {
+			registerReject("reverseEdgeWeightBelowEPS");
+			return Double.NEGATIVE_INFINITY;
 		}
-		logHastingsRatio += Math.log(i.getLength() / reverseTotalLength);
-    	
+		logHastingsRatio += Math.log(reverseWeight / reverseSourceWeights.total);
+
         return logHastingsRatio;
 	}
 

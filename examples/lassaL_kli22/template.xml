@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="no"?><beast beautitemplate='Standard' beautistatus='' namespace="beast.core:beast.evolution.alignment:beast.evolution.tree.coalescent:beast.core.util:beast.evolution.nuc:beast.evolution.operators:beast.evolution.sitemodel:beast.evolution.substitutionmodel:beast.base.evolution.alignment:beast.pkgmgmt:beast.base.core:beast.base.inference:beast.base.evolution.tree.coalescent:beast.pkgmgmt:beast.base.core:beast.base.inference.util:beast.evolution.nuc:beast.base.evolution.operator:beast.base.inference.operator:beast.base.evolution.sitemodel:beast.base.evolution.substitutionmodel:beast.base.evolution.likelihood" required="BEAST.base v2.7.7" version="2.7">
 
     <alignment id="alignment" spec="feast.fileio.AlignmentFromFasta"
-               fileName="/Users/nneureiter/Projects/BEAST/targetedbeast/examples/lassaL_kli22/ali_normalized.fasta"/>
+               fileName="{alignment_file}"/>
 
     <map name="Uniform" >beast.base.inference.distribution.Uniform</map>
     <map name="Exponential" >beast.base.inference.distribution.Exponential</map>
@@ -132,25 +132,33 @@
 
         <operator id="subtreeSlide" spec="SubtreeSlide" tree="@tree" gaussian="false" size="2.0" weight="4"/>
         <operator id="BactrianSubtreeSlide" spec="kernel.BactrianSubtreeSlide" tree="@tree" size="2.0" weight="4"/>
-		<operator id="Range" spec="targetedbeast.operators.RangeSlide" tree="@tree" weight="6.0" size="0.5" edgeWeights="@edgeweights"/>    
+		<!-- No target transform here: useWeightedStep defaults to false, so this one draws its
+		     target uniformly and has no target weights to reshape. -->
+		<operator id="Range" spec="targetedbeast.operators.RangeSlide" tree="@tree" weight="6.0" size="0.5" edgeWeights="@edgeweights"/>
 
         <!-- <operator id="UnTargetedWide" spec="targetedbeast.operators.WeightedWideOperator" tree="@tree" weight="5"/> -->
-        <operator id="TargetedWide" spec="targetedbeast.operators.WeightedWideOperator" tree="@tree" weight="5" edgeWeights="@edgeweights"/>
+        <operator id="TargetedWide" spec="targetedbeast.operators.WeightedWideOperator" tree="@tree" weight="5" edgeWeights="@edgeweights"{target_weight_transform_ref}/>
+        <!-- The transform object itself is declared here and referenced by every other targeted
+             operator via the targetWeightTransform reference, so they share one set of
+             coefficients and pool their observations into a single adaptation. -->
         <operator id="targetedWilsonBalding" spec="targetedbeast.operators.TargetedWilsonBalding" tree="@tree" weight="5" edgeWeights="@edgeweights" maxHeightRatio="1.2">
             {target_weight_transform}
         </operator>
-        <operator id="targetedWilsonBaldingFixedHeight" spec="targetedbeast.operators.TargetedWilsonBaldingFixedHeight" tree="@tree" weight="5" edgeWeights="@edgeweights"/>
+        <operator id="targetedWilsonBaldingFixedHeight" spec="targetedbeast.operators.TargetedWilsonBaldingFixedHeight" tree="@tree" weight="5" edgeWeights="@edgeweights"{target_weight_transform_ref}/>
         <!-- <operator id="targetedWilsonBaldingDelta1" spec="targetedbeast.operators.TargetedWilsonBaldingHeightDelta" tree="@tree" weight="5" 
                         edgeWeights="@edgeweights" subtreeSlide="@subtreeSlide" shrinkage="0.2"/>
         <operator id="targetedWilsonBaldingDelta2" spec="targetedbeast.operators.TargetedWilsonBaldingHeightDelta" tree="@tree" weight="5" 
                         edgeWeights="@edgeweights" subtreeSlide="@subtreeSlide" shrinkage="0.2" forceTopologyChange="true"/> -->
+        <!-- RangeSlide uses its target weights raw rather than squared, so the shared transform
+             (which starts at exponent 2.0 to reproduce the Wilson-Balding default) changes this
+             operator's starting proposal, not just its adaptability. -->
         <operator id="targetedRangeSlide" spec="targetedbeast.operators.RangeSlide" tree="@tree" edgeWeights="@edgeweights" weight="5"
-                        size="2.0" optimise="false" useWeightedStep="true"/>
+                        size="2.0" optimise="false" useWeightedStep="true"{target_weight_transform_ref}/>
 
         <operator id="ScaleAll" spec="targetedbeast.operators.IntervalScaleOperator" tree="@tree" weight="1.0" scaleFactor="0.9" up="@popSize" down="@clockRate"/>
         <operator id="ScaleIntervalsRandomly" spec="targetedbeast.operators.IntervalScaleOperator" tree="@tree" weight="1.0" scaleFactor="0.9" scaleAllNodesIndependently="true"/>
 
-        <logger id="tracelog" spec="Logger" fileName="$(filebase).log" logEvery="250" model="@posterior" sanitiseHeaders="true" sort="smart">
+        <logger id="tracelog" spec="Logger" fileName="$(filebase).log" logEvery="125" model="@posterior" sanitiseHeaders="true" sort="smart">
             <log idref="posterior"/>
             <log idref="likelihood"/>
             <log idref="prior"/>
@@ -164,16 +172,14 @@
             <!-- <log idref="CoalescentConstant"/> -->
             {target_weight_transform_log}
         </logger>
-        <logger id="screenlog" spec="Logger" logEvery="10000">
+        <logger id="screenlog" spec="Logger" logEvery="20000">
             <log idref="posterior"/>
             <log idref="likelihood"/>
             <log idref="prior"/>
         </logger>
-        <logger id="treelog" spec="Logger" fileName="$(filebase).trees" logEvery="250" mode="tree">
+        <logger id="treelog" spec="Logger" fileName="$(filebase).trees" logEvery="125" mode="tree">
             <log id="TreeWithMetaDataLogger" spec="beast.base.evolution.TreeWithMetaDataLogger" tree="@tree"/>
         </logger>
-
-        <!-- <operatorschedule id="OperatorSchedule" spec="OperatorSchedule"/> -->
 
     </run>
 
