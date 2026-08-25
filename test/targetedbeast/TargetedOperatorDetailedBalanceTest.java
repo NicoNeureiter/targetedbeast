@@ -236,7 +236,7 @@ public class TargetedOperatorDetailedBalanceTest extends DetailedBalanceTest<Tre
                     "weight", 1.0,
                     "edgeWeights", getParsimonyWeights(tree),
                     "useEdgeLength", false,
-                    "maxHeightRatio", 1.0);
+                    "maxHeightRatio", 2.0);
             return operator;
         }));
     }

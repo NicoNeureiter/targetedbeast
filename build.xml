@@ -279,8 +279,11 @@
 
     <!-- Run a single unit test class -->
         <target name="test-single" depends="compile-test" if="test.class">
+            <!-- Detailed-balance sample count; raise it to sharpen the statistics. -->
+            <property name="db.numSamples" value="100000"/>
             <junit printsummary="yes" failureproperty="testFailed" showoutput="true"
                          maxmemory="4G" fork="true">
+            <sysproperty key="db.numSamples" value="${db.numSamples}"/>
             <jvmarg value="-ea"/>
                         <jvmarg line="--add-modules jdk.incubator.vector"/>
             <classpath>
