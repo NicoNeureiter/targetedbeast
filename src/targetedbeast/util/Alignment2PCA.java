@@ -112,11 +112,6 @@ public class Alignment2PCA extends Runnable {
 		int n = data.getTaxonCount();
 		List<String> taxa = data.getTaxaNames();
 
-		// remove noninformative sites 
-		ConsensusAlignment c = new ConsensusAlignment();
-		c.initByName("data", data);
-		data = c;
-		
 		List<Integer> usedSequenceIDs = new ArrayList<>();
 		List<Integer> sequenceWeights = new ArrayList<>();		
 		int [] sequenceID = pca.calcSequenceIDs(data, usedSequenceIDs, sequenceWeights);
@@ -148,7 +143,7 @@ public class Alignment2PCA extends Runnable {
 	// calculate binary matrix from site patterns: 
 	// column[i][j*stateCount+k] = 1 means taxon i has at site j a state of k
 	private double[][] calcMatrix(int[] sequenceID, List<Integer> usedSequenceIDs, Alignment data, int n) {
-		int uniqueSequenceCount = sequenceID[sequenceID.length - 1] + 1;
+		int uniqueSequenceCount = usedSequenceIDs.size();
 		int stateCount = data.getMaxStateCount();
 
 		int consensusSiteCount = 0;
@@ -352,7 +347,7 @@ public class Alignment2PCA extends Runnable {
 	}
 	
 	private double[][] calcDistanceMatrix(int[] sequenceID, List<Integer> usedSequenceIDs, Alignment data, int nx) {
-		int uniqueSequenceCount = sequenceID[sequenceID.length - 1] + 1;
+		int uniqueSequenceCount = usedSequenceIDs.size();
 		Log.info("Creating "+uniqueSequenceCount+"x" + uniqueSequenceCount+ " distance matrix");
 		long start = System.currentTimeMillis();
 
