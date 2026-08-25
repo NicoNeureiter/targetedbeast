@@ -22,7 +22,7 @@ import targetedbeast.util.Alignment2PCA;
 @Description("Brownian-motion edge weights with upward and downward Gaussian messages, "
     + "approximating full-tree trait likelihoods for targeted proposals.")
 public class PCAWeightsBrownianFullLikelihood extends Distribution implements EdgeWeights {
-    private static final double VARIANCE_FLOOR = 1e-12;
+    private static final double VARIANCE_FLOOR = 1e-16;
     private static final double NEUTRAL_VARIANCE = Double.POSITIVE_INFINITY;
 
     final public Input<Alignment> dataInput = new Input<>("data", "sequence data for the tree", Validate.REQUIRED);
@@ -41,10 +41,26 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
             "useInverseMeanDistanceProposal",
             "use inverse distance between propagated attachment means instead of approximate full-tree log likelihoods",
             false);
+        final public Input<Boolean> scaleQuadraticPartOnlyInput = new Input<>(
+            "scaleQuadraticPartOnly",
+            "if true, proposal scales are applied only to the quadratic data-fit terms while Gaussian normalization/log-det-like terms remain unscaled",
+            false);
+            final public Input<Boolean> separateBaseAndQuadraticCalibrationInput = new Input<>(
+                "separateBaseAndQuadraticCalibration",
+                "if true, proposal base/log-normalization terms and quadratic data-fit terms use separate per-axis calibration scales",
+                false);
     final public Input<Double> brownianRateInput = new Input<>(
             "brownianRate",
             "Brownian diffusion rate used when propagating Gaussian trait messages along branches",
             1.0);
+    final public Input<String> brownianTraitRatesInput = new Input<>(
+            "brownianTraitRates",
+            "comma or whitespace separated per-trait Brownian diffusion rates; when provided these scale each trait axis independently and multiply any branchRateModel branch rates",
+            "");
+    final public Input<String> rootPriorVariancesInput = new Input<>(
+            "rootPriorVariances",
+            "comma or whitespace separated per-trait root-state prior variances in Brownian diffusion units; when blank the scalar rootPriorVariance input is used for every trait",
+            "");
         final public Input<Double> rootPriorVarianceInput = new Input<>(
             "rootPriorVariance",
             "root-state prior variance in Brownian diffusion units; use Infinity for a flat root prior and 0 for a root fixed at 0",
@@ -55,10 +71,16 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
     private double offset;
     private boolean useOneNorm;
     private boolean useInverseMeanDistanceProposal;
+    private boolean scaleQuadraticPartOnly;
+    private boolean separateBaseAndQuadraticCalibration;
     private BranchRateModel.Base branchRateModel;
     private double brownianRate;
-    private double rootPriorVariance;
+    private double[] brownianTraitRates;
+    private double[] rootPriorVariances;
+    private double proposalBaseLogLikelihoodScale = 1.0;
+    private double[] proposalBaseLogLikelihoodScales;
     private double proposalLogLikelihoodScale = 1.0;
+    private double[] proposalLogLikelihoodScales;
     private double maxWeight;
     private double minWeight;
 
@@ -66,14 +88,20 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
     private double[][] insideMeans;
     private double[][] insideVariances;
     private double[] insideLogNorm;
+    private double[][] insideBaseContributions;           // per-axis base accumulated in the subtree below this node
+    private double[][] insideQuadraticContributions;      // per-axis quadratic accumulated in the subtree below this node
     private double[][] insideWithoutMeans;
     private double[][] insideWithoutVariances;
     private double[] insideWithoutLogNorm;
     private boolean[] insideWithoutValid;
+    private double[][] insideWithoutBaseContributions;        // per-axis base, fromNode excluded
+    private double[][] insideWithoutQuadraticContributions;   // per-axis quadratic, fromNode excluded
     private double[][] outsideMeans;
     private double[][] outsideVariances;
     private double[] outsideLogNorm;
     private boolean[] outsideValid;
+    private double[][] outsideBaseContributions;          // per-axis base accumulated outside this node
+    private double[][] outsideQuadraticContributions;     // per-axis quadratic accumulated outside this node
     private double[] edgeMutations;
     private double[] cachedBranchRates;
 
@@ -88,16 +116,21 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
         useOneNorm = useOneNormInput.get();
         branchRateModel = branchRateModelInput.get();
         useInverseMeanDistanceProposal = useInverseMeanDistanceProposalInput.get();
+        scaleQuadraticPartOnly = scaleQuadraticPartOnlyInput.get();
+        separateBaseAndQuadraticCalibration = separateBaseAndQuadraticCalibrationInput.get();
         brownianRate = brownianRateInput.get();
-        rootPriorVariance = rootPriorVarianceInput.get();
+        brownianTraitRates = resolveBrownianTraitRates();
+        rootPriorVariances = resolveRootPriorVariances();
         maxWeight = maxWeightInput.get();
         minWeight = minWeightInput.get();
+        proposalBaseLogLikelihoodScales = new double[dim];
+        Arrays.fill(proposalBaseLogLikelihoodScales, proposalBaseLogLikelihoodScale);
+        proposalLogLikelihoodScales = new double[dim];
+        Arrays.fill(proposalLogLikelihoodScales, proposalLogLikelihoodScale);
 
-        if (branchRateModel == null && (!(brownianRate > 0.0) || !Double.isFinite(brownianRate))) {
-            throw new IllegalArgumentException("brownianRate must be finite and > 0, but was " + brownianRate);
-        }
-        if (rootPriorVariance < 0.0 || Double.isNaN(rootPriorVariance)) {
-            throw new IllegalArgumentException("rootPriorVariance must be >= 0 or Infinity, but was " + rootPriorVariance);
+        if (separateBaseAndQuadraticCalibration && scaleQuadraticPartOnly) {
+            throw new IllegalArgumentException(
+                "separateBaseAndQuadraticCalibration and scaleQuadraticPartOnly cannot both be enabled");
         }
 
         if (dataInput.get().getTaxonCount() != treeInput.get().getLeafNodeCount()) {
@@ -132,14 +165,20 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
         insideMeans = new double[nodeCount][dim];
         insideVariances = new double[nodeCount][dim];
         insideLogNorm = new double[nodeCount];
+        insideBaseContributions = new double[nodeCount][dim];
+        insideQuadraticContributions = new double[nodeCount][dim];
         insideWithoutMeans = new double[nodeCount][dim];
         insideWithoutVariances = new double[nodeCount][dim];
         insideWithoutLogNorm = new double[nodeCount];
         insideWithoutValid = new boolean[nodeCount];
+        insideWithoutBaseContributions = new double[nodeCount][dim];
+        insideWithoutQuadraticContributions = new double[nodeCount][dim];
         outsideMeans = new double[nodeCount][dim];
         outsideVariances = new double[nodeCount][dim];
         outsideLogNorm = new double[nodeCount];
         outsideValid = new boolean[nodeCount];
+        outsideBaseContributions = new double[nodeCount][dim];
+        outsideQuadraticContributions = new double[nodeCount][dim];
         edgeMutations = new double[nodeCount];
         cachedBranchRates = new double[nodeCount];
         Arrays.fill(cachedBranchRates, Double.NaN);
@@ -231,6 +270,8 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
             System.arraycopy(leafPoints[nodeNr], 0, insideMeans[nodeNr], 0, dim);
             Arrays.fill(insideVariances[nodeNr], 0.0);
             insideLogNorm[nodeNr] = 0.0;
+            Arrays.fill(insideBaseContributions[nodeNr], 0.0);
+            Arrays.fill(insideQuadraticContributions[nodeNr], 0.0);
             return new GaussianMessage(insideMeans[nodeNr], insideVariances[nodeNr], 0.0);
         }
 
@@ -238,9 +279,20 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
         GaussianMessage right = recomputeInsideRecursive(node.getRight());
         GaussianMessage leftUp = propagateMessage(left, node.getLeft(), node.getLeft().getLength());
         GaussianMessage rightUp = propagateMessage(right, node.getRight(), node.getRight().getLength());
-        GaussianMessage merged = combineMessages(leftUp, rightUp);
+
+        // Per-axis accumulator: start with the children's accumulated contributions,
+        // then have the combine append its own per-axis contribution.
+        int leftNr  = node.getLeft().getNr();
+        int rightNr = node.getRight().getNr();
+        double[] base = insideBaseContributions[nodeNr];
+        double[] quad = insideQuadraticContributions[nodeNr];
+        for (int d = 0; d < dim; d++) {
+            base[d] = insideBaseContributions[leftNr][d] + insideBaseContributions[rightNr][d];
+            quad[d] = insideQuadraticContributions[leftNr][d] + insideQuadraticContributions[rightNr][d];
+        }
+        GaussianMessage merged = combineMessagesWithContributionParts(leftUp, rightUp, base, quad);
         if (node.isRoot()) {
-            merged = combineMessages(merged, rootPriorMessage());
+            merged = combineMessagesWithContributionParts(merged, rootPriorMessage(), base, quad);
         }
 
         copyMessage(merged, insideMeans[nodeNr], insideVariances[nodeNr]);
@@ -288,6 +340,8 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
             System.arraycopy(insideMeans[nodeNr], 0, insideWithoutMeans[nodeNr], 0, dim);
             System.arraycopy(insideVariances[nodeNr], 0, insideWithoutVariances[nodeNr], 0, dim);
             insideWithoutLogNorm[nodeNr] = 0.0;
+            Arrays.fill(insideWithoutBaseContributions[nodeNr], 0.0);
+            Arrays.fill(insideWithoutQuadraticContributions[nodeNr], 0.0);
             insideWithoutValid[nodeNr] = true;
             return new GaussianMessage(insideWithoutMeans[nodeNr], insideWithoutVariances[nodeNr], 0.0);
         }
@@ -295,20 +349,39 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
         EffectiveBranch branch1 = getEffectiveBranch(node, 0, ignore);
         EffectiveBranch branch2 = getEffectiveBranch(node, 1, ignore);
         GaussianMessage message;
+        double[] base = insideWithoutBaseContributions[nodeNr];
+        double[] quad = insideWithoutQuadraticContributions[nodeNr];
         if (branch1 == null) {
             GaussianMessage child2Message = recomputeInsideWithoutRecursive(branch2.node, ignore);
             message = propagateMessage(child2Message, branch2.diffusionLength);
+            // No combine at this node — contributions pass through from the included child.
+            int childNr = branch2.node.getNr();
+            for (int d = 0; d < dim; d++) {
+                base[d] = insideWithoutBaseContributions[childNr][d];
+                quad[d] = insideWithoutQuadraticContributions[childNr][d];
+            }
         } else if (branch2 == null) {
             GaussianMessage child1Message = recomputeInsideWithoutRecursive(branch1.node, ignore);
             message = propagateMessage(child1Message, branch1.diffusionLength);
+            int childNr = branch1.node.getNr();
+            for (int d = 0; d < dim; d++) {
+                base[d] = insideWithoutBaseContributions[childNr][d];
+                quad[d] = insideWithoutQuadraticContributions[childNr][d];
+            }
         } else {
             GaussianMessage up1 = propagateMessage(recomputeInsideWithoutRecursive(branch1.node, ignore), branch1.diffusionLength);
             GaussianMessage up2 = propagateMessage(recomputeInsideWithoutRecursive(branch2.node, ignore), branch2.diffusionLength);
-            message = combineMessages(up1, up2);
+            int c1Nr = branch1.node.getNr();
+            int c2Nr = branch2.node.getNr();
+            for (int d = 0; d < dim; d++) {
+                base[d] = insideWithoutBaseContributions[c1Nr][d] + insideWithoutBaseContributions[c2Nr][d];
+                quad[d] = insideWithoutQuadraticContributions[c1Nr][d] + insideWithoutQuadraticContributions[c2Nr][d];
+            }
+            message = combineMessagesWithContributionParts(up1, up2, base, quad);
         }
 
         copyMessage(message, insideWithoutMeans[nodeNr], insideWithoutVariances[nodeNr]);
-    insideWithoutLogNorm[nodeNr] = message.logNorm;
+        insideWithoutLogNorm[nodeNr] = message.logNorm;
         insideWithoutValid[nodeNr] = true;
         return new GaussianMessage(insideWithoutMeans[nodeNr], insideWithoutVariances[nodeNr], message.logNorm);
     }
@@ -318,27 +391,54 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
             return;
         }
 
-        GaussianMessage nodeOutside = getOutsideMessage(node.getNr());
+        int nodeNr = node.getNr();
+        GaussianMessage nodeOutside = getOutsideMessage(nodeNr);
         EffectiveBranch leftBranch = getEffectiveBranch(node, 0, ignore);
         EffectiveBranch rightBranch = getEffectiveBranch(node, 1, ignore);
 
         if (leftBranch != null) {
+            int childNr = leftBranch.node.getNr();
             GaussianMessage siblingContribution = rightBranch == null
                     ? neutralMessage()
                     : propagateMessage(getInsideWithoutMessage(rightBranch.node.getNr()), rightBranch.diffusionLength);
-            GaussianMessage combined = combineMessages(nodeOutside, siblingContribution);
+            // Seed child's outside accumulators with parent's outside + sibling inside-without;
+            // the combine then appends its own per-axis contribution.
+            double[] base = outsideBaseContributions[childNr];
+            double[] quad = outsideQuadraticContributions[childNr];
+            for (int d = 0; d < dim; d++) {
+                base[d] = outsideBaseContributions[nodeNr][d];
+                quad[d] = outsideQuadraticContributions[nodeNr][d];
+                if (rightBranch != null) {
+                    int sibNr = rightBranch.node.getNr();
+                    base[d] += insideWithoutBaseContributions[sibNr][d];
+                    quad[d] += insideWithoutQuadraticContributions[sibNr][d];
+                }
+            }
+            GaussianMessage combined = combineMessagesWithContributionParts(nodeOutside, siblingContribution, base, quad);
             GaussianMessage childOutside = propagateMessage(combined, leftBranch.diffusionLength);
-            setOutside(leftBranch.node.getNr(), childOutside);
+            setOutside(childNr, childOutside);
             recomputeOutsideRecursive(leftBranch.node, ignore);
         }
 
         if (rightBranch != null) {
+            int childNr = rightBranch.node.getNr();
             GaussianMessage siblingContribution = leftBranch == null
                     ? neutralMessage()
                     : propagateMessage(getInsideWithoutMessage(leftBranch.node.getNr()), leftBranch.diffusionLength);
-            GaussianMessage combined = combineMessages(nodeOutside, siblingContribution);
+            double[] base = outsideBaseContributions[childNr];
+            double[] quad = outsideQuadraticContributions[childNr];
+            for (int d = 0; d < dim; d++) {
+                base[d] = outsideBaseContributions[nodeNr][d];
+                quad[d] = outsideQuadraticContributions[nodeNr][d];
+                if (leftBranch != null) {
+                    int sibNr = leftBranch.node.getNr();
+                    base[d] += insideWithoutBaseContributions[sibNr][d];
+                    quad[d] += insideWithoutQuadraticContributions[sibNr][d];
+                }
+            }
+            GaussianMessage combined = combineMessagesWithContributionParts(nodeOutside, siblingContribution, base, quad);
             GaussianMessage childOutside = propagateMessage(combined, rightBranch.diffusionLength);
-            setOutside(rightBranch.node.getNr(), childOutside);
+            setOutside(childNr, childOutside);
             recomputeOutsideRecursive(rightBranch.node, ignore);
         }
     }
@@ -406,12 +506,6 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
     }
 
     public void setLeafEmbeddings(double[] flattenedEmbeddings, int[] leafOrder) {
-        // System.out.println();
-        // System.out.println();
-        // System.out.println();
-        // printDistanceMatrix(leafPoints);
-        // System.out.println();
-        // System.out.println();
         if (flattenedEmbeddings.length != leafOrder.length * dim) {
             throw new IllegalArgumentException("Leaf embedding length mismatch: expected "
                     + (leafOrder.length * dim) + " but got " + flattenedEmbeddings.length);
@@ -444,6 +538,52 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
 
     public double getApproximateTreeLogLikelihoodAtNode(int nodeNr) {
         return getFullConditional(nodeNr).logNorm;
+    }
+
+    /**
+     * Run the inside (Felsenstein-style) message recursion on the current tree
+     * with per-axis contribution tracking.  Mirrors {@link #recomputeInsideRecursive}
+     * but funnels every message-combine through
+     * {@link #combineMessagesWithContributionParts}, so that on return
+     * <pre>
+     *   sum baseContributions[d]      = −½·logDet(V_axis_d)
+     *   sum quadraticContributions[d] = −½·qf[d]
+     * </pre>
+     * for each axis {@code d} under the current Brownian rates / root prior.
+     *
+     * <p>Test-only: side-effect free relative to the cached fields except for
+     * resetting the input accumulator arrays.
+     *
+     * @param baseContributions     length-dim accumulator (zeroed and filled)
+     * @param quadraticContributions length-dim accumulator (zeroed and filled)
+     */
+    public void computeFullTreeContributionParts(double[] baseContributions, double[] quadraticContributions) {
+        ensureInitialized();
+        if (baseContributions.length != dim || quadraticContributions.length != dim) {
+            throw new IllegalArgumentException(
+                "Contribution arrays must have length dim=" + dim);
+        }
+        Arrays.fill(baseContributions, 0.0);
+        Arrays.fill(quadraticContributions, 0.0);
+        computeFullTreeContributionsRecursive(treeInput.get().getRoot(),
+            baseContributions, quadraticContributions);
+    }
+
+    private GaussianMessage computeFullTreeContributionsRecursive(Node node,
+            double[] base, double[] quad) {
+        if (node.isLeaf()) {
+            double[] zeroVar = new double[dim];   // leaf message has zero variance
+            return new GaussianMessage(leafPoints[node.getNr()], zeroVar, 0.0);
+        }
+        GaussianMessage left  = computeFullTreeContributionsRecursive(node.getLeft(),  base, quad);
+        GaussianMessage right = computeFullTreeContributionsRecursive(node.getRight(), base, quad);
+        GaussianMessage leftUp  = propagateMessage(left,  node.getLeft(),  node.getLeft().getLength());
+        GaussianMessage rightUp = propagateMessage(right, node.getRight(), node.getRight().getLength());
+        GaussianMessage merged = combineMessagesWithContributionParts(leftUp, rightUp, base, quad);
+        if (node.isRoot()) {
+            merged = combineMessagesWithContributionParts(merged, rootPriorMessage(), base, quad);
+        }
+        return merged;
     }
 
     @Override
@@ -492,8 +632,11 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
 
     @Override
     public double getEdgeWeights(int nodeNr) {
-        ensureInitialized();
-        return nodeNr == treeInput.get().getRoot().getNr() ? minWeight : edgeMutations[nodeNr];
+        return treeInput.get().getNode(nodeNr).getLength();
+        // ensureInitialized();
+        // if (nodeNr == treeInput.get().getRoot().getNr())
+        //     return minWeight;
+        // return Math.sqrt((0.5 + edgeMutations[nodeNr]) * (2.0 + treeInput.get().getNode(nodeNr).getLength()));
     }
 
     @Override
@@ -507,7 +650,7 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
         ensureWithoutNodeMessages(fromNodeNr);
         Node fromNode = getNode(fromNodeNr);
         GaussianMessage fromInside = getInsideMessage(fromNodeNr);
-        if (useInverseMeanDistanceProposal) {
+        if (false) { //useInverseMeanDistanceProposal) {
             double[] weights = new double[toNodeNrs.size()];
             for (int i = 0; i < toNodeNrs.size(); i++) {
                 Node toNode = getNode(toNodeNrs.get(i));
@@ -519,13 +662,12 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
             return weights;
         }
 
-        double[] logScores = new double[toNodeNrs.size()];
+        double[] heights = new double[toNodeNrs.size()];
         for (int i = 0; i < toNodeNrs.size(); i++) {
-            Node toNode = getNode(toNodeNrs.get(i));
-            double toHeight = getToHeightWithoutNode(toNode, fromNode);
-            logScores[i] = computeScaledProposedTreeLogLikelihood(fromNode, toNode,
-                fromInside, getInsideWithoutMessage(toNodeNrs.get(i)), toHeight);
+            heights[i] = getToHeightWithoutNode(getNode(toNodeNrs.get(i)), fromNode);
         }
+        double[] logScores = computeProposalLogScores(fromNode, fromInside, toNodeNrs, heights);
+        // System.out.println(Arrays.toString(logScores));
         return toOperatorReadyWeights(logScores);
     }
 
@@ -535,28 +677,9 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
     }
 
     public double[] getTargetWeightsInteger(int fromNodeNr, List<Integer> toNodeNrs, double toHeight) {
-        ensureInitialized();
-        ensureWithoutNodeMessages(fromNodeNr);
-        Node fromNode = getNode(fromNodeNr);
-        GaussianMessage fromInside = getInsideMessage(fromNodeNr);
-
-        double[] weights = new double[toNodeNrs.size()];
-        for (int i = 0; i < toNodeNrs.size(); i++) {
-            Node toNode = getNode(toNodeNrs.get(i));
-            GaussianMessage toInside = getInsideWithoutMessage(toNodeNrs.get(i));
-
-            if (useInverseMeanDistanceProposal) {
-                double dist = getMeanDist(fromNode, toNode, fromInside, toInside, toHeight);
-                weights[i] = toOperatorReadyWeight(1.0 / Math.max(dist, VARIANCE_FLOOR));
-            } else {
-                weights[i] = computeScaledProposedTreeLogLikelihood(fromNode, toNode, fromInside, toInside, toHeight);
-            }
-        }
-        if (!useInverseMeanDistanceProposal) {
-            weights = toOperatorReadyWeights(weights);
-        }
-
-        return weights;
+        double[] toHeights = new double[toNodeNrs.size()];
+        Arrays.fill(toHeights, toHeight);
+        return getTargetWeightsAtHeights(fromNodeNr, toNodeNrs, toHeights);
     }
 
     @Override
@@ -565,28 +688,109 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
     }
 
     public double[] getTargetWeightsInteger(int fromNodeNr, List<Integer> toNodeNrs, List<Double> toHeights) {
+        assert toNodeNrs.size() == toHeights.size();
+
+        double[] heights = new double[toHeights.size()];
+        for (int i = 0; i < toHeights.size(); i++) {
+            heights[i] = toHeights.get(i);
+        }
+        return getTargetWeightsAtHeights(fromNodeNr, toNodeNrs, heights);
+    }
+
+    private double[] getTargetWeightsAtHeights(int fromNodeNr, List<Integer> toNodeNrs, double[] toHeights) {
         ensureInitialized();
         ensureWithoutNodeMessages(fromNodeNr);
         Node fromNode = getNode(fromNodeNr);
         GaussianMessage fromInside = getInsideMessage(fromNodeNr);
 
-        double[] weights = new double[toNodeNrs.size()];
+        if (false) { //useInverseMeanDistanceProposal) {
+            double[] weights = new double[toNodeNrs.size()];
+            for (int i = 0; i < toNodeNrs.size(); i++) {
+                Node toNode = getNode(toNodeNrs.get(i));
+                double toHeight = sanitizeAttachmentHeight(fromNode, toNode, toHeights[i]);
+                weights[i] = toOperatorReadyWeight(1.0 / Math.max(
+                        getMeanDist(fromNode, toNode, fromInside, getInsideWithoutMessage(toNodeNrs.get(i)), toHeight),
+                        VARIANCE_FLOOR));
+            }
+            return weights;
+        }
+
+        double[] heights = new double[toNodeNrs.size()];
+        for (int i = 0; i < toNodeNrs.size(); i++) {
+            heights[i] = sanitizeAttachmentHeight(fromNode, getNode(toNodeNrs.get(i)), toHeights[i]);
+        }
+        double[] logScores = computeProposalLogScores(fromNode, fromInside, toNodeNrs, heights);
+        // System.out.println(Arrays.toString(logScores));
+        return toOperatorReadyWeights(logScores);
+    }
+
+    /**
+     * Compute per-proposal log-scores for the candidate {@code toNodeNrs} at the
+     * already-resolved {@code resolvedHeights}.  Default implementation runs the
+     * Brownian-motion pruning likelihood with affine calibration; subclasses may
+     * override to use a different scoring model (e.g. an MLP surrogate).
+     */
+    protected double[] computeProposalLogScores(Node fromNode, GaussianMessage fromInside,
+                                                 List<Integer> toNodeNrs, double[] resolvedHeights) {
+        double[] logScores = new double[toNodeNrs.size()];
         for (int i = 0; i < toNodeNrs.size(); i++) {
             Node toNode = getNode(toNodeNrs.get(i));
-            GaussianMessage toInside = getInsideWithoutMessage(toNodeNrs.get(i));
-
-            if (useInverseMeanDistanceProposal) {
-                double dist = getMeanDist(fromNode, toNode, fromInside, toInside, toHeights.get(i));
-                weights[i] = toOperatorReadyWeight(1.0 / Math.max(dist, VARIANCE_FLOOR));
-            } else {
-                weights[i] = computeScaledProposedTreeLogLikelihood(fromNode, toNode, fromInside, toInside, toHeights.get(i));
-            }
+            logScores[i] = computeScaledProposedTreeLogLikelihood(fromNode, toNode,
+                    fromInside, getInsideWithoutMessage(toNodeNrs.get(i)), resolvedHeights[i]);
         }
-        if (!useInverseMeanDistanceProposal) {
-            weights = toOperatorReadyWeights(weights);
+        return logScores;
+    }
+
+    private double sanitizeAttachmentHeight(Node fromNode, Node toNode, double toHeight) {
+        double minHeight = Math.max(fromNode.getHeight(), toNode.getHeight());
+        Node effectiveParent = getEffectiveParent(toNode, currentIgnoredNode);
+        if (effectiveParent == null) {
+            assert toHeight > minHeight : "Invalid attachment height without effective parent: toHeight=" + toHeight
+                    + ", minHeight=" + minHeight
+                    + ", fromNode=" + fromNode.getNr()
+                    + ", toNode=" + toNode.getNr()
+                    + ", ignoredNode=" + currentIgnoredNode;
+            return Math.max(toHeight, minHeight + 1e-8);
         }
 
-        return weights;
+        double maxHeight = effectiveParent.getHeight();
+        if (maxHeight <= minHeight) {
+            assert false : "Degenerate attachment interval: maxHeight <= minHeight"
+                    + " (maxHeight=" + maxHeight
+                    + ", minHeight=" + minHeight
+                    + ", fromNode=" + fromNode.getNr()
+                    + ", toNode=" + toNode.getNr()
+                    + ", parentNode=" + effectiveParent.getNr()
+                    + ", ignoredNode=" + currentIgnoredNode + ")";
+            return minHeight;
+        }
+
+            assert toHeight >= minHeight && toHeight <= maxHeight : "Attachment height outside legal interval"
+                + " (toHeight=" + toHeight
+                + ", minHeight=" + minHeight
+                + ", maxHeight=" + maxHeight
+                + ", fromNode=" + fromNode.getNr()
+                + ", toNode=" + toNode.getNr()
+                + ", parentNode=" + effectiveParent.getNr()
+                + ", ignoredNode=" + currentIgnoredNode + ")";
+
+        double span = maxHeight - minHeight;
+        double epsilon = Math.max(1e-10, 1e-6 * span);
+        double lower = minHeight + epsilon;
+        double upper = maxHeight - epsilon;
+        if (lower >= upper) {
+            assert false : "Degenerate interior attachment interval: lower >= upper"
+                    + " (lower=" + lower
+                    + ", upper=" + upper
+                    + ", minHeight=" + minHeight
+                    + ", maxHeight=" + maxHeight
+                    + ", fromNode=" + fromNode.getNr()
+                    + ", toNode=" + toNode.getNr()
+                    + ", parentNode=" + effectiveParent.getNr()
+                    + ", ignoredNode=" + currentIgnoredNode + ")";
+            return 0.5 * (minHeight + maxHeight);
+        }
+        return Math.min(Math.max(toHeight, lower), upper);
     }
 
     public void setProposalLogLikelihoodScale(double scale) {
@@ -594,10 +798,47 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
             throw new IllegalArgumentException("proposalLogLikelihoodScale must be finite, but was " + scale);
         }
         proposalLogLikelihoodScale = scale;
+        Arrays.fill(proposalLogLikelihoodScales, scale);
     }
 
     public double getProposalLogLikelihoodScale() {
-        return proposalLogLikelihoodScale;
+        return mean(proposalLogLikelihoodScales);
+    }
+
+    public void setProposalBaseLogLikelihoodScales(double[] scales) {
+        if (scales == null || scales.length != dim) {
+            throw new IllegalArgumentException("proposalBaseLogLikelihoodScales length mismatch: expected "
+                    + dim + " but got " + (scales == null ? 0 : scales.length));
+        }
+        proposalBaseLogLikelihoodScales = Arrays.copyOf(scales, scales.length);
+        for (double scale : proposalBaseLogLikelihoodScales) {
+            if (!Double.isFinite(scale)) {
+                throw new IllegalArgumentException("proposalBaseLogLikelihoodScales must all be finite");
+            }
+        }
+        proposalBaseLogLikelihoodScale = mean(proposalBaseLogLikelihoodScales);
+    }
+
+    public double[] getProposalBaseLogLikelihoodScales() {
+        return Arrays.copyOf(proposalBaseLogLikelihoodScales, proposalBaseLogLikelihoodScales.length);
+    }
+
+    public void setProposalLogLikelihoodScales(double[] scales) {
+        if (scales == null || scales.length != dim) {
+            throw new IllegalArgumentException("proposalLogLikelihoodScales length mismatch: expected "
+                    + dim + " but got " + (scales == null ? 0 : scales.length));
+        }
+        proposalLogLikelihoodScales = Arrays.copyOf(scales, scales.length);
+        for (double scale : proposalLogLikelihoodScales) {
+            if (!Double.isFinite(scale)) {
+                throw new IllegalArgumentException("proposalLogLikelihoodScales must all be finite");
+            }
+        }
+        proposalLogLikelihoodScale = mean(proposalLogLikelihoodScales);
+    }
+
+    public double[] getProposalLogLikelihoodScales() {
+        return Arrays.copyOf(proposalLogLikelihoodScales, proposalLogLikelihoodScales.length);
     }
 
     public double getToHeightWithoutNode(Node toNode, Node fromNode) {
@@ -633,37 +874,148 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
 
     public double[] computeProposedTreeLogLikelihoodContributions(Node fromNode, Node toNode, GaussianMessage fromInside,
             GaussianMessage toInsideWithout, double toHeight) {
+        double[] base = new double[dim];
+        double[] quad = new double[dim];
+        computeProposedTreeLogLikelihoodContributionParts(
+                fromNode, toNode, fromInside, toInsideWithout, toHeight, base, quad);
+        double[] contributions = new double[dim];
+        for (int d = 0; d < dim; d++) {
+            contributions[d] = base[d] + quad[d];
+        }
+        return contributions;
+    }
+
+    public ProposalScoreBreakdown getProposalScoreBreakdown(int fromNodeNr, int toNodeNr, double toHeight) {
+        ensureInitialized();
+        if (useInverseMeanDistanceProposal) {
+            throw new IllegalStateException("Proposal score breakdown is not available in inverse-distance proposal mode.");
+        }
+
+        ensureWithoutNodeMessages(fromNodeNr);
+        Node fromNode = getNode(fromNodeNr);
+        Node toNode = getNode(toNodeNr);
+        double sanitizedToHeight = sanitizeAttachmentHeight(fromNode, toNode, toHeight);
+        GaussianMessage fromInside = getInsideMessage(fromNodeNr);
+        GaussianMessage toInsideWithout = getInsideWithoutMessage(toNodeNr);
+        double[] baseContributions = new double[dim];
+        double[] quadraticContributions = new double[dim];
+        computeProposedTreeLogLikelihoodContributionParts(
+                fromNode, toNode, fromInside, toInsideWithout, sanitizedToHeight, baseContributions, quadraticContributions);
+
+        double rawBaseContribution = 0.0;
+        double rawQuadraticContribution = 0.0;
+        double scaledBaseContribution = 0.0;
+        double scaledQuadraticContribution = 0.0;
+        for (int axis = 0; axis < dim; axis++) {
+            rawBaseContribution += baseContributions[axis];
+            rawQuadraticContribution += quadraticContributions[axis];
+            if (separateBaseAndQuadraticCalibration) {
+                scaledBaseContribution += proposalBaseLogLikelihoodScales[axis] * baseContributions[axis];
+                scaledQuadraticContribution += proposalLogLikelihoodScales[axis] * quadraticContributions[axis];
+            } else if (scaleQuadraticPartOnly) {
+                scaledBaseContribution += baseContributions[axis];
+                scaledQuadraticContribution += proposalLogLikelihoodScales[axis] * quadraticContributions[axis];
+            } else {
+                scaledBaseContribution += proposalLogLikelihoodScales[axis] * baseContributions[axis];
+                scaledQuadraticContribution += proposalLogLikelihoodScales[axis] * quadraticContributions[axis];
+            }
+        }
+
+        return new ProposalScoreBreakdown(
+                sanitizedToHeight,
+                rawBaseContribution,
+                rawQuadraticContribution,
+                scaledBaseContribution,
+                scaledQuadraticContribution);
+    }
+
+    protected double computeScaledProposedTreeLogLikelihood(Node fromNode, Node toNode, GaussianMessage fromInside,
+            GaussianMessage toInsideWithout, double toHeight) {
+        if (separateBaseAndQuadraticCalibration || scaleQuadraticPartOnly) {
+            double[] baseContributions = new double[dim];
+            double[] quadraticContributions = new double[dim];
+            computeProposedTreeLogLikelihoodContributionParts(
+                    fromNode, toNode, fromInside, toInsideWithout, toHeight, baseContributions, quadraticContributions);
+            double total = 0.0;
+            for (int axis = 0; axis < dim; axis++) {
+                if (separateBaseAndQuadraticCalibration) {
+                    total += proposalBaseLogLikelihoodScales[axis] * baseContributions[axis]
+                            + proposalLogLikelihoodScales[axis] * quadraticContributions[axis];
+                } else {
+                    total += baseContributions[axis] + proposalLogLikelihoodScales[axis] * quadraticContributions[axis];
+                }
+            }
+            return total;
+        }
+        double[] contributions = computeProposedTreeLogLikelihoodContributions(fromNode, toNode, fromInside, toInsideWithout, toHeight);
+        double total = 0.0;
+        for (int axis = 0; axis < dim; axis++) {
+            total += proposalLogLikelihoodScales[axis] * contributions[axis];
+        }
+        return total;
+    }
+
+    protected void computeProposedTreeLogLikelihoodContributionParts(Node fromNode, Node toNode, GaussianMessage fromInside,
+            GaussianMessage toInsideWithout, double toHeight, double[] baseContributions, double[] quadraticContributions) {
         assert toHeight > fromNode.getHeight();
         assert toHeight > toNode.getHeight();
 
+        // Seed the per-axis accumulators with the contributions already cached in
+        // the messages we're about to consume.  Each combineMessagesWithContributionParts
+        // call only adds the contribution from that single combine; the cached
+        // children's contributions live in the scalar logNorm of the GaussianMessage,
+        // but the per-axis decomposition is stored on the node-level cache arrays,
+        // and needs to be added explicitly here so the output (base, quad) describes
+        // the whole proposed tree (not just the local combines).
+        int fromNr = fromNode.getNr();
+        int toNr   = toNode.getNr();
+        boolean useInsideWithoutTo = (currentIgnoredNode >= 0) && insideWithoutValid[toNr];
+        double[] toBaseSrc = useInsideWithoutTo ? insideWithoutBaseContributions[toNr]
+                                                : insideBaseContributions[toNr];
+        double[] toQuadSrc = useInsideWithoutTo ? insideWithoutQuadraticContributions[toNr]
+                                                : insideQuadraticContributions[toNr];
+        for (int d = 0; d < dim; d++) {
+            baseContributions[d]      += insideBaseContributions[fromNr][d]      + toBaseSrc[d];
+            quadraticContributions[d] += insideQuadraticContributions[fromNr][d] + toQuadSrc[d];
+        }
+
         GaussianMessage fromAtHeight = propagateMessage(fromInside, fromNode, toHeight - fromNode.getHeight());
         GaussianMessage toAtHeight = propagateMessage(toInsideWithout, toNode, toHeight - toNode.getHeight());
-        double[] contributions = new double[dim];
-        GaussianMessage parentMessage = combineMessagesWithContributions(fromAtHeight, toAtHeight, contributions);
+        GaussianMessage parentMessage = combineMessagesWithContributionParts(fromAtHeight, toAtHeight, baseContributions, quadraticContributions);
 
         Node grandparent = getEffectiveParent(toNode, currentIgnoredNode);
         if (grandparent == null) {
-            combineMessagesWithContributions(parentMessage, getOutsideMessage(toNode.getNr()), contributions);
-            return contributions;
+            // outside(toNode) here is the root-prior / neutral message — its cached
+            // contribution arrays are zero by construction; just do the combine.
+            combineMessagesWithContributionParts(parentMessage, getOutsideMessage(toNr), baseContributions, quadraticContributions);
+            return;
         }
 
         GaussianMessage gpMessage = propagateMessage(parentMessage, toNode, Math.max(0.0, grandparent.getHeight() - toHeight));
         EffectiveBranch siblingBranch = getEffectiveSiblingBranch(toNode, currentIgnoredNode);
         if (siblingBranch != null) {
-            GaussianMessage siblingUp = propagateMessage(getInsideWithoutMessage(siblingBranch.node.getNr()), siblingBranch.diffusionLength);
-            gpMessage = combineMessagesWithContributions(gpMessage, siblingUp, contributions);
+            int sibNr = siblingBranch.node.getNr();
+            boolean useInsideWithoutSib = (currentIgnoredNode >= 0) && insideWithoutValid[sibNr];
+            double[] sibBaseSrc = useInsideWithoutSib ? insideWithoutBaseContributions[sibNr]
+                                                      : insideBaseContributions[sibNr];
+            double[] sibQuadSrc = useInsideWithoutSib ? insideWithoutQuadraticContributions[sibNr]
+                                                      : insideQuadraticContributions[sibNr];
+            for (int d = 0; d < dim; d++) {
+                baseContributions[d]      += sibBaseSrc[d];
+                quadraticContributions[d] += sibQuadSrc[d];
+            }
+            GaussianMessage siblingUp = propagateMessage(getInsideWithoutMessage(sibNr), siblingBranch.diffusionLength);
+            gpMessage = combineMessagesWithContributionParts(gpMessage, siblingUp, baseContributions, quadraticContributions);
         }
 
-        if (outsideValid[grandparent.getNr()]) {
-            combineMessagesWithContributions(gpMessage, getOutsideMessage(grandparent.getNr()), contributions);
-            return contributions;
+        int gpNr = grandparent.getNr();
+        if (outsideValid[gpNr]) {
+            for (int d = 0; d < dim; d++) {
+                baseContributions[d]      += outsideBaseContributions[gpNr][d];
+                quadraticContributions[d] += outsideQuadraticContributions[gpNr][d];
+            }
+            combineMessagesWithContributionParts(gpMessage, getOutsideMessage(gpNr), baseContributions, quadraticContributions);
         }
-        return contributions;
-    }
-
-    private double computeScaledProposedTreeLogLikelihood(Node fromNode, Node toNode, GaussianMessage fromInside,
-            GaussianMessage toInsideWithout, double toHeight) {
-        return proposalLogLikelihoodScale * computeProposedTreeLogLikelihood(fromNode, toNode, fromInside, toInsideWithout, toHeight);
     }
 
 	private double getMeanDist(Node fromNode, Node toNode, GaussianMessage fromInside, GaussianMessage toInsideWithout, double toHeight) {
@@ -722,10 +1074,10 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
         if (child.getNr() == ignore) {
             return null;
         }
-        double diffusionLength = getDiffusionLength(child, child.getLength());
+        double diffusionLength = getBaseDiffusionLength(child, child.getLength());
         while (becomesUnary(child, ignore)) {
             child = getIncludedChild(child, ignore);
-            diffusionLength += getDiffusionLength(child, child.getLength());
+            diffusionLength += getBaseDiffusionLength(child, child.getLength());
         }
         return new EffectiveBranch(child, diffusionLength);
     }
@@ -790,6 +1142,8 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
         Arrays.fill(outsideMeans[nodeNr], 0.0);
         Arrays.fill(outsideVariances[nodeNr], NEUTRAL_VARIANCE);
         outsideLogNorm[nodeNr] = 0.0;
+        Arrays.fill(outsideBaseContributions[nodeNr], 0.0);
+        Arrays.fill(outsideQuadraticContributions[nodeNr], 0.0);
         outsideValid[nodeNr] = true;
     }
 
@@ -797,6 +1151,9 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
         GaussianMessage prior = rootPriorMessage();
         copyMessage(prior, outsideMeans[nodeNr], outsideVariances[nodeNr]);
         outsideLogNorm[nodeNr] = prior.logNorm;
+        // Root prior message has logNorm = 0 by construction, so no contributions to seed.
+        Arrays.fill(outsideBaseContributions[nodeNr], 0.0);
+        Arrays.fill(outsideQuadraticContributions[nodeNr], 0.0);
         outsideValid[nodeNr] = true;
     }
 
@@ -814,24 +1171,33 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
     }
 
     private GaussianMessage rootPriorMessage() {
-        if (Double.isInfinite(rootPriorVariance)) {
-            return neutralMessage();
-        }
         double[] mean = new double[dim];
         double[] variance = new double[dim];
-        Arrays.fill(variance, Math.max(rootPriorVariance, 0.0));
+        boolean allInfinite = true;
+        for (int axis = 0; axis < dim; axis++) {
+            double rootPriorVariance = rootPriorVariances[axis];
+            if (Double.isInfinite(rootPriorVariance)) {
+                variance[axis] = NEUTRAL_VARIANCE;
+            } else {
+                variance[axis] = Math.max(rootPriorVariance, 0.0);
+                allInfinite = false;
+            }
+        }
+        if (allInfinite) {
+            return neutralMessage();
+        }
         return new GaussianMessage(mean, variance, 0.0);
     }
 
     private GaussianMessage propagateMessage(GaussianMessage message, Node branchNode, double branchLength) {
-        return propagateMessage(message, getDiffusionLength(branchNode, branchLength));
+        return propagateMessage(message, getBaseDiffusionLength(branchNode, branchLength));
     }
 
-    private GaussianMessage propagateMessage(GaussianMessage message, double diffusionLength) {
+    private GaussianMessage propagateMessage(GaussianMessage message, double baseDiffusionLength) {
         double[] mean = Arrays.copyOf(message.mean, dim);
         double[] variance = Arrays.copyOf(message.variance, dim);
         for (int i = 0; i < dim; i++) {
-            variance[i] = propagatedVariance(variance[i], diffusionLength);
+            variance[i] = propagatedVariance(variance[i], brownianTraitRates[i] * baseDiffusionLength);
         }
         return new GaussianMessage(mean, variance, message.logNorm);
     }
@@ -841,6 +1207,14 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
     }
 
     private GaussianMessage combineMessagesWithContributions(GaussianMessage first, GaussianMessage second, double[] contributions) {
+        return combineMessagesWithContributionParts(first, second, contributions, contributions);
+    }
+
+    private GaussianMessage combineMessagesWithContributionParts(
+            GaussianMessage first,
+            GaussianMessage second,
+            double[] baseContributions,
+            double[] quadraticContributions) {
         double[] mean = new double[dim];
         double[] variance = new double[dim];
         double logNorm = first.logNorm + second.logNorm;
@@ -872,10 +1246,15 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
             mean[i] = variance[i] * (first.mean[i] * precision1 + second.mean[i] * precision2);
             double sumVariance = Math.max(v1 + v2, VARIANCE_FLOOR);
             double diff = first.mean[i] - second.mean[i];
-            double axisContribution = -0.5 * (Math.log(sumVariance) + (diff * diff) / sumVariance);
+            double baseContribution = -0.5 * Math.log(sumVariance);
+            double quadraticContribution = -0.5 * (diff * diff) / sumVariance;
+            double axisContribution = baseContribution + quadraticContribution;
             logNorm += axisContribution;
-            if (contributions != null) {
-                contributions[i] += axisContribution;
+            if (baseContributions != null) {
+                baseContributions[i] += baseContribution;
+            }
+            if (quadraticContributions != null) {
+                quadraticContributions[i] += quadraticContribution;
             }
         }
         return new GaussianMessage(mean, variance, logNorm);
@@ -904,15 +1283,114 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
         return changed;
     }
 
-    private double getDiffusionLength(Node node, double branchLength) {
+    public double[] getBrownianTraitRates() {
+        return Arrays.copyOf(brownianTraitRates, brownianTraitRates.length);
+    }
+
+    public double[] getRootPriorVariances() {
+        return Arrays.copyOf(rootPriorVariances, rootPriorVariances.length);
+    }
+
+    public void setBrownianTraitRates(double[] rates) {
+        if (rates == null || rates.length != dim) {
+            throw new IllegalArgumentException("brownianTraitRates length mismatch: expected "
+                    + dim + " but got " + (rates == null ? 0 : rates.length));
+        }
+        brownianTraitRates = Arrays.copyOf(rates, rates.length);
+        for (int axis = 0; axis < brownianTraitRates.length; axis++) {
+            if (!(brownianTraitRates[axis] > 0.0) || !Double.isFinite(brownianTraitRates[axis])) {
+                throw new IllegalArgumentException("brownianTraitRates must all be finite and > 0, but axis "
+                        + axis + " was " + brownianTraitRates[axis]);
+            }
+        }
+        insideDirty = true;
+        clearWithoutNodeState();
+    }
+
+    public void setRootPriorVariances(double[] variances) {
+        if (variances == null || variances.length != dim) {
+            throw new IllegalArgumentException("rootPriorVariances length mismatch: expected "
+                    + dim + " but got " + (variances == null ? 0 : variances.length));
+        }
+        rootPriorVariances = Arrays.copyOf(variances, variances.length);
+        for (int axis = 0; axis < rootPriorVariances.length; axis++) {
+            double variance = rootPriorVariances[axis];
+            if ((variance < 0.0 && !Double.isInfinite(variance)) || Double.isNaN(variance)) {
+                throw new IllegalArgumentException("rootPriorVariances must all be >= 0 or Infinity, but axis "
+                        + axis + " was " + variance);
+            }
+        }
+        insideDirty = true;
+        clearWithoutNodeState();
+    }
+
+    private double[] resolveBrownianTraitRates() {
+        String configured = brownianTraitRatesInput.get();
+        if (configured == null || configured.isBlank()) {
+            double fallbackRate = branchRateModel == null ? brownianRate : 1.0;
+            if (!(fallbackRate > 0.0) || !Double.isFinite(fallbackRate)) {
+                throw new IllegalArgumentException("brownianRate must be finite and > 0, but was " + brownianRate);
+            }
+            double[] rates = new double[dim];
+            Arrays.fill(rates, fallbackRate);
+            return rates;
+        }
+
+        String[] tokens = configured.trim().split("[\\s,]+");
+        if (tokens.length != dim) {
+            throw new IllegalArgumentException("brownianTraitRates length mismatch: expected "
+                    + dim + " entries but got " + tokens.length);
+        }
+
+        double[] rates = new double[dim];
+        for (int axis = 0; axis < dim; axis++) {
+            rates[axis] = Double.parseDouble(tokens[axis]);
+            if (!(rates[axis] > 0.0) || !Double.isFinite(rates[axis])) {
+                throw new IllegalArgumentException("brownianTraitRates must all be finite and > 0, but axis "
+                        + axis + " was " + rates[axis]);
+            }
+        }
+        return rates;
+    }
+
+    private double[] resolveRootPriorVariances() {
+        String configured = rootPriorVariancesInput.get();
+        if (configured == null || configured.isBlank()) {
+            double rootPriorVariance = rootPriorVarianceInput.get();
+            if (rootPriorVariance < 0.0 || Double.isNaN(rootPriorVariance)) {
+                throw new IllegalArgumentException("rootPriorVariance must be >= 0 or Infinity, but was " + rootPriorVariance);
+            }
+            double[] variances = new double[dim];
+            Arrays.fill(variances, rootPriorVariance);
+            return variances;
+        }
+
+        String[] tokens = configured.trim().split("[\\s,]+");
+        if (tokens.length != dim) {
+            throw new IllegalArgumentException("rootPriorVariances length mismatch: expected "
+                    + dim + " entries but got " + tokens.length);
+        }
+
+        double[] variances = new double[dim];
+        for (int axis = 0; axis < dim; axis++) {
+            variances[axis] = Double.parseDouble(tokens[axis]);
+            if ((variances[axis] < 0.0 && !Double.isInfinite(variances[axis])) || Double.isNaN(variances[axis])) {
+                throw new IllegalArgumentException("rootPriorVariances must all be >= 0 or Infinity, but axis "
+                        + axis + " was " + variances[axis]);
+            }
+        }
+        return variances;
+    }
+
+    private double getBaseDiffusionLength(Node node, double branchLength) {
         return getBranchRate(node) * Math.max(branchLength, 0.0);
     }
 
     private double getBranchRate(Node node) {
-        if (branchRateModel == null)
-            return brownianRate;
-        else
-            return branchRateModel.getRateForBranch(node);
+        if (branchRateModel == null) {
+            return 1.0;
+        }
+        return branchRateModel.getRateForBranch(node);
     }
 
     private double propagatedVariance(double variance, double diffusionLength) {
@@ -945,10 +1423,11 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
         double[] scores = new double[logScores.length];
         double maxLogScore = Double.NEGATIVE_INFINITY;
         for (double logScore : logScores) {
-            maxLogScore = Math.max(maxLogScore, logScore);
+            if (Double.isFinite(logScore)) maxLogScore = Math.max(maxLogScore, logScore);
         }
         if (!Double.isFinite(maxLogScore)) {
-            Arrays.fill(scores, 1.0);
+            // All proposals produced non-finite scores; return uniform floor weights.
+            Arrays.fill(scores, VARIANCE_FLOOR + offset);
             return scores;
         }
         for (int i = 0; i < logScores.length; i++) {
@@ -957,7 +1436,73 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
         return scores;
     }
 
-    private double[] toOperatorReadyWeights(double[] logScores) {
+    static public double[] clipMaxToSecondMaxRatio(double[] weights, double maxRatio) {
+		if (weights == null || weights.length < 2) {
+			return weights;
+		}
+
+		int firstIdx = -1;
+		int secondIdx = -1;
+		double first = Double.NEGATIVE_INFINITY;
+		double second = Double.NEGATIVE_INFINITY;
+
+		for (int i = 0; i < weights.length; i++) {
+			double w = weights[i];
+			if (w > first) {
+				second = first;
+				secondIdx = firstIdx;
+				first = w;
+				firstIdx = i;
+			} else if (w > second) {
+				second = w;
+				secondIdx = i;
+			}
+		}
+
+		if (firstIdx < 0 || secondIdx < 0 || first <= maxRatio * second) {
+			return weights;
+		}
+
+		double[] clipped = Arrays.copyOf(weights, weights.length);
+		clipped[firstIdx] = maxRatio * second;
+		return clipped;
+    }
+
+    static public double[] clipMaxToSecondMaxDiff(final double[] weights, final double maxDiff) {
+		if (weights == null || weights.length < 2) {
+			return weights;
+		}
+
+		int firstIdx = -1;
+		int secondIdx = -1;
+		double first = Double.NEGATIVE_INFINITY;
+		double second = Double.NEGATIVE_INFINITY;
+
+		for (int i = 0; i < weights.length; i++) {
+			double w = weights[i];
+			if (w > first) {
+				second = first;
+				secondIdx = firstIdx;
+				first = w;
+				firstIdx = i;
+			} else if (w > second) {
+				second = w;
+				secondIdx = i;
+			}
+		}
+
+		if (firstIdx < 0 || secondIdx < 0 || first <= second + maxDiff) {
+			return weights;
+		}
+
+		double[] clipped = Arrays.copyOf(weights, weights.length);
+		clipped[firstIdx] = second + maxDiff;
+		return clipped;
+    }
+
+
+    protected double[] toOperatorReadyWeights(double[] logScores) {
+        logScores = clipMaxToSecondMaxDiff(logScores, 2.5);
         double[] scores = exponentiateLogScores(logScores);
         for (int i = 0; i < scores.length; i++) {
             scores[i] = toOperatorReadyWeight(scores[i]);
@@ -966,11 +1511,19 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
     }
 
     private double toOperatorReadyWeight(double finalWeight) {
-        return Math.sqrt(Math.max(finalWeight, VARIANCE_FLOOR));
+        return Math.sqrt(finalWeight);
     }
 
     private double norm(double x) {
         return useOneNorm ? Math.abs(x) : x * x;
+    }
+
+    private static double mean(double[] values) {
+        double total = 0.0;
+        for (double value : values) {
+            total += value;
+        }
+        return total / values.length;
     }
 
     public Node getNode(int i) {
@@ -979,6 +1532,14 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
 
     public Tree getTree() {
         return (Tree) treeInput.get();
+    }
+
+    protected BranchRateModel.Base getBranchRateModel() {
+        return branchRateModel;
+    }
+
+    protected int getDim() {
+        return dim;
     }
 
     @Override
@@ -1009,6 +1570,31 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
             this.mean = mean;
             this.variance = variance;
             this.logNorm = logNorm;
+        }
+    }
+
+    public static final class ProposalScoreBreakdown {
+        public final double attachmentHeight;
+        public final double rawBaseContribution;
+        public final double rawQuadraticContribution;
+        public final double rawTotalContribution;
+        public final double scaledBaseContribution;
+        public final double scaledQuadraticContribution;
+        public final double scaledTotalContribution;
+
+        ProposalScoreBreakdown(
+                double attachmentHeight,
+                double rawBaseContribution,
+                double rawQuadraticContribution,
+                double scaledBaseContribution,
+                double scaledQuadraticContribution) {
+            this.attachmentHeight = attachmentHeight;
+            this.rawBaseContribution = rawBaseContribution;
+            this.rawQuadraticContribution = rawQuadraticContribution;
+            this.rawTotalContribution = rawBaseContribution + rawQuadraticContribution;
+            this.scaledBaseContribution = scaledBaseContribution;
+            this.scaledQuadraticContribution = scaledQuadraticContribution;
+            this.scaledTotalContribution = scaledBaseContribution + scaledQuadraticContribution;
         }
     }
 

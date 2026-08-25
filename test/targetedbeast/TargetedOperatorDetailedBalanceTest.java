@@ -8,6 +8,7 @@ import targetedbeast.edgeweights.LearnedWeights;
 import targetedbeast.edgeweights.PCAWeights;
 import targetedbeast.edgeweights.PCAWeights2;
 import targetedbeast.edgeweights.PCAWeightsBrownian;
+import targetedbeast.edgeweights.PCAWeightsBrownianFullLikelihood;
 import targetedbeast.edgeweights.ParsimonyWeights2;
 import targetedbeast.edgeweights.PartialWeights;
 import beast.base.evolution.likelihood.TreeLikelihood;
@@ -255,6 +256,15 @@ public class TargetedOperatorDetailedBalanceTest extends DetailedBalanceTest<Tre
         testDetailedBalance(new TreeTrial(tree -> {
             TreeOperator operator = new TargetedWilsonBaldingHeightDelta();
             operator.initByName("tree", tree, "weight", 1.0, "edgeWeights", getParsimonyWeights(tree), "useEdgeLength", true, "size", 0.25);
+            return operator;
+        }));
+    }
+
+    @Test
+    public void testTargWilsonBaldingBrownianFullLikelihoodWeights() throws Exception {
+        testDetailedBalance(new TreeTrial(tree -> {
+            TargetedWilsonBalding operator = new TargetedWilsonBalding();
+            operator.initByName("tree", tree, "weight", 1.0, "edgeWeights", getPCAWeightsBrownianFullLikelihood(tree));
             return operator;
         }));
     }
@@ -771,4 +781,9 @@ public class TargetedOperatorDetailedBalanceTest extends DetailedBalanceTest<Tre
         }));
     }
 
+    PCAWeightsBrownianFullLikelihood getPCAWeightsBrownianFullLikelihood(Tree tree) {
+        PCAWeightsBrownianFullLikelihood edgeWeights = new PCAWeightsBrownianFullLikelihood();
+        edgeWeights.initByName("tree", tree, "data", alignment, "dimension", 3);
+        return edgeWeights;
+    }
 }

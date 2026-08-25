@@ -172,6 +172,15 @@ public class EdgeWeightRejectConsistencyTest {
 
 
     @Test
+    public void testPCAWeightsBrownian() throws Exception {
+        assertRejectRestoresCache((tree, data) -> {
+            targetedbeast.edgeweights.PCAWeightsBrownian w = new targetedbeast.edgeweights.PCAWeightsBrownian();
+            w.initByName("tree", tree, "data", data, "dimension", 3);
+            return w;
+        });
+    }
+
+    @Test
     public void testParsimonyWeights2() throws Exception {
         assertRejectRestoresCache((tree, data) -> {
             targetedbeast.alignment.ConsensusAlignment cons = new targetedbeast.alignment.ConsensusAlignment();
