@@ -6,6 +6,8 @@ import beast.base.core.Input;
 import beast.base.core.Input.Validate;
 import beast.base.evolution.alignment.Alignment;
 import beast.base.evolution.branchratemodel.BranchRateModel;
+import beast.base.evolution.likelihood.BeerLikelihoodCore;
+import beast.base.evolution.likelihood.TreeLikelihood;
 import beast.base.evolution.sitemodel.SiteModel;
 import beast.base.evolution.sitemodel.SiteModelInterface;
 import beast.base.evolution.substitutionmodel.SubstitutionModel;
@@ -14,8 +16,6 @@ import beast.base.evolution.tree.Tree;
 import beast.base.evolution.tree.TreeInterface;
 import beast.base.inference.Distribution;
 import beast.base.inference.State;
-import targetedbeast.likelihood.SlowBeerLikelihoodCore;
-import targetedbeast.likelihood.SlowTreeLikelihood;
 import targetedbeast.util.LinearAlgebra;
 
 @Description("Uses Felsenstein partial likelihoods from the tree likelihood calculation as edge weights. "
@@ -27,10 +27,10 @@ public class FelsensteinWeights extends Distribution implements EdgeWeights {
     final public Input<Tree> treeInput = new Input<>("tree", "phylogenetic beast.tree with sequence data in the leafs", Validate.REQUIRED);
     final public Input<Double> maxWeightInput = new Input<>("maxWeight", "maximum weight for an edge", 10.0);
     final public Input<Double> minWeightInput = new Input<>("minWeight", "minimum weight for an edge", 0.1);
-    final public Input<SlowTreeLikelihood> likelihoodInput = new Input<>("likelihood", "The tree likelihood used for calculating edge weights.", Validate.REQUIRED);
+    final public Input<TreeLikelihood> likelihoodInput = new Input<>("likelihood", "The tree likelihood used for calculating edge weights.", Validate.REQUIRED);
 
-    protected SlowTreeLikelihood treelikelihood;
-    protected SlowBeerLikelihoodCore likelihoodCore;
+    protected TreeLikelihood treelikelihood;
+    protected BeerLikelihoodCore likelihoodCore;
 	
 	// Leaf partials - stored separately since LikelihoodCore stores states, not partials, for leaves
 	private double[][] leafPartials;
@@ -70,7 +70,7 @@ public class FelsensteinWeights extends Distribution implements EdgeWeights {
     double[] _toMatrix;
     double[] _probabilities;
 
-	private static final double EPS = 1E-12;
+	private static final double EPS = 1E-16;
 
 	@Override
 	public void initAndValidate() {
@@ -118,8 +118,8 @@ public class FelsensteinWeights extends Distribution implements EdgeWeights {
         
         treelikelihood.calculateLogP();
 		
-        // Ensure likelihood core is SlowBeerLikelihoodCore
-        if (treelikelihood.getLikelihoodCore() instanceof SlowBeerLikelihoodCore beerliCore) {
+        // Ensure likelihood core is BeerLikelihoodCore
+        if (treelikelihood.getLikelihoodCore() instanceof BeerLikelihoodCore beerliCore) {
 		    likelihoodCore = beerliCore;
         } else {
             throw new IllegalArgumentException(
@@ -302,7 +302,9 @@ public class FelsensteinWeights extends Distribution implements EdgeWeights {
      * the last likelihood update. Use sparingly, as the likelihood update is expensive.
      */
 	public void updateByOperator() {
-        partialsWithoutNode = new double[nodeCount][];  // Clear stale "without node" partials
+		partialsWithoutNode = new double[nodeCount][];
+		outsidePartials = new double[nodeCount][];
+		currentIgnoredNode = -1;
 	}
 
 	@Override
@@ -392,6 +394,8 @@ public class FelsensteinWeights extends Distribution implements EdgeWeights {
 	 * @param nodesToUpdate Set of nodes for which partialsWithoutNode have been computed
 	 */
 	private void updateOutsidePartialsRecursive(Node node, int ignore, Set<Integer> nodesToUpdate) {
+		if (node == null)
+			return;
 		if (node.isLeaf())
 			return;
 		
@@ -401,6 +405,19 @@ public class FelsensteinWeights extends Distribution implements EdgeWeights {
 		// Process each child
 		Node leftChild = getEffectiveChild(node, 0, ignore);
 		Node rightChild = getEffectiveChild(node, 1, ignore);
+
+		if (leftChild == null && rightChild == null)
+			return;
+		if (leftChild == null) {
+			updateUnaryChildOutsidePartials(node, rightChild, nodeOutside);
+			updateOutsidePartialsRecursive(rightChild, ignore, nodesToUpdate);
+			return;
+		}
+		if (rightChild == null) {
+			updateUnaryChildOutsidePartials(node, leftChild, nodeOutside);
+			updateOutsidePartialsRecursive(leftChild, ignore, nodesToUpdate);
+			return;
+		}
 
         // Compute the up-partials
         double[] rightUpPartial = applyTransitionUpWithoutNode(rightChild, node);
@@ -436,6 +453,15 @@ public class FelsensteinWeights extends Distribution implements EdgeWeights {
         double[] matrix = getTransitionMatrixWithoutNode(child, parent);
         applyTransposeTransitionMatrix(matrix, combinedMessage, outsidePartials[childNr]);
 	}
+
+	private void updateUnaryChildOutsidePartials(Node parent, Node child, double[] parentOutside) {
+		int childNr = child.getNr();
+		if (outsidePartials[childNr] == null)
+			outsidePartials[childNr] = new double[partialsSize];
+
+		double[] matrix = getTransitionMatrixWithoutNode(child, parent);
+		applyTransposeTransitionMatrix(matrix, parentOutside, outsidePartials[childNr]);
+	}
 	
 	/**
 	 * Get the full conditional likelihood at a node: P(all data | state at node)
@@ -467,30 +493,40 @@ public class FelsensteinWeights extends Distribution implements EdgeWeights {
 	 * nodes that are in the nodesToUpdate set.
 	 */
 	private void updatePartialsWithoutNodeRecursive(Node n, int ignore, Set<Integer> nodesToUpdate) {
+		if (n == null)
+			return;
 		final int nodeNr = n.getNr();
 
         // Leaf nodes have no partials to compute
         if (n.isLeaf())
             return;
 		
+		// Get children, excluding the ignored node
+		Node child1 = getEffectiveChild(n, 0, ignore);
+        Node child2 = getEffectiveChild(n, 1, ignore);
+        
+        // Update child partials recursively
+		updatePartialsWithoutNodeRecursive(child1, ignore, nodesToUpdate);
+		updatePartialsWithoutNodeRecursive(child2, ignore, nodesToUpdate);
+
 		// Only compute partialsWithoutNode for nodes in nodesToUpdate
 		if (!nodesToUpdate.contains(nodeNr))
 			return;
 		
 		// Allocate array if needed
-		if (partialsWithoutNode[nodeNr] == null)                                            // TODO: always keep allocated
+		if (partialsWithoutNode[nodeNr] == null)
 			partialsWithoutNode[nodeNr] = new double[partialsSize];
-		
-		// Get children, excluding the ignored node
-		Node child1 = getEffectiveChild(n, 0, ignore);
-        Node child2 = getEffectiveChild(n, 1, ignore);
+
+		if (child1 == null && child2 == null)
+			return;
+		if (child1 == null || child2 == null) {
+			Node onlyChild = child1 != null ? child1 : child2;
+			partialsWithoutNode[nodeNr] = applyTransitionUpWithoutNode(onlyChild, n);
+			return;
+		}
 
 		assert (ignore==-1) || (child1.isLeaf() && getTree().getNode(ignore).isLeaf()) || child1.getNr() != ignore;
 		assert (ignore==-1) || (child2.isLeaf() && getTree().getNode(ignore).isLeaf()) || child2.getNr() != ignore;
-        
-        // Update child partials recursively
-        updatePartialsWithoutNodeRecursive(child1, ignore, nodesToUpdate);
-        updatePartialsWithoutNodeRecursive(child2, ignore, nodesToUpdate);
         
         // Multiply the up-partials to get the parent partial
         double[] upPartials1 = applyTransitionUpWithoutNode(child1, n);
@@ -503,7 +539,7 @@ public class FelsensteinWeights extends Distribution implements EdgeWeights {
 	 */
 	public void applyTransitionMatrix(int childNodeNr, double[] childPartials, double[] outPartials) {
         ensureInitialized();
-        double[] matrix = likelihoodCore.getNodeMatrices(childNodeNr);
+        double[] matrix = getNodeMatrices(childNodeNr);
 		for (int category = 0; category < matrixCount; category++) {
 			for (int pattern = 0; pattern < patternCount; pattern++) {
                 int w = category * matrixSize; 
@@ -580,7 +616,7 @@ public class FelsensteinWeights extends Distribution implements EdgeWeights {
 	 */
 	public void applyTransposeTransitionMatrix(int childNodeNr, double[] inPartials, double[] outPartials) {
 		ensureInitialized();
-		double[] matrix = likelihoodCore.getNodeMatrices(childNodeNr);
+		double[] matrix = getNodeMatrices(childNodeNr);
 		applyTransposeTransitionMatrix(matrix, inPartials, outPartials);
 	}
 
@@ -635,9 +671,7 @@ public class FelsensteinWeights extends Distribution implements EdgeWeights {
 
 	@Override
 	public void reset() {
-		// No caching, nothing to reset
-        treeInput.get().setEverythingDirty(true);
-        likelihoodInput.get().calculateLogP();
+		updateByOperator();
 	}
 
 	@Override
@@ -647,24 +681,25 @@ public class FelsensteinWeights extends Distribution implements EdgeWeights {
 
 	@Override
 	public double getEdgeWeights(int nodeNr) {
-        ensureInitialized();
-        // likelihoodInput.get().calculateLogP();
+        return 1.0;
+        // ensureInitialized();
+        // // likelihoodInput.get().calculateLogP();
 
-        // Get parent node
-        Node parent = treeInput.get().getNode(nodeNr).getParent();
-        if (parent == null)
-            return minWeight;  // Return minimum weight for the root node
-		int parentNr = parent.getNr();
+        // // Get parent node
+        // Node parent = treeInput.get().getNode(nodeNr).getParent();
+        // if (parent == null)
+        //     return minWeight;  // Return minimum weight for the root node
+		// int parentNr = parent.getNr();
 
-        // Get partials
-        double[] parentPartials = getPartials(parentNr);
-        double[] childPartials = getPartials(nodeNr);
+        // // Get partials
+        // double[] parentPartials = getPartials(parentNr);
+        // double[] childPartials = getPartials(nodeNr);
 
-        // Compute divergence
-        double divergence = computePartialsDivergence(parentPartials, childPartials);
+        // // Compute divergence
+        // double divergence = computePartialsDivergence(parentPartials, childPartials);
 
-        // Clip and return
-        return Math.max(minWeight, Math.min(maxWeight, divergence));
+        // // Clip and return
+        // return Math.max(minWeight, Math.min(maxWeight, divergence));
 	}
 
 	@Override	
@@ -692,10 +727,11 @@ public class FelsensteinWeights extends Distribution implements EdgeWeights {
 			// Compute the full proposed tree log-likelihood
 			double logLikelihood = computeProposedTreeLogLikelihood(fromNode, toNode, fromPartials, toPartials, newHeight);
 			// double logLikelihood = computePartialsAgreement(fromNode, toNode, fromPartials, toPartials, newHeight);
-			weights[k] = EPS + logLikelihood / 2.0; // division by two to counteract squaring of probabilities in the operators
+			weights[k] = EPS + logLikelihood / 2.; // division by two to counteract squaring of probabilities in the operators
 		}
 
         // Normalise probabilities
+        weights = clipMaxToSecondMaxDiff(weights, 3.);
         double[] p = softmax(weights);
         return p;
 	}
@@ -719,13 +755,80 @@ public class FelsensteinWeights extends Distribution implements EdgeWeights {
 			// Compute the full proposed tree log-likelihood
 			double logLikelihood = computeProposedTreeLogLikelihood(fromNode, toNode, fromPartials, toPartials, newHeight);
 			// double logLikelihood = computePartialsAgreement(fromNode, toNode, fromPartials, toPartials, newHeight);
-			weights[k] = EPS + logLikelihood / 2.0; // division by two to counteract squaring of probabilities in the operators
+			weights[k] = EPS + logLikelihood / 2.; // division by two to counteract squaring of probabilities in the operators
 		}
 
         // Normalise probabilities
+        weights = clipMaxToSecondMaxDiff(weights, 3.);
         double[] p = softmax(weights);
+
+        // System.out.println(Arrays.toString(p));
         return p;
 	}
+
+    double[] clipMaxToSecondMaxRatio(double[] weights, double maxRatio) {
+		if (weights == null || weights.length < 2) {
+			return weights;
+		}
+
+		int firstIdx = -1;
+		int secondIdx = -1;
+		double first = Double.NEGATIVE_INFINITY;
+		double second = Double.NEGATIVE_INFINITY;
+
+		for (int i = 0; i < weights.length; i++) {
+			double w = weights[i];
+			if (w > first) {
+				second = first;
+				secondIdx = firstIdx;
+				first = w;
+				firstIdx = i;
+			} else if (w > second) {
+				second = w;
+				secondIdx = i;
+			}
+		}
+
+		if (firstIdx < 0 || secondIdx < 0 || first <= maxRatio * second) {
+			return weights;
+		}
+
+		double[] clipped = Arrays.copyOf(weights, weights.length);
+		clipped[firstIdx] = maxRatio * second;
+		return clipped;
+    }
+
+    double[] clipMaxToSecondMaxDiff(final double[] weights, final double maxDiff) {
+		if (weights == null || weights.length < 2) {
+			return weights;
+		}
+
+		int firstIdx = -1;
+		int secondIdx = -1;
+		double first = Double.NEGATIVE_INFINITY;
+		double second = Double.NEGATIVE_INFINITY;
+
+		for (int i = 0; i < weights.length; i++) {
+			double w = weights[i];
+			if (w > first) {
+				second = first;
+				secondIdx = firstIdx;
+				first = w;
+				firstIdx = i;
+			} else if (w > second) {
+				second = w;
+				secondIdx = i;
+			}
+		}
+
+		if (firstIdx < 0 || secondIdx < 0 || first <= second + maxDiff) {
+			return weights;
+		}
+
+		double[] clipped = Arrays.copyOf(weights, weights.length);
+		clipped[firstIdx] = second + maxDiff;
+		return clipped;
+    }
 
     public double computePartialsAgreement(Node fromNode, Node toNode, double[] fromPartials, double[] toPartials, double toHeight) {
         calculateTransitionMatrix(fromNode, toHeight, _fromMatrix);
@@ -918,14 +1021,22 @@ public class FelsensteinWeights extends Distribution implements EdgeWeights {
 														toPartials, _toMatrix,
 														hpPartialsPerCat);
 
+		// Check whether hypothetical parent would be the root.
+		Node grandparent = getEffectiveParent(toNode, currentIgnoredNode);
+        if (grandparent == null) {
+			// No data remain above this attachment point in the pruned tree.
+			// The hypothetical parent is the root, so hpPartialsPerCat already
+			// represents the full inside likelihood needed for tree log-likelihood.
+			return computeLikelihoodFromPartials(toNode, hpPartialsPerCat);
+        }
+
 		// Step 2: Compute transition matrix from hypothetical parent up to grandparent.
 		// Use toNode's branch rate for this new branch.
 		// Use effective parent to skip any unary nodes created by ignoring fromNode
-		Node grandparent = getEffectiveParent(toNode, currentIgnoredNode);
-		double gpHeight = grandparent.getHeight();
-		double[] hpToGpMatrix = new double[matrixCount * matrixSize];
-		calculateTransitionMatrixForBranch(toHeight, gpHeight, toNode, hpToGpMatrix);
-
+        double gpHeight = grandparent.getHeight();
+        double[] hpToGpMatrix = new double[matrixCount * matrixSize];
+        calculateTransitionMatrixForBranch(toHeight, gpHeight, toNode, hpToGpMatrix);
+        
 		// Step 3: Get the sibling of toNode and combine at grandparent level
 		Node sibling = getEffectiveSibling(toNode, currentIgnoredNode);
 		double[] gpPartialsPerCat = new double[partialsSize];
@@ -1036,7 +1147,7 @@ public class FelsensteinWeights extends Distribution implements EdgeWeights {
     double[] getTransitionMatrixWithoutNode(Node child, Node parent) {
         if (child.getParent() == parent) {
             // `child`/`parent` are direct child/parent in original tree -> use the stored transition matrix
-            return likelihoodCore.getNodeMatrices(child.getNr());
+            return getNodeMatrices(child.getNr());
         } else {
             // `child`/`parent` are only connected via and ignored node -> calculate transition matrix in pruned tree
             // Important because the `toHeight` is different to the one in the original tree
@@ -1044,6 +1155,14 @@ public class FelsensteinWeights extends Distribution implements EdgeWeights {
         }
     }
 
+	private double[] getNodeMatrices(int nodeNr) {
+		double[] matrices = new double[matrixCount * matrixSize];
+		for (int category = 0; category < matrixCount; category++) {
+			likelihoodCore.getNodeMatrix(nodeNr, category, _probabilities);
+			System.arraycopy(_probabilities, 0, matrices, category * matrixSize, matrixSize);
+		}
+		return matrices;
+	}
 
 	/**
 	 * Apply a transition matrix to partials (for propagating partials up through a branch).

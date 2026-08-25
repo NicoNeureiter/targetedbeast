@@ -20,7 +20,7 @@ import beast.base.inference.DirectSimulator;
 import beast.base.evolution.speciation.YuleModel;
 import targetedbeast.DetailedBalanceTest;
 import targetedbeast.TargetedOperatorDetailedBalanceTest;
-import targetedbeast.likelihood.SlowTreeLikelihood;
+import beast.base.evolution.likelihood.TreeLikelihood;
 import targetedbeast.util.LinearAlgebra;
 
 /**
@@ -59,7 +59,7 @@ public class FelsensteinWeightsWithoutNodeTest {
         SiteModel siteModel = new SiteModel();
         siteModel.initByName("substModel", new JukesCantor());
 
-        SlowTreeLikelihood treeLikelihood = new SlowTreeLikelihood();
+        TreeLikelihood treeLikelihood = new TreeLikelihood();
         treeLikelihood.initByName(
                 "tree", tree,
                 "siteModel", siteModel,
@@ -279,7 +279,7 @@ public class FelsensteinWeightsWithoutNodeTest {
         SiteModel siteModel = new SiteModel();
         siteModel.initByName("substModel", new JukesCantor());
 
-        SlowTreeLikelihood treeLikelihood = new SlowTreeLikelihood();
+        TreeLikelihood treeLikelihood = new TreeLikelihood();
         treeLikelihood.initByName(
                 "tree", tree,
                 "siteModel", siteModel,

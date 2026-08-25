@@ -20,8 +20,8 @@ import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
 import beast.base.evolution.tree.TreeParser;
 import beast.base.inference.parameter.RealParameter;
-import targetedbeast.likelihood.SlowBeerLikelihoodCore;
-import targetedbeast.likelihood.SlowTreeLikelihood;
+import beast.base.evolution.likelihood.BeerLikelihoodCore;
+import beast.base.evolution.likelihood.TreeLikelihood;
 
 /**
  * Tests for FelsensteinWeights.
@@ -33,7 +33,7 @@ public class FelsensteinWeightsTest {
 
 	private Alignment alignment;
 	private Tree tree;
-	private SlowTreeLikelihood likelihood;
+	private TreeLikelihood likelihood;
 	private SiteModel siteModel;
 	private FelsensteinWeights weights;
 
@@ -74,7 +74,7 @@ public class FelsensteinWeightsTest {
 
 		// Create likelihood
 		System.setProperty("java.only", "true");
-		likelihood = new SlowTreeLikelihood();
+		likelihood = new TreeLikelihood();
 		likelihood.initByName("data", alignment, "tree", tree, "siteModel", siteModel);
 
 		// Create FelsensteinWeights
@@ -336,7 +336,7 @@ public class FelsensteinWeightsTest {
 	 */
 	@Test
 	public void testAggregatePartials() throws Exception {
-        SlowBeerLikelihoodCore core = (SlowBeerLikelihoodCore) likelihood.getLikelihoodCore();
+        BeerLikelihoodCore core = (BeerLikelihoodCore) likelihood.getLikelihoodCore();
 
 		// Setup tree and likelihood
 		likelihood.calculateLogP();
