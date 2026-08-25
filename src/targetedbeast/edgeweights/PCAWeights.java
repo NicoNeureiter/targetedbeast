@@ -509,6 +509,20 @@ public class PCAWeights extends Distribution implements EdgeWeights, Loggable {
 		System.arraycopy(storedActiveMutationsIndex, 0, activeMutationsIndex, 0, activeMutationsIndex.length);
 	}
 
+	@Override
+	protected int getChecksum() {
+		int h = 1;
+		int n = treeInput.get().getNodeCount();
+		for (int nr = 0; nr < n; nr++) {
+			double[] p = getPoints(nr);
+			for (int l = 0; l < p.length; l++) {
+				h = 31 * h + Double.hashCode(p[l]);
+			}
+			h = 31 * h + Double.hashCode(getEdgeMutations(nr));
+		}
+		return h;
+	}
+
 
 	public double getEdgeMutations(int i) {
 		return edgeMutations[activeMutationsIndex[i]][i];
