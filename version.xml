@@ -29,7 +29,6 @@
 
         <provider classname="targetedbeast.likelihood.SlowTreeLikelihood"/>
         <provider classname="targetedbeast.likelihood.SlowBeerLikelihoodCore"/>
-        <provider classname="targetedbeast.likelihood.SlowBeerLikelihoodCore4"/>
         <provider classname="targetedbeast.likelihood.RapidTreeLikelihood"/>
         <provider classname="targetedbeast.logger.CladeLogger"/>
 
@@ -47,7 +46,6 @@
         <provider classname="targetedbeast.operators.TargetedWilsonBalding"/>
         <provider classname="targetedbeast.operators.TargetedWilsonBaldingFixedHeight"/>
         <provider classname="targetedbeast.operators.WeightedWideOperator"/>
-        <provider classname="targetedbeast.operators.NodeRandomizer"/>
 
         <provider classname="targetedbeast.operatorschedule.TargetedOperatorSchedule"/>
     </service>
