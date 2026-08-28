@@ -7,7 +7,9 @@ import targetedbeast.edgeweights.PCAWeights;
 import targetedbeast.edgeweights.ParsimonyWeights2;
 import targetedbeast.likelihood.SlowTreeLikelihood;
 import targetedbeast.operators.TargetedWilsonBalding;
-import targetedbeast.operators.TargetedWilsonBaldingFixedHeight;
+// TODO: targetedbeast.operators.TargetedWilsonBaldingFixedHeight does not exist in this repo
+// (present in no commit). The factory below is disabled until the class is restored.
+//import targetedbeast.operators.TargetedWilsonBaldingFixedHeight;
 import targetedbeast.util.Counter;
 import targetedbeast.util.DefaultHashMap;
 import org.junit.Assert;
@@ -330,15 +332,17 @@ public class DetailedBalanceTest {
     }
 
 
-    class TargetedWilsonBaldingFixedHeightFactory extends OperatorFactory {
-
-        @Override
-        public TargetedWilsonBaldingFixedHeight getOperator(Tree tree) {
-            TargetedWilsonBaldingFixedHeight operator = new TargetedWilsonBaldingFixedHeight();
-            operator.initByName("tree", tree, "weight", 1.0, "edgeWeights", getPCAWeights(tree));
-            return operator;
-        }
-    }
+    // TODO: disabled — TargetedWilsonBaldingFixedHeight is missing from the source tree.
+    // Unreferenced: testTargWilsonBaldingFixedHeight() uses TargetedWilsonBaldingFactory.
+//    class TargetedWilsonBaldingFixedHeightFactory extends OperatorFactory {
+//
+//        @Override
+//        public TargetedWilsonBaldingFixedHeight getOperator(Tree tree) {
+//            TargetedWilsonBaldingFixedHeight operator = new TargetedWilsonBaldingFixedHeight();
+//            operator.initByName("tree", tree, "weight", 1.0, "edgeWeights", getPCAWeights(tree));
+//            return operator;
+//        }
+//    }
 
 
     /**
