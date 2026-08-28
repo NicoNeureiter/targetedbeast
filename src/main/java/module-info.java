@@ -18,6 +18,7 @@ open module targetedbeast {
     exports targetedbeast.logger;
     exports targetedbeast.operators;
     exports targetedbeast.operatorschedule;
+    exports targetedbeast.tools;
     exports targetedbeast.util;
     exports targetedbeast.weighttransform;
 
@@ -41,6 +42,8 @@ open module targetedbeast {
         targetedbeast.edgeweights.ParsimonyWeights,
         targetedbeast.edgeweights.ParsimonyWeights2,
         targetedbeast.edgeweights.PartialWeights,
+        targetedbeast.edgeweights.PriorHeuristicWeights,
+        targetedbeast.edgeweights.PriorWeights,
         targetedbeast.init.ensureNoZeroEdgeLength,
         targetedbeast.likelihood.RapidGenericTreeLikelihood,
         targetedbeast.likelihood.RapidTreeLikelihood,

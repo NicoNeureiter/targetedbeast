@@ -14,6 +14,8 @@
         <provider classname="targetedbeast.edgeweights.PCAWeightsBrownian"/>
         <provider classname="targetedbeast.edgeweights.PCAWeightsBrownianFullLikelihood"/>
         <provider classname="targetedbeast.edgeweights.ConstantWeights"/>
+        <provider classname="targetedbeast.edgeweights.PriorHeuristicWeights"/>
+        <provider classname="targetedbeast.edgeweights.PriorWeights"/>
         <provider classname="targetedbeast.edgeweights.FelsensteinWeights"/>
         <provider classname="targetedbeast.edgeweights.LearnedWeights"/>
         <provider classname="targetedbeast.edgeweights.FelsensteinWeights2"/>
