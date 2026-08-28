@@ -1,15 +1,13 @@
-<beast version='2.0'
-       namespace='targetedbeast.operatorschedule'>
+<?xml version='1.0' encoding='UTF-8'?>
+<beast namespace="beastfx.app.beauti:beastfx.app.inputeditor:beast.pkgmgmt:beast.base.core:beast.base.inference:beast.base.evolution.branchratemodel:beast.base.evolution.speciation:beast.base.evolution.tree.coalescent:beast.base.util:beast.base.math:beast.base.evolution.operator:beast.base.inference.operator:beast.base.spec.evolution.sitemodel:beast.base.evolution.substitutionmodel:beast.base.evolution.likelihood:beast.base.inference.distribution:targetedbeast.operatorschedule"
+       version="2.0">
 
-	<mergewith point='substModelTemplates'>
-        <subtemplate id='TargetedOperatorSchedule' class='targetedbeast.operatorschedule.TargetedOperatorSchedule' mainid='TargetedOperatorSchedule_'
-        suppressInputs="targetedbeast.operatorschedule.TargetedOperatorSchedule.operatorPattern,
-                        targetedbeast.operatorschedule.TargetedOperatorSchedule.subschedule,
-                        targetedbeast.operatorschedule.TargetedOperatorSchedule.operator">
-<![CDATA[
+	<mergewith point="substModelTemplates">
+        <subtemplate id="TargetedOperatorSchedule" class="targetedbeast.operatorschedule.TargetedOperatorSchedule" mainid="TargetedOperatorSchedule_" suppressInputs="targetedbeast.operatorschedule.TargetedOperatorSchedule.operatorPattern,                         targetedbeast.operatorschedule.TargetedOperatorSchedule.subschedule,                         targetedbeast.operatorschedule.TargetedOperatorSchedule.operator"><![CDATA[
+
         <operatorschedule id="TargetedOperatorSchedule_" spec="targetedbeast.operatorschedule.TargetedOperatorSchedule"/>
-]]>
-        </subtemplate>
+
+        ]]></subtemplate>
     </mergewith>
 
 </beast>
