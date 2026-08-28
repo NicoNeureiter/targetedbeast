@@ -9,10 +9,13 @@ import beast.base.core.Description;
 import beast.base.core.Input;
 import beast.base.core.Log;
 import beast.base.evolution.alignment.Alignment;
-import beast.base.evolution.likelihood.TreeLikelihood;
-import beast.base.evolution.operator.AdaptableOperatorSampler;
+import beast.base.spec.evolution.likelihood.TreeLikelihood;
+import beast.base.spec.evolution.operator.AdaptableOperatorSampler;
 import beast.base.evolution.operator.EpochFlexOperator;
 import beast.base.evolution.operator.Exchange;
+// TODO: beast.base.evolution.operator.SubtreeSlide is @Deprecated and has no spec
+// twin. Kept so schedules built from legacy XML are still recognised; the modern
+// replacement, BactrianSubtreeSlide, is already handled alongside it below.
 import beast.base.evolution.operator.SubtreeSlide;
 import beast.base.evolution.operator.TreeOperator;
 import beast.base.evolution.operator.TreeStretchOperator;
@@ -26,7 +29,7 @@ import beast.base.inference.Operator;
 import beast.base.inference.OperatorSchedule;
 import beast.base.inference.State;
 import beast.base.inference.StateNode;
-import beast.base.inference.operator.UpDownOperator;
+import beast.base.spec.evolution.operator.UpDownOperator;
 import beast.base.inference.operator.kernel.BactrianUpDownOperator;
 import targetedbeast.edgeweights.ConsensusWeights;
 import targetedbeast.operators.HeightBasedNodeRandomizer;

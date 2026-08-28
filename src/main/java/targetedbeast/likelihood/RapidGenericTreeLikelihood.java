@@ -7,7 +7,7 @@ import java.util.Random;
 import beast.base.core.Description;
 import beast.base.core.Input;
 import beast.base.core.Input.Validate;
-import beast.base.evolution.branchratemodel.BranchRateModel;
+import beast.base.spec.evolution.branchratemodel.Base;
 import beast.base.evolution.sitemodel.SiteModelInterface;
 import beast.base.evolution.tree.TreeInterface;
 import beast.base.inference.Distribution;
@@ -27,7 +27,7 @@ public class RapidGenericTreeLikelihood extends Distribution {
 
     final public Input<SiteModelInterface> siteModelInput = new Input<>("siteModel", "site model for leafs in the beast.tree", Validate.REQUIRED);
     
-    final public Input<BranchRateModel.Base> branchRateModelInput = new Input<>("branchRateModel",
+    final public Input<Base> branchRateModelInput = new Input<>("branchRateModel",
             "A model describing the rates on the branches of the beast.tree.");
 
     

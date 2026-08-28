@@ -6,17 +6,17 @@ import org.junit.jupiter.api.Test;
 
 import beast.base.evolution.alignment.Alignment;
 import beast.base.evolution.alignment.Sequence;
-import beast.base.evolution.likelihood.TreeLikelihood;
+import beast.base.spec.evolution.likelihood.TreeLikelihood;
 import beast.base.evolution.operator.WilsonBalding;
-import beast.base.evolution.sitemodel.SiteModel;
-import beast.base.evolution.substitutionmodel.Frequencies;
-import beast.base.evolution.substitutionmodel.HKY;
+import beast.base.spec.evolution.sitemodel.SiteModel;
+import beast.base.spec.evolution.substitutionmodel.Frequencies;
+import beast.base.spec.evolution.substitutionmodel.HKY;
 import beast.base.evolution.tree.Tree;
 import beast.base.evolution.tree.TreeIntervals;
 import beast.base.inference.OperatorSchedule;
 import targetedbeast.alignment.RapidAlignment;
 import targetedbeast.likelihood.RapidTreeLikelihood;
-import test.beast.BEASTTestCase;
+import targetedbeast.TestUtils;
 
 public class RapidTreeIntervalsTest {
 
@@ -42,7 +42,7 @@ public class RapidTreeIntervalsTest {
 
 
 		// Set up JC69 model: uniform freqs, kappa = 1, 0 gamma categories
-		Tree tree = BEASTTestCase.getTree(data);
+		Tree tree = TestUtils.getTree(data);
 
 		TreeIntervals intervals = new TreeIntervals(tree);
 		intervals.initByName("tree", tree);
@@ -53,7 +53,7 @@ public class RapidTreeIntervalsTest {
 
 		double diff = getIntervalsDiff(intervals, rapidIntervals);
 
-		assertEquals(diff, 0, BEASTTestCase.PRECISION);
+		assertEquals(diff, 0, TestUtils.PRECISION);
 		
 		// test what happens after a few operations
 		WilsonBalding wb = new WilsonBalding();
@@ -66,7 +66,7 @@ public class RapidTreeIntervalsTest {
 						
 			diff = getIntervalsDiff(intervals, rapidIntervals);
 
-			assertEquals(diff, 0, BEASTTestCase.PRECISION);
+			assertEquals(diff, 0, TestUtils.PRECISION);
 		}
 
 	}

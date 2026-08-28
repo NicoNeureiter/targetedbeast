@@ -12,7 +12,8 @@ import beast.base.evolution.operator.TreeOperator;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
 import beast.base.inference.operator.kernel.KernelDistribution;
-import beast.base.inference.parameter.RealParameter;
+import beast.base.spec.domain.PositiveReal;
+import beast.base.spec.inference.parameter.RealScalarParam;
 import beast.base.inference.util.InputUtil;
 import targetedbeast.edgeweights.EdgeWeights;
 
@@ -29,9 +30,9 @@ public class BactrianIntervalScaleOperator extends TreeOperator {
 			"flag to indicate that the scale factor is automatically changed in order to achieve a good acceptance rate (default true)",
 			true);
 
-	public Input<List<RealParameter>> downInput = new Input<>("down", "down parameter to scale", new ArrayList<>());
+	public Input<List<RealScalarParam<PositiveReal>>> downInput = new Input<>("down", "down parameter to scale", new ArrayList<>());
 
-	public Input<List<RealParameter>> upInput = new Input<>("up", "up parameter to scale", new ArrayList<>());
+	public Input<List<RealScalarParam<PositiveReal>>> upInput = new Input<>("up", "up parameter to scale", new ArrayList<>());
 
 	public Input<Boolean> scaleAllNodesIndependentlyInput = new Input<>("scaleAllNodesIndependently",
 			"if true, all nodes are scaled with a different factor, otherwise a single factor is used", false);
@@ -85,12 +86,12 @@ public class BactrianIntervalScaleOperator extends TreeOperator {
 			
 			double logHR = Math.log(scaler) * numbers;
 
-			for (RealParameter down : downInput.get()) {
-				down.setValue(down.getValue() / actualScaler);
+			for (RealScalarParam<PositiveReal> down : downInput.get()) {
+				down.set(down.get() / actualScaler);
 				logHR -= Math.log(actualScaler);
 			}
-			for (RealParameter up : upInput.get()) {
-				up.setValue(up.getValue() * actualScaler);
+			for (RealScalarParam<PositiveReal> up : upInput.get()) {
+				up.set(up.get() * actualScaler);
 				logHR += Math.log(actualScaler);
 			}
 			return logHR;

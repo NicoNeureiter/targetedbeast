@@ -57,7 +57,6 @@ import beast.base.core.Input;
 import beast.base.evolution.operator.TreeOperator;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
-import beast.base.inference.parameter.RealParameter;
 import beast.base.util.Randomizer;
 import targetedbeast.likelihood.RapidTreeLikelihood;
 

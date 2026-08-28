@@ -1256,11 +1256,11 @@ public class CladeAnnotator {
         Set<?> keySet = values.keySet();
         int length = keySet.size();
         String[] name = new String[length];
-        Double[] freq = new Double[length];
+        double[] freq = new double[length];
         int index = 0;
         for (Object key : values.keySet()) {
             name[index] = key.toString();
-            freq[index] = Double.valueOf(values.get(key));
+            freq[index] = values.get(key);
             totalCount += freq[index];
             index++;
         }

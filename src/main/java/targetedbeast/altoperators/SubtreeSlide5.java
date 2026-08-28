@@ -60,7 +60,8 @@ import beast.base.core.Input;
 import beast.base.evolution.operator.TreeOperator;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
-import beast.base.inference.parameter.RealParameter;
+import beast.base.spec.domain.PositiveReal;
+import beast.base.spec.inference.parameter.RealScalarParam;
 import beast.base.inference.util.InputUtil;
 import beast.base.util.Randomizer;
 
@@ -81,7 +82,7 @@ public class SubtreeSlide5 extends TreeOperator {
             "i.e. -1. (when positive, gets multiplied by tree-height/log2(n-taxa).", -1.0);
     public final Input<Integer> numberOfAttemptsInput = new Input<>("attempts", "number of attempts to make before giving up", 50);
 
-    public Input<RealParameter> clockRateInput = new Input<>("clockRate", "the rate to scale the branch lengths with. If not specified, the branch lengths are not scaled.");
+    public Input<RealScalarParam<PositiveReal>> clockRateInput = new Input<>("clockRate", "the rate to scale the branch lengths with. If not specified, the branch lengths are not scaled.");
 
     
     // shadows size

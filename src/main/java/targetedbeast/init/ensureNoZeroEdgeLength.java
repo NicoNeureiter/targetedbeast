@@ -2,7 +2,7 @@ package targetedbeast.init;
 
 import java.util.List;
 
-import beast.base.evolution.tree.ClusterTree;
+import beast.base.spec.evolution.tree.ClusterTree;
 import beast.base.evolution.tree.Node;
 import beast.base.inference.StateNode;
 import beast.base.inference.StateNodeInitialiser;

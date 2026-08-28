@@ -14,12 +14,13 @@ import org.junit.Test;
 import beast.base.evolution.alignment.Alignment;
 import beast.base.evolution.alignment.Sequence;
 import beast.base.evolution.likelihood.LikelihoodCore;
-import beast.base.evolution.sitemodel.SiteModel;
-import beast.base.evolution.substitutionmodel.JukesCantor;
+import beast.base.spec.evolution.sitemodel.SiteModel;
+import beast.base.spec.evolution.substitutionmodel.JukesCantor;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
 import beast.base.evolution.tree.TreeParser;
-import beast.base.inference.parameter.RealParameter;
+import beast.base.spec.domain.PositiveReal;
+import beast.base.spec.inference.parameter.RealScalarParam;
 import targetedbeast.likelihood.SlowBeerLikelihoodCore;
 import targetedbeast.likelihood.SlowTreeLikelihood;
 
@@ -66,7 +67,8 @@ public class FelsensteinWeightsTest {
 		jc.initAndValidate();
         
         // Create shape parameter for gamma rate heterogeneity
-        RealParameter shapeParameter = new RealParameter("1.0");
+        RealScalarParam<PositiveReal> shapeParameter =
+                new RealScalarParam<>(1.0, PositiveReal.INSTANCE);
 
 		// Create site model with 4 gamma categories
 		siteModel = new SiteModel();

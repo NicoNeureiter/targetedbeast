@@ -32,12 +32,12 @@ import beast.base.core.Description;
 import beast.base.core.Input;
 import beast.base.core.Log;
 import beast.base.evolution.alignment.Alignment;
-import beast.base.evolution.branchratemodel.BranchRateModel;
-import beast.base.evolution.branchratemodel.StrictClockModel;
-import beast.base.evolution.likelihood.GenericTreeLikelihood;
+import beast.base.spec.evolution.branchratemodel.Base;
+import beast.base.spec.evolution.branchratemodel.StrictClockModel;
+import beast.base.spec.evolution.likelihood.GenericTreeLikelihood;
 import beast.base.evolution.likelihood.LikelihoodCore;
-import beast.base.evolution.sitemodel.SiteModel;
-import beast.base.evolution.substitutionmodel.Frequencies;
+import beast.base.spec.evolution.sitemodel.SiteModel;
+import beast.base.spec.evolution.substitutionmodel.Frequencies;
 import beast.base.evolution.substitutionmodel.SubstitutionModel;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
@@ -73,7 +73,7 @@ public class SlowTreeLikelihood extends GenericTreeLikelihood {
      */
     protected SubstitutionModel substitutionModel;
     protected SiteModel.Base m_siteModel;
-    protected BranchRateModel.Base branchRateModel;
+    protected Base branchRateModel;
 
     public SubstitutionModel getSubstitutionModel() {return substitutionModel;}
 

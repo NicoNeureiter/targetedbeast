@@ -18,14 +18,14 @@ import beast.base.core.Input;
 import beast.base.inference.Operator;
 import beast.base.inference.OperatorSchedule;
 import beast.base.inference.StateNode;
-import beast.base.inference.parameter.IntegerParameter;
-import beast.base.inference.parameter.RealParameter;
+import beast.base.spec.type.IntScalar;
+import beast.base.spec.type.RealScalar;
 import beast.base.core.Log;
 import beast.base.evolution.tree.Tree;
 import beast.base.util.Randomizer;
 import targetedbeast.likelihood.RapidTreeLikelihood;
 import beast.base.evolution.tree.TreeMetric;
-import beast.base.inference.parameter.CompoundRealParameter;
+import beast.base.spec.inference.parameter.CompoundRealScalarParam;
 
 /**
  * 
@@ -169,7 +169,7 @@ public class AdaptableOperatorSampler extends Operator {
 		
 		// Check parameters
 		for (Function p : this.parameters) {
-			if (! (p instanceof RealParameter) && !(p instanceof IntegerParameter)) {
+			if (! (p instanceof RealScalar) && !(p instanceof IntScalar)) {
 				//throw new IllegalArgumentException("Parameters must be Real or Integer parameters!");
 			}
 		}
@@ -694,8 +694,8 @@ public class AdaptableOperatorSampler extends Operator {
 	   		hasCompoundRealParameter = false;
 	       	for (int i = 0; i < stateNodes.size(); i++) {
 	       		StateNode s = stateNodes.get(i);
-	       		if (s instanceof CompoundRealParameter) {
-	       			CompoundRealParameter c = (CompoundRealParameter) s;
+	       		if (s instanceof CompoundRealScalarParam) {
+	       			CompoundRealScalarParam<?> c = (CompoundRealScalarParam<?>) s;
 	       			stateNodes.remove(i);
 	       			
 	       			for (StateNode node : c.parameterListInput.get()) {

@@ -6,33 +6,31 @@ import beast.base.core.Log;
 import beast.base.evolution.alignment.Alignment;
 import beast.base.evolution.alignment.Sequence;
 import beast.base.evolution.datatype.UserDataType;
-import beast.base.evolution.likelihood.TreeLikelihood;
+import beast.base.spec.evolution.likelihood.TreeLikelihood;
 import beast.base.evolution.operator.WilsonBalding;
-import beast.base.evolution.sitemodel.SiteModel;
-import beast.base.evolution.substitutionmodel.BinaryCovarion;
-import beast.base.evolution.substitutionmodel.Blosum62;
-import beast.base.evolution.substitutionmodel.CPREV;
-import beast.base.evolution.substitutionmodel.Dayhoff;
-import beast.base.evolution.substitutionmodel.Frequencies;
-import beast.base.evolution.substitutionmodel.GTR;
-import beast.base.evolution.substitutionmodel.GeneralSubstitutionModel;
-import beast.base.evolution.substitutionmodel.HKY;
-import beast.base.evolution.substitutionmodel.JTT;
-import beast.base.evolution.substitutionmodel.JukesCantor;
-import beast.base.evolution.substitutionmodel.MTREV;
-import beast.base.evolution.substitutionmodel.MutationDeathModel;
+import beast.base.spec.evolution.sitemodel.SiteModel;
+import beast.base.spec.evolution.substitutionmodel.BinaryCovarion;
+import beast.base.spec.evolution.substitutionmodel.Blosum62;
+import beast.base.spec.evolution.substitutionmodel.CPREV;
+import beast.base.spec.evolution.substitutionmodel.Dayhoff;
+import beast.base.spec.evolution.substitutionmodel.Frequencies;
+import beast.base.spec.evolution.substitutionmodel.GTR;
+import beast.base.spec.evolution.substitutionmodel.GeneralSubstitutionModel;
+import beast.base.spec.evolution.substitutionmodel.HKY;
+import beast.base.spec.evolution.substitutionmodel.JTT;
+import beast.base.spec.evolution.substitutionmodel.JukesCantor;
+import beast.base.spec.evolution.substitutionmodel.MTREV;
+import beast.base.spec.evolution.substitutionmodel.MutationDeathModel;
 import beast.base.evolution.substitutionmodel.SubstitutionModel;
-import beast.base.evolution.substitutionmodel.WAG;
+import beast.base.spec.evolution.substitutionmodel.WAG;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
 import beast.base.inference.MCMC;
 import beast.base.inference.OperatorSchedule;
-import beast.base.inference.parameter.RealParameter;
 import targetedbeast.alignment.RapidAlignment;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import test.beast.BEASTTestCase;
-import test.beast.evolution.alignment.UncertainAlignmentTest;
+import targetedbeast.TestUtils;
 
 /**
  * This test mimics the testLikelihood.xml file from Beast 1, which compares
@@ -71,7 +69,7 @@ public class RapidLikelihoodTest {
 				orangutan, "sequence", siamang, "dataType", "nucleotide");
 
 		// Set up JC69 model: uniform freqs, kappa = 1, 0 gamma categories
-		Tree tree = BEASTTestCase.getTree(data);
+		Tree tree = TestUtils.getTree(data);
 
 		JukesCantor JC = new JukesCantor();
 		JC.initAndValidate();
@@ -83,7 +81,7 @@ public class RapidLikelihoodTest {
 		likelihood.initByName("data", data, "tree", tree, "siteModel", siteModel);
 		double logP = 0;
 		logP = likelihood.calculateLogP();
-		assertEquals(logP, -1992.2056440317247, BEASTTestCase.PRECISION);
+		assertEquals(logP, -1992.2056440317247, TestUtils.PRECISION);
 
 		RapidAlignment data2 = new RapidAlignment();
 		data2.initByName("sequence", human, "sequence", chimp, "sequence", bonobo, "sequence", gorilla, "sequence",
@@ -91,7 +89,7 @@ public class RapidLikelihoodTest {
 		RapidTreeLikelihood rapidLikelihood = new RapidTreeLikelihood();
 		rapidLikelihood.initByName("data", data2, "tree", tree, "siteModel", siteModel);
 		rapidLikelihood.updateMutations();
-		assertEquals(logP, -1992.2056440317247, BEASTTestCase.PRECISION);
+		assertEquals(logP, -1992.2056440317247, TestUtils.PRECISION);
 	}
 
 	@Test
@@ -132,7 +130,7 @@ public class RapidLikelihoodTest {
 				orangutan, "sequence", siamang, "dataType", "nucleotide");
 
 		// Set up JC69 model: uniform freqs, kappa = 1, 0 gamma categories
-		Tree tree = BEASTTestCase.getTree(data);
+		Tree tree = TestUtils.getTree(data);
 
 		JukesCantor JC = new JukesCantor();
 		JC.initAndValidate();
@@ -148,7 +146,7 @@ public class RapidLikelihoodTest {
 		RapidTreeLikelihood rapidLikelihood = new RapidTreeLikelihood();
 		rapidLikelihood.initByName("data", data2, "tree", tree, "siteModel", siteModel);
 		double rapidlogP = rapidLikelihood.calculateLogP();
-		assertEquals(logP, rapidlogP, BEASTTestCase.PRECISION);
+		assertEquals(logP, rapidlogP, TestUtils.PRECISION);
 	}
 
 	@Test
@@ -189,7 +187,7 @@ public class RapidLikelihoodTest {
 				orangutan, "sequence", siamang, "dataType", "nucleotide");
 
 		// Set up JC69 model: uniform freqs, kappa = 1, 0 gamma categories
-		Tree tree = BEASTTestCase.getTree(data);
+		Tree tree = TestUtils.getTree(data);
 
 		JukesCantor JC = new JukesCantor();
 		JC.initAndValidate();
@@ -205,7 +203,7 @@ public class RapidLikelihoodTest {
 		RapidTreeLikelihood rapidLikelihood = new RapidTreeLikelihood();
 		rapidLikelihood.initByName("data", data2, "tree", tree, "siteModel", siteModel);
 		double rapidlogP = rapidLikelihood.calculateLogP();
-		assertEquals(logP, rapidlogP, BEASTTestCase.PRECISION);
+		assertEquals(logP, rapidlogP, TestUtils.PRECISION);
 	}
 
 	@Test
@@ -246,7 +244,7 @@ public class RapidLikelihoodTest {
 				orangutan, "sequence", siamang, "dataType", "nucleotide");
 
 		// Set up JC69 model: uniform freqs, kappa = 1, 0 gamma categories
-		Tree tree = BEASTTestCase.getTree(data);
+		Tree tree = TestUtils.getTree(data);
 
 		Frequencies freqs = new Frequencies();
 		freqs.initByName("data", data, "estimate", false);
@@ -265,7 +263,7 @@ public class RapidLikelihoodTest {
 		RapidTreeLikelihood rapidLikelihood = new RapidTreeLikelihood();
 		rapidLikelihood.initByName("data", data2, "tree", tree, "siteModel", siteModel);
 		double rapidlogP = rapidLikelihood.calculateLogP();
-		assertEquals(logP, rapidlogP, BEASTTestCase.PRECISION);
+		assertEquals(logP, rapidlogP, TestUtils.PRECISION);
 		
 		
 		// test what happens after a few operations
@@ -281,7 +279,7 @@ public class RapidLikelihoodTest {
 	        logP = likelihood.calculateLogP();
 	        rapidlogP = rapidLikelihood.calculateLogP();
 	              
-	        assertEquals(logP, rapidlogP, BEASTTestCase.PRECISION);	        
+	        assertEquals(logP, rapidlogP, TestUtils.PRECISION);	        
 		}
 		
 	}
@@ -300,10 +298,10 @@ public class RapidLikelihoodTest {
 //    	logL_uncertain = testJC69Likelihood(data2,tree);
 //    	double x1 = -11.853202336328778;
 //    	double x2 = -12.069603116476458;
-//    	assertEquals(logL[0], x1, BEASTTestCase.PRECISION);    	
-//    	assertEquals(logL[1], x1, BEASTTestCase.PRECISION);
-//    	assertEquals(logL_uncertain[0], x1, BEASTTestCase.PRECISION);    	
-//    	assertEquals(logL_uncertain[1], x2, BEASTTestCase.PRECISION);    	
+//    	assertEquals(logL[0], x1, TestUtils.PRECISION);    	
+//    	assertEquals(logL[1], x1, TestUtils.PRECISION);
+//    	assertEquals(logL_uncertain[0], x1, TestUtils.PRECISION);    	
+//    	assertEquals(logL_uncertain[1], x2, TestUtils.PRECISION);    	
 //    	
 //    	System.out.println("\nTree B:");
 //    	tree = UncertainAlignmentTest.getTreeB(data2);
@@ -311,16 +309,16 @@ public class RapidLikelihoodTest {
 //    	logL_uncertain = testJC69Likelihood(data2,tree);
 //    	double x3 = -12.421114302827698;
 //    	double x4 = -11.62105662310513;
-//    	assertEquals(logL[0], x3, BEASTTestCase.PRECISION);    	
-//    	assertEquals(logL[1], x3, BEASTTestCase.PRECISION);
-//    	assertEquals(logL_uncertain[0], x3, BEASTTestCase.PRECISION);    	
-//    	assertEquals(logL_uncertain[1], x4, BEASTTestCase.PRECISION);    	    
+//    	assertEquals(logL[0], x3, TestUtils.PRECISION);    	
+//    	assertEquals(logL[1], x3, TestUtils.PRECISION);
+//    	assertEquals(logL_uncertain[0], x3, TestUtils.PRECISION);    	
+//    	assertEquals(logL_uncertain[1], x4, TestUtils.PRECISION);    	    
 //    	
 //    	System.out.println("\nTesting alignment doubling:");
 //    	Alignment data3 = UncertainAlignmentTest.getUncertainAlignmentDoubled();    	    	
 //    	logL_uncertain = testJC69Likelihood(data3,tree);
-//    	assertEquals(logL_uncertain[0], 2 * x3, BEASTTestCase.PRECISION);    	
-//    	assertEquals(logL_uncertain[1], 2 * x4, BEASTTestCase.PRECISION);    	    
+//    	assertEquals(logL_uncertain[0], 2 * x3, TestUtils.PRECISION);    	
+//    	assertEquals(logL_uncertain[1], 2 * x4, TestUtils.PRECISION);    	    
 //    	
 //    }        
 //    
@@ -352,8 +350,8 @@ public class RapidLikelihoodTest {
 //    @Test
 //    public void testAscertainedJC69Likelihood() throws Exception {
 //        // as testJC69Likelihood but with ascertained alignment
-//        Alignment data = BEASTTestCase.getAscertainedAlignment();
-//        Tree tree = BEASTTestCase.getTree(data);
+//        Alignment data = TestUtils.getAscertainedAlignment();
+//        Tree tree = TestUtils.getTree(data);
 //
 //        Frequencies freqs = new Frequencies();
 //        freqs.initByName("data", data,
@@ -371,14 +369,14 @@ public class RapidLikelihoodTest {
 //        double logP = 0;
 //        logP = likelihood.calculateLogP();
 //        // the following number comes from Beast 1.6        
-//        assertEquals(logP, -737.7140695360017, BEASTTestCase.PRECISION);
+//        assertEquals(logP, -737.7140695360017, TestUtils.PRECISION);
 //    }
 //
 //    @Test
 //    public void testK80Likelihood() throws Exception {
 //        // Set up K80 model: uniform freqs, kappa = 27.402591, 0 gamma categories
-//        Alignment data = BEASTTestCase.getAlignment();
-//        Tree tree = BEASTTestCase.getTree(data);
+//        Alignment data = TestUtils.getAlignment();
+//        Tree tree = TestUtils.getTree(data);
 //
 //        Frequencies freqs = new Frequencies();
 //        freqs.initByName("data", data,
@@ -395,18 +393,18 @@ public class RapidLikelihoodTest {
 //
 //        double logP = 0;
 //        logP = likelihood.calculateLogP();
-//        assertEquals(logP, -1856.303048876734, BEASTTestCase.PRECISION);
+//        assertEquals(logP, -1856.303048876734, TestUtils.PRECISION);
 //
 //        likelihood.initByName("useAmbiguities", true, "data", data, "tree", tree, "siteModel", siteModel);
 //        logP = likelihood.calculateLogP();
-//        assertEquals(logP, -1856.303048876734, BEASTTestCase.PRECISION);
+//        assertEquals(logP, -1856.303048876734, TestUtils.PRECISION);
 //    }
 //
 //    @Test
 //    public void testHKY85Likelihood() throws Exception {
 //        // Set up HKY85 model: estimated freqs, kappa = 29.739445, 0 gamma categories
-//        Alignment data = BEASTTestCase.getAlignment();
-//        Tree tree = BEASTTestCase.getTree(data);
+//        Alignment data = TestUtils.getAlignment();
+//        Tree tree = TestUtils.getTree(data);
 //
 //        Frequencies freqs = new Frequencies();
 //        freqs.initByName("data", data);
@@ -422,19 +420,19 @@ public class RapidLikelihoodTest {
 //
 //        double logP = 0;
 //        logP = likelihood.calculateLogP();
-//        assertEquals(logP, -1825.2131708068507, BEASTTestCase.PRECISION);
+//        assertEquals(logP, -1825.2131708068507, TestUtils.PRECISION);
 //
 //        likelihood.initByName("useAmbiguities", true, "data", data, "tree", tree, "siteModel", siteModel);
 //        logP = likelihood.calculateLogP();
-//        assertEquals(logP, -1825.2131708068507, BEASTTestCase.PRECISION);
+//        assertEquals(logP, -1825.2131708068507, TestUtils.PRECISION);
 //    }
 //
 //
 //    @Test
 //    public void testHKY85GLikelihood() throws Exception {
 //        // Set up HKY85+G model: estimated freqs, kappa = 38.82974, 4 gamma categories, shape = 0.137064
-//        Alignment data = BEASTTestCase.getAlignment();
-//        Tree tree = BEASTTestCase.getTree(data);
+//        Alignment data = TestUtils.getAlignment();
+//        Tree tree = TestUtils.getTree(data);
 //
 //        Frequencies freqs = new Frequencies();
 //        freqs.initByName("data", data);
@@ -454,18 +452,18 @@ public class RapidLikelihoodTest {
 //        double logP = 0;
 //        logP = likelihood.calculateLogP();
 //        System.err.println(logP - -1789.7593576610134);
-//        assertEquals(logP, -1789.7593576610134, BEASTTestCase.PRECISION);
+//        assertEquals(logP, -1789.7593576610134, TestUtils.PRECISION);
 //
 //        likelihood.initByName("useAmbiguities", true, "data", data, "tree", tree, "siteModel", siteModel);
 //        logP = likelihood.calculateLogP();
-//        assertEquals(logP, -1789.7593576610134, BEASTTestCase.PRECISION);
+//        assertEquals(logP, -1789.7593576610134, TestUtils.PRECISION);
 //    }
 //
 //    @Test
 //    public void testHKY85ILikelihood() throws Exception {
 //        // Set up HKY85+I model: estimated freqs, kappa = 38.564672, 0 gamma categories, prop invariant = 0.701211
-//        Alignment data = BEASTTestCase.getAlignment();
-//        Tree tree = BEASTTestCase.getTree(data);
+//        Alignment data = TestUtils.getAlignment();
+//        Tree tree = TestUtils.getTree(data);
 //
 //        Frequencies freqs = new Frequencies();
 //        freqs.initByName("data", data);
@@ -484,18 +482,18 @@ public class RapidLikelihoodTest {
 //
 //        double logP = 0;
 //        logP = likelihood.calculateLogP();
-//        assertEquals(logP, -1789.912401996943, BEASTTestCase.PRECISION);
+//        assertEquals(logP, -1789.912401996943, TestUtils.PRECISION);
 //
 //        likelihood.initByName("useAmbiguities", true, "data", data, "tree", tree, "siteModel", siteModel);
 //        logP = likelihood.calculateLogP();
-//        assertEquals(logP, -1789.912401996943, BEASTTestCase.PRECISION);
+//        assertEquals(logP, -1789.912401996943, TestUtils.PRECISION);
 //    }
 //
 //    @Test
 //    public void testHKY85GILikelihood() throws Exception {
 //        // Set up HKY85+G+I model: estimated freqs, kappa = 39.464538, 4 gamma categories, shape = 0.587649, prop invariant = 0.486548
-//        Alignment data = BEASTTestCase.getAlignment();
-//        Tree tree = BEASTTestCase.getTree(data);
+//        Alignment data = TestUtils.getAlignment();
+//        Tree tree = TestUtils.getTree(data);
 //
 //        Frequencies freqs = new Frequencies();
 //        freqs.initByName("data", data);
@@ -514,19 +512,19 @@ public class RapidLikelihoodTest {
 //
 //        double logP = 0;
 //        logP = likelihood.calculateLogP();
-//        assertEquals(logP, -1789.639227747059, BEASTTestCase.PRECISION);
+//        assertEquals(logP, -1789.639227747059, TestUtils.PRECISION);
 //
 //        likelihood.initByName("useAmbiguities", true, "data", data, "tree", tree, "siteModel", siteModel);
 //        logP = likelihood.calculateLogP();
-//        assertEquals(logP, -1789.639227747059, BEASTTestCase.PRECISION);
+//        assertEquals(logP, -1789.639227747059, TestUtils.PRECISION);
 //    }
 //
 //
 //    @Test
 //    public void testGTRLikelihood() throws Exception {
 //        // Set up GTR model: no gamma categories, no proportion invariant
-//        Alignment data = BEASTTestCase.getAlignment();
-//        Tree tree = BEASTTestCase.getTree(data);
+//        Alignment data = TestUtils.getAlignment();
+//        Tree tree = TestUtils.getTree(data);
 //
 //        Frequencies freqs = new Frequencies();
 //        freqs.initByName("data", data);
@@ -543,18 +541,18 @@ public class RapidLikelihoodTest {
 //
 //        double logP = 0;
 //        logP = likelihood.calculateLogP();
-//        assertEquals(logP, -1969.145839307625, BEASTTestCase.PRECISION);
+//        assertEquals(logP, -1969.145839307625, TestUtils.PRECISION);
 //
 //        likelihood.initByName("useAmbiguities", false, "data", data, "tree", tree, "siteModel", siteModel);
 //        logP = likelihood.calculateLogP();
-//        assertEquals(logP, -1969.145839307625, BEASTTestCase.PRECISION);
+//        assertEquals(logP, -1969.145839307625, TestUtils.PRECISION);
 //    }
 //
 //    @Test
 //    public void testGTRILikelihood() throws Exception {
 //        // Set up GTR model: prop invariant = 0.5
-//        Alignment data = BEASTTestCase.getAlignment();
-//        Tree tree = BEASTTestCase.getTree(data);
+//        Alignment data = TestUtils.getAlignment();
+//        Tree tree = TestUtils.getTree(data);
 //
 //        Frequencies freqs = new Frequencies();
 //        freqs.initByName("data", data);
@@ -573,18 +571,18 @@ public class RapidLikelihoodTest {
 //
 //        double logP = 0;
 //        logP = likelihood.calculateLogP();
-//        assertEquals(logP, -1948.8417455357564, BEASTTestCase.PRECISION);
+//        assertEquals(logP, -1948.8417455357564, TestUtils.PRECISION);
 //
 //        likelihood.initByName("useAmbiguities", false, "data", data, "tree", tree, "siteModel", siteModel);
 //        logP = likelihood.calculateLogP();
-//        assertEquals(logP, -1948.8417455357564, BEASTTestCase.PRECISION);
+//        assertEquals(logP, -1948.8417455357564, TestUtils.PRECISION);
 //    }
 //
 //    @Test
 //    public void testGTRGLikelihood() throws Exception {
 //        // Set up GTR model: 4 gamma categories, gamma shape = 0.5
-//        Alignment data = BEASTTestCase.getAlignment();
-//        Tree tree = BEASTTestCase.getTree(data);
+//        Alignment data = TestUtils.getAlignment();
+//        Tree tree = TestUtils.getTree(data);
 //
 //        Frequencies freqs = new Frequencies();
 //        freqs.initByName("data", data);
@@ -602,18 +600,18 @@ public class RapidLikelihoodTest {
 //
 //        double logP = 0;
 //        logP = likelihood.calculateLogP();
-//        assertEquals(logP, -1949.0360143622, BEASTTestCase.PRECISION);
+//        assertEquals(logP, -1949.0360143622, TestUtils.PRECISION);
 //
 //        likelihood.initByName("useAmbiguities", false, "data", data, "tree", tree, "siteModel", siteModel);
 //        logP = likelihood.calculateLogP();
-//        assertEquals(logP, -1949.0360143622, BEASTTestCase.PRECISION);
+//        assertEquals(logP, -1949.0360143622, TestUtils.PRECISION);
 //    }
 //
 //    @Test
 //    public void testGTRGILikelihood() throws Exception {
 //        // Set up GTR model: 4 gamma categories, gamma shape = 0.5, prop invariant = 0.5
-//        Alignment data = BEASTTestCase.getAlignment();
-//        Tree tree = BEASTTestCase.getTree(data);
+//        Alignment data = TestUtils.getAlignment();
+//        Tree tree = TestUtils.getTree(data);
 //
 //        Frequencies freqs = new Frequencies();
 //        freqs.initByName("data", data);
@@ -632,16 +630,16 @@ public class RapidLikelihoodTest {
 //
 //        double logP = 0;
 //        logP = likelihood.calculateLogP();
-//        assertEquals(logP, -1947.5829396144961, BEASTTestCase.PRECISION);
+//        assertEquals(logP, -1947.5829396144961, TestUtils.PRECISION);
 //
 //        likelihood.initByName("useAmbiguities", false, "data", data, "tree", tree, "siteModel", siteModel);
 //        logP = likelihood.calculateLogP();
-//        assertEquals(logP, -1947.5829396144961, BEASTTestCase.PRECISION);
+//        assertEquals(logP, -1947.5829396144961, TestUtils.PRECISION);
 //    }
 //
 //    void aminoacidModelTest(SubstitutionModel substModel, double expectedValue) throws Exception {
-//        Alignment data = BEASTTestCase.getAminoAcidAlignment();
-//        Tree tree = BEASTTestCase.getAminoAcidTree(data);
+//        Alignment data = TestUtils.getAminoAcidAlignment();
+//        Tree tree = TestUtils.getAminoAcidTree(data);
 //        SiteModel siteModel = new SiteModel();
 //        siteModel.initByName("mutationRate", "1.0", "gammaCategoryCount", 1, "substModel", substModel);
 //
@@ -649,7 +647,7 @@ public class RapidLikelihoodTest {
 //        likelihood.initByName("data", data, "tree", tree, "siteModel", siteModel);
 //        double logP = 0;
 //        logP = likelihood.calculateLogP();
-//        assertEquals(expectedValue, logP, BEASTTestCase.PRECISION);
+//        assertEquals(expectedValue, logP, TestUtils.PRECISION);
 //    }
 //
 //    @Test
@@ -705,8 +703,8 @@ public class RapidLikelihoodTest {
 //    }
 //
 //    void aminoacidModelTestI(SubstitutionModel substModel, double expectedValue) throws Exception {
-//        Alignment data = BEASTTestCase.getAminoAcidAlignment();
-//        Tree tree = BEASTTestCase.getAminoAcidTree(data);
+//        Alignment data = TestUtils.getAminoAcidAlignment();
+//        Tree tree = TestUtils.getAminoAcidTree(data);
 //        SiteModel siteModel = new SiteModel();
 //        siteModel.initByName("mutationRate", "1.0", "gammaCategoryCount", 1, "substModel", substModel,
 //                "proportionInvariant", "0.2");
@@ -715,7 +713,7 @@ public class RapidLikelihoodTest {
 //        likelihood.initByName("data", data, "tree", tree, "siteModel", siteModel);
 //        double logP = 0;
 //        logP = likelihood.calculateLogP();
-//        assertEquals(expectedValue, logP, BEASTTestCase.PRECISION);
+//        assertEquals(expectedValue, logP, TestUtils.PRECISION);
 //    }
 //
 //    @Test
@@ -768,8 +766,8 @@ public class RapidLikelihoodTest {
 //    }
 //
 //    void aminoacidModelTestIG(SubstitutionModel substModel, double expectedValue) throws Exception {
-//        Alignment data = BEASTTestCase.getAminoAcidAlignment();
-//        Tree tree = BEASTTestCase.getAminoAcidTree(data);
+//        Alignment data = TestUtils.getAminoAcidAlignment();
+//        Tree tree = TestUtils.getAminoAcidTree(data);
 //        SiteModel siteModel = new SiteModel();
 //        siteModel.initByName("mutationRate", "1.0", "gammaCategoryCount", 1, "substModel", substModel,
 //                "gammaCategoryCount", 4,
@@ -780,7 +778,7 @@ public class RapidLikelihoodTest {
 //        likelihood.initByName("data", data, "tree", tree, "siteModel", siteModel);
 //        double logP = 0;
 //        logP = likelihood.calculateLogP();
-//        assertEquals(expectedValue, logP, BEASTTestCase.PRECISION);
+//        assertEquals(expectedValue, logP, TestUtils.PRECISION);
 //    }
 //
 //    @Test
@@ -839,16 +837,16 @@ public class RapidLikelihoodTest {
 //        dataType.initByName("states", 2, "codeMap", "0=1, 1=0, ?=0 1, -=0 1");
 //        Alignment data = new Alignment();
 //
-//        Sequence German_ST = new Sequence("German_ST", BEASTTestCase.German_ST.dataInput.get());
-//        Sequence Dutch_List = new Sequence("Dutch_List", BEASTTestCase.Dutch_List.dataInput.get());
+//        Sequence German_ST = new Sequence("German_ST", TestUtils.German_ST.dataInput.get());
+//        Sequence Dutch_List = new Sequence("Dutch_List", TestUtils.Dutch_List.dataInput.get());
 //        ;
-//        Sequence English_ST = new Sequence("English_ST", BEASTTestCase.English_ST.dataInput.get());
+//        Sequence English_ST = new Sequence("English_ST", TestUtils.English_ST.dataInput.get());
 //        ;
-//        Sequence French = new Sequence("French", BEASTTestCase.French.dataInput.get());
+//        Sequence French = new Sequence("French", TestUtils.French.dataInput.get());
 //        ;
-//        Sequence Italian = new Sequence("Italian", BEASTTestCase.Italian.dataInput.get());
+//        Sequence Italian = new Sequence("Italian", TestUtils.Italian.dataInput.get());
 //        ;
-//        Sequence Spanish = new Sequence("Spanish", BEASTTestCase.Spanish.dataInput.get());
+//        Sequence Spanish = new Sequence("Spanish", TestUtils.Spanish.dataInput.get());
 //        ;
 //
 //
@@ -856,7 +854,7 @@ public class RapidLikelihoodTest {
 //                "userDataType", dataType
 //        );
 //
-//        Tree tree = BEASTTestCase.getTree(data, "((English_ST:0.22743347188019544,(German_ST:0.10557648379843088,Dutch_List:0.10557648379843088):0.12185698808176457):1.5793160946109988,(Spanish:0.11078392189606047,(Italian:0.10119772534558173,French:0.10119772534558173):0.009586196550478737):1.6959656445951337)");
+//        Tree tree = TestUtils.getTree(data, "((English_ST:0.22743347188019544,(German_ST:0.10557648379843088,Dutch_List:0.10557648379843088):0.12185698808176457):1.5793160946109988,(Spanish:0.11078392189606047,(Italian:0.10119772534558173,French:0.10119772534558173):0.009586196550478737):1.6959656445951337)");
 //
 //        RealParameter frequencies = new RealParameter("1 0");
 //        Frequencies freqs = new Frequencies();
@@ -876,14 +874,14 @@ public class RapidLikelihoodTest {
 //        likelihood.initByName("data", data, "tree", tree, "siteModel", siteModel, "useAmbiguities", true);
 //        logP = likelihood.calculateLogP();
 //        // beast1 xml gives -3551.6436
-//        assertEquals(logP, -3551.6436270344648, BEASTTestCase.PRECISION);
+//        assertEquals(logP, -3551.6436270344648, TestUtils.PRECISION);
 //    }
 //
 //
 //    @Test
 //    public void testBinaryCovarionLikelihood() throws Exception {
-//        Alignment data = BEASTTestCase.getCovarionAlignment();
-//        Tree tree = BEASTTestCase.getTree(data, "((English_ST:0.22743347188019544,(German_ST:0.10557648379843088,Dutch_List:0.10557648379843088):0.12185698808176457):1.5793160946109988,(Spanish:0.11078392189606047,(Italian:0.10119772534558173,French:0.10119772534558173):0.009586196550478737):1.6959656445951337)");
+//        Alignment data = TestUtils.getCovarionAlignment();
+//        Tree tree = TestUtils.getTree(data, "((English_ST:0.22743347188019544,(German_ST:0.10557648379843088,Dutch_List:0.10557648379843088):0.12185698808176457):1.5793160946109988,(Spanish:0.11078392189606047,(Italian:0.10119772534558173,French:0.10119772534558173):0.009586196550478737):1.6959656445951337)");
 //
 //
 //        RealParameter alpha = new RealParameter("0.284");
@@ -903,7 +901,7 @@ public class RapidLikelihoodTest {
 //        likelihood.initByName("useAmbiguities", true, "data", data, "tree", tree, "siteModel", siteModel);
 //        logP = likelihood.calculateLogP();
 //        // beast1 xml gives -1730.5363
-//        assertEquals(logP, -1730.53631739, BEASTTestCase.PRECISION);
+//        assertEquals(logP, -1730.53631739, TestUtils.PRECISION);
 //    }
 //
 //    
@@ -921,7 +919,7 @@ public class RapidLikelihoodTest {
 //                "dataType", "binary"
 //        );
 //
-//        Tree tree = BEASTTestCase.getTree(data, "(English_ST:0.22743347188019544,(German_ST:0.10557648379843088,Dutch_List:0.10557648379843088):0.12185698808176457):0.0;");
+//        Tree tree = TestUtils.getTree(data, "(English_ST:0.22743347188019544,(German_ST:0.10557648379843088,Dutch_List:0.10557648379843088):0.12185698808176457):0.0;");
 //
 //
 //        RealParameter frequencies = new RealParameter("0.683 0.317");
@@ -943,7 +941,7 @@ public class RapidLikelihoodTest {
 //        for (double d : logPs) {
 //        	P += Math.exp(d);
 //        }
-//        assertEquals(P, 1.0, BEASTTestCase.PRECISION);
+//        assertEquals(P, 1.0, TestUtils.PRECISION);
 //    }
 //
 //    @Test
@@ -959,7 +957,7 @@ public class RapidLikelihoodTest {
 //                "dataType", "nucleotide"
 //        );
 //
-//        Tree tree = BEASTTestCase.getTree(data, "(English_ST:0.22743347188019544,(German_ST:0.10557648379843088,Dutch_List:0.10557648379843088):0.12185698808176457):0.0;");
+//        Tree tree = TestUtils.getTree(data, "(English_ST:0.22743347188019544,(German_ST:0.10557648379843088,Dutch_List:0.10557648379843088):0.12185698808176457):0.0;");
 //
 //
 //        RealParameter frequencies = new RealParameter("0.2 0.3 0.4 0.1");
@@ -981,7 +979,7 @@ public class RapidLikelihoodTest {
 //        for (double d : logPs) {
 //        	P += Math.exp(d);
 //        }
-//        assertEquals(P, 1.0, BEASTTestCase.PRECISION);
+//        assertEquals(P, 1.0, TestUtils.PRECISION);
 //    }
 //
 //    /**
@@ -1003,7 +1001,7 @@ public class RapidLikelihoodTest {
 //                "sequence", seq3,
 //                "dataType", "nucleotide");
 //
-//        Tree tree = BEASTTestCase.getTree(data, "((t1:0.5,t2:0.5):0.5,t3:1.0):0.0;");
+//        Tree tree = TestUtils.getTree(data, "((t1:0.5,t2:0.5):0.5,t3:1.0):0.0;");
 //
 //        SiteModel siteModel = new SiteModel();
 //        siteModel.initByName("gammaCategoryCount", 1, "substModel", new JukesCantor());
@@ -1018,6 +1016,6 @@ public class RapidLikelihoodTest {
 //        likelihoodBeagle.initByName("data", data, "tree", tree, "siteModel", siteModel);
 //        double logLBeagle = likelihoodBeagle.calculateLogP();
 //
-//        assertEquals(logLBeagle, logLnoBeagle, BEASTTestCase.PRECISION);
+//        assertEquals(logLBeagle, logLnoBeagle, TestUtils.PRECISION);
 //    }
 } // class TreeLikelihoodTest
