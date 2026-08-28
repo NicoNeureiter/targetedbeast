@@ -76,8 +76,10 @@ public class RapidAlignment extends Alignment {
     @Override
     public void initAndValidate() {
 
-        if (sequenceInput.get().size() == 0 && defaultInput.get().size() == 0) {
-            throw new IllegalArgumentException("Either a sequence input must be specified, or a map of strings must be specified");
+        // BEAST3 removed Alignment.defaultInput (the id -> sequence map alternative),
+        // so a sequence input is now the only way to supply data.
+        if (sequenceInput.get().size() == 0) {
+            throw new IllegalArgumentException("A sequence input must be specified");
         }
 
         if (siteWeightsInput.get() != null) {
@@ -97,18 +99,7 @@ public class RapidAlignment extends Alignment {
         }
 
         // initialize the sequence list
-        if (sequenceInput.get().size() > 0) {
-            sequences = sequenceInput.get();
-        } else {
-            // alignment defined by a map of id -> sequence
-            List<String> taxa = new ArrayList<>();
-            taxa.addAll(map.keySet());
-            sequences.clear();
-            for (String key : taxa) {
-                String sequence = map.get(key);
-                sequences.add(new Sequence(key, sequence));
-            }
-        }
+        sequences = sequenceInput.get();
 
         // initialize the alignment from the given list of sequences
         initializeWithSequenceList(sequences, true);

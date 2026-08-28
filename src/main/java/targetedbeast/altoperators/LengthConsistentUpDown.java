@@ -11,10 +11,10 @@ import beast.base.core.Log;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
 import beast.base.core.Input.Validate;
+import beast.base.inference.Scalable;
 import beast.base.inference.StateNode;
 import beast.base.inference.operator.kernel.KernelOperator;
-import beast.base.inference.parameter.Parameter;
-import beast.base.inference.parameter.RealParameter;
+import beast.base.spec.inference.parameter.RealVectorParam;
 import beast.base.util.Randomizer;
 
 
@@ -70,21 +70,27 @@ public class LengthConsistentUpDown extends KernelOperator {
 
         final double scale = getScaler(0);
         int goingUp = 0, goingDown = 0;
+        // BEAST3: Scalable.scale(s) returns the log Jacobian, not a dof count. Accumulating it
+        // into an int silently truncates it to 0 (see beast3-migration scalable.md), so it is
+        // kept in its own double and added to the Hastings ratio below.
+        double logJacobian = 0.0;
 
 
         if (elementWiseInput.get()) {
             int size = 0;
             for (StateNode up : upInput.get()) {
-                if (size == 0) size = up.getDimension();
-                if (size > 0 && up.getDimension() != size) {
+                final int dim = dimensionOf(up);
+                if (size == 0) size = dim;
+                if (size > 0 && dim != size) {
                     throw new RuntimeException("elementWise=true but parameters of differing lengths!");
                 }
                 goingUp += 1;
             }
 
             for (StateNode down : downInput.get()) {
-                if (size == 0) size = down.getDimension();
-                if (size > 0 && down.getDimension() != size) {
+                final int dim = dimensionOf(down);
+                if (size == 0) size = dim;
+                if (size > 0 && dim != size) {
                     throw new RuntimeException("elementWise=true but parameters of differing lengths!");
                 }
                 goingDown += 1;
@@ -93,9 +99,9 @@ public class LengthConsistentUpDown extends KernelOperator {
             int index = Randomizer.nextInt(size);
 
             for (StateNode up : upInput.get()) {
-                if (up instanceof RealParameter) {
-                    RealParameter p = (RealParameter) up;
-                    p.setValue(index, p.getValue(index) * scale);
+                if (up instanceof RealVectorParam) {
+                    RealVectorParam<?> p = (RealVectorParam<?>) up;
+                    p.set(index, p.get(index) * scale);
                 }
                 if (outsideBounds(up)) {
                     return Double.NEGATIVE_INFINITY;
@@ -103,9 +109,9 @@ public class LengthConsistentUpDown extends KernelOperator {
             }
 
             for (StateNode down : downInput.get()) {
-                if (down instanceof RealParameter) {
-                    RealParameter p = (RealParameter) down;
-                    p.setValue(index, p.getValue(index) / scale);
+                if (down instanceof RealVectorParam) {
+                    RealVectorParam<?> p = (RealVectorParam<?>) down;
+                    p.set(index, p.get(index) / scale);
                 }
                 if (outsideBounds(down)) {
                     return Double.NEGATIVE_INFINITY;
@@ -123,7 +129,7 @@ public class LengthConsistentUpDown extends KernelOperator {
 						}
 						goingUp += val;
 					} else {
-						goingUp += up.scale(scale);
+						logJacobian += ((Scalable) up).scale(scale);
 					}
                 }
                 // separated this into second loop because the outsideBounds might return true transiently with
@@ -146,7 +152,8 @@ public class LengthConsistentUpDown extends KernelOperator {
 						goingDown += val;
 						System.out.println(down);
 					} else {
-						goingUp += down.scale(1.0 / scale);
+						// scale(1/s) already returns the correctly signed Jacobian
+						logJacobian += ((Scalable) down).scale(1.0 / scale);
 					}
 
                 }
@@ -160,7 +167,16 @@ public class LengthConsistentUpDown extends KernelOperator {
                 return Double.NEGATIVE_INFINITY;
             }
         }
-        return (goingUp - goingDown) * Math.log(scale);
+        return (goingUp - goingDown) * Math.log(scale) + logJacobian;
+    }
+
+    /** BEAST3 StateNode has no getDimension(); vector length comes from the spec vector type. */
+    private int dimensionOf(StateNode node) {
+        if (node instanceof RealVectorParam) {
+            return ((RealVectorParam<?>) node).size();
+        }
+        throw new RuntimeException("elementWise=true is only supported for RealVectorParam, got "
+                + node.getClass().getSimpleName());
     }
 
     private int scaleTree(Tree tree, double scale) {
@@ -234,14 +250,10 @@ public class LengthConsistentUpDown extends KernelOperator {
 	}
 
 	private boolean outsideBounds(final StateNode node) {
-        if (node instanceof Parameter<?>) {
-            final Parameter<?> p = (Parameter<?>) node;
-            final Double lower = (Double) p.getLower();
-            final Double upper = (Double) p.getUpper();
-            final Double value = (Double) p.getValue();
-            if (value < lower || value > upper) {
-                return true;
-            }
+        // BEAST3 replaced Parameter.getLower()/getUpper() with the parameter's domain;
+        // isValid() checks the domain and any explicit bounds in one call.
+        if (node instanceof RealVectorParam) {
+            return !((RealVectorParam<?>) node).isValid();
         }
         return false;
     }

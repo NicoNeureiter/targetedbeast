@@ -9,7 +9,6 @@ open module targetedbeast {
     requires commons.math3;              // linear algebra in targetedbeast.edgeweights.PCAWeights
 
     exports targetedbeast.alignment;
-    exports targetedbeast.altoperators;
     exports targetedbeast.annotator;
     exports targetedbeast.coalescent;
     exports targetedbeast.edgeweights;
@@ -20,16 +19,11 @@ open module targetedbeast {
     exports targetedbeast.operatorschedule;
     exports targetedbeast.util;
 
+    // targetedbeast.altoperators is deliberately neither exported nor provided:
+    // unfinished scratch code, unregistered in version.xml upstream.
     provides beast.base.core.BEASTInterface with
         targetedbeast.alignment.ConsensusAlignment,
         targetedbeast.alignment.RapidAlignment,
-        targetedbeast.altoperators.LengthConsistentUpDown,
-        targetedbeast.altoperators.SubtreeSlide2,
-        targetedbeast.altoperators.SubtreeSlide5,
-        targetedbeast.altoperators.Uni,
-        targetedbeast.altoperators.Uniform,
-        targetedbeast.altoperators.Uniform2,
-        targetedbeast.altoperators.WilsonBalding2,
         targetedbeast.coalescent.RapidCoalescent,
         targetedbeast.coalescent.RapidTreeIntervals,
         targetedbeast.edgeweights.CombinedEdgeWeights,

@@ -39,15 +39,12 @@
         <provider classname="targetedbeast.coalescent.RapidCoalescent"/>
         <provider classname="targetedbeast.operators.NodeRandomizer2"/>
         <provider classname="targetedbeast.operators.NodeRandomizer22"/>
-        <provider classname="targetedbeast.altoperators.LengthConsistentUpDown"/>
-        <provider classname="targetedbeast.altoperators.SubtreeSlide2"/>
-        <provider classname="targetedbeast.altoperators.SubtreeSlide5"/>
-        <provider classname="targetedbeast.altoperators.Uni"/>
-        <provider classname="targetedbeast.altoperators.Uniform"/>
-        <provider classname="targetedbeast.altoperators.Uniform2"/>
-        <provider classname="targetedbeast.altoperators.WilsonBalding2"/>
         <provider classname="targetedbeast.util.Alignment2PCA"/>
     </service>
+
+  <!-- targetedbeast.altoperators.* is unfinished scratch code (LengthConsistentUpDown.scaleTree
+       still calls System.exit) and is deliberately NOT registered as a service, matching the
+       original package. It is kept compiling but is not reachable from XML. -->
 
   <!-- Add other dependencies as necessary. -->
 </package>
