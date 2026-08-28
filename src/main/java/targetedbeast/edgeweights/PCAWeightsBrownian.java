@@ -38,6 +38,7 @@ public class PCAWeightsBrownian extends Distribution implements EdgeWeights {
 	final public Input<Boolean> distanceBasedInput = new Input<>("distanceBased", "flag to indicate PCA is done based on distance matrix (if true) or normalised alignment (if false)", true);
 	final public Input<Boolean> compressedInput = new Input<>("compressed", "flag to indicate matrix should have remove duplicate entries(if true) or leave then in, which is slower (if false)", true);
 	final public Input<Boolean> useOneNormInput = new Input<>("useOneNorm", "flag to indicate distance uses one norm (if true) or two norm (if false)", true);
+	final public Input<Boolean> useAttachmentLogScoreInput = new Input<>("useAttachmentLogScore", "if true, score attachments with getAttachmentLogScore; otherwise use inverse getMeanDist", false);
 	final public Input<Double> offsetInput = new Input<>("offset", "offset in weight", 0.01);
 
 
@@ -55,12 +56,18 @@ public class PCAWeightsBrownian extends Distribution implements EdgeWeights {
 
 	private int[] activeMutationsIndex;
 	private int[] storedActiveMutationsIndex;
+
+	private int ignoredNodeNr = -1;
+	private double[][] withoutNodePoints;
+	private double[][] withoutNodeVariances;
+	private boolean[] withoutNodeComputed;
 	
 	public double[][] edgeMutations;
 	
 	private boolean operatorUpdated = false;
 	private double offset;
 	private boolean useOneNorm;
+	private boolean useAttachmentLogScore;
 
 	int stateCount;
 	int patternCount;	
@@ -78,6 +85,7 @@ public class PCAWeightsBrownian extends Distribution implements EdgeWeights {
 		dim = dimensionInput.get();
 		offset = offsetInput.get();
 		useOneNorm = useOneNormInput.get();
+		useAttachmentLogScore = useAttachmentLogScoreInput.get();
 		
 		if (dataInput.get().getTaxonCount() != treeInput.get().getLeafNodeCount()) {
 			String leaves = "?";
@@ -110,6 +118,10 @@ public class PCAWeightsBrownian extends Distribution implements EdgeWeights {
 
 		activeMutationsIndex = new int[treeInput.get().getNodeCount()];
 		storedActiveMutationsIndex = new int[treeInput.get().getNodeCount()];
+
+		withoutNodePoints = new double[treeInput.get().getNodeCount()][dimensionInput.get()];
+		withoutNodeVariances = new double[treeInput.get().getNodeCount()][dimensionInput.get()];
+		withoutNodeComputed = new boolean[treeInput.get().getNodeCount()];
 		
 
 		changed = new boolean[treeInput.get().getNodeCount()];
@@ -194,6 +206,7 @@ public class PCAWeightsBrownian extends Distribution implements EdgeWeights {
 	@Override
 	public void updateByOperator() {
 		operatorUpdated = true;
+		ignoredNodeNr = -1;
 		Arrays.fill(changed, false);
 		Arrays.fill(changedChildren, false);
 		getFilthyNodes(treeInput.get().getRoot());
@@ -215,20 +228,49 @@ public class PCAWeightsBrownian extends Distribution implements EdgeWeights {
 
 	@Override
 	public void updateByOperatorWithoutNode(int ignore, List<Integer> nodes) {
-        updateByOperator();
+		operatorUpdated = true;
+		ignoredNodeNr = ignore;
+		Arrays.fill(withoutNodeComputed, false);
+		recomputeWithoutNodePosteriors(treeInput.get().getRoot(), ignore);
+	}
 
-		Arrays.fill(changed, false);
-		Arrays.fill(changedChildren, false);
-		for (Integer nodeNo : nodes) {
-			changed[nodeNo] = true;
+	private void recomputeWithoutNodePosteriors(Node node, int ignore) {
+		final int nodeNr = node.getNr();
+		if (withoutNodeComputed[nodeNr]) {
+			return;
 		}
 
-		Node ancestor = treeInput.get().getNode(ignore).getParent();
-		while (ancestor != null) {
-			changed[ancestor.getNr()] = true;
-			ancestor = ancestor.getParent();
+		if (node.isLeaf()) {
+			System.arraycopy(points[activeIndex[nodeNr]][nodeNr], 0, withoutNodePoints[nodeNr], 0, dim);
+			System.arraycopy(variances[activeIndex[nodeNr]][nodeNr], 0, withoutNodeVariances[nodeNr], 0, dim);
+			withoutNodeComputed[nodeNr] = true;
+			return;
 		}
-        getConsensusWithoutNode(treeInput.get().getRoot(), ignore);
+
+		Node left = node.getLeft();
+		Node right = node.getRight();
+		int leftNr = left.getNr();
+		int rightNr = right.getNr();
+
+		double[] parentMean = withoutNodePoints[nodeNr];
+		double[] parentVar = withoutNodeVariances[nodeNr];
+
+		if (leftNr == ignore) {
+			recomputeWithoutNodePosteriors(right, ignore);
+			copyChildPosteriorToParent(right, withoutNodePoints[rightNr], withoutNodeVariances[rightNr], parentMean, parentVar);
+		} else if (rightNr == ignore) {
+			recomputeWithoutNodePosteriors(left, ignore);
+			copyChildPosteriorToParent(left, withoutNodePoints[leftNr], withoutNodeVariances[leftNr], parentMean, parentVar);
+		} else {
+			recomputeWithoutNodePosteriors(left, ignore);
+			recomputeWithoutNodePosteriors(right, ignore);
+			updateParentPosterior(left, right,
+					withoutNodePoints[leftNr], withoutNodePoints[rightNr],
+					withoutNodeVariances[leftNr], withoutNodeVariances[rightNr],
+					parentMean, parentVar);
+		}
+
+		withoutNodeComputed[nodeNr] = true;
 	}
 
     public double mean(double[][] matrix) {
@@ -397,6 +439,7 @@ public class PCAWeightsBrownian extends Distribution implements EdgeWeights {
 	@Override
 	protected boolean requiresRecalculation() {
 		hasDirt = Tree.IS_CLEAN;
+		ignoredNodeNr = -1;
 
 		if (dataInput.get().isDirtyCalculation()) {
 			hasDirt = Tree.IS_FILTHY;
@@ -438,6 +481,7 @@ public class PCAWeightsBrownian extends Distribution implements EdgeWeights {
 		// undoes any previous calculation
 		System.arraycopy(storedActiveIndex, 0, activeIndex, 0, activeIndex.length);
 		System.arraycopy(storedActiveMutationsIndex, 0, activeMutationsIndex, 0, activeMutationsIndex.length);
+		ignoredNodeNr = -1;
 		operatorUpdated = false;
 	}
 
@@ -490,54 +534,38 @@ public class PCAWeightsBrownian extends Distribution implements EdgeWeights {
 	double[] getVariances(int nr) {
 		return variances[activeIndex[nr]][nr];
 	}
+
+	private double[] getScoringPoints(int nr) {
+		if (ignoredNodeNr >= 0 && withoutNodeComputed[nr]) {
+			return withoutNodePoints[nr];
+		}
+		return points[activeIndex[nr]][nr];
+	}
+
+	private double[] getScoringVariances(int nr) {
+		if (ignoredNodeNr >= 0 && withoutNodeComputed[nr]) {
+			return withoutNodeVariances[nr];
+		}
+		return variances[activeIndex[nr]][nr];
+	}
 	
 	@Override
 	public double getEdgeWeights(int nodeNr) {
-		return getEdgeMutations(nodeNr);
+		return Math.sqrt((0.1 + getEdgeMutations(nodeNr)) * (0.5 + treeInput.get().getNode(nodeNr).getLength()));
 	}
 
 	public double[] getTargetWeights(int fromNodeNr, List<Node> toNodes) {
         return getTargetWeightsInteger(fromNodeNr,  toNodes.stream().map(n -> n.getNr()).toList());
-		// double[] distances = new double[toNodes.size()];
-		// double[] currConsensus = getPoints(fromNodeNr);
-		
-		// for (int k = 0; k < toNodes.size(); k++) {
-        //     Node toNode = toNodes.get(k);
-		// 	int nodeNo = toNode.getNr();
-        //     double sum = offset;
-		// 	double[] consensus = getPoints(nodeNo);
-            
-        //     // Node parent = toNode.getParent();
-        //     // if (parent != null) {
-        //     //     double[] parentConsensus = getPoints(parent.getNr());
-        //     //     consensus = interpolatePoints(consensus, parentConsensus);
-        //     // }
-                
-
-		// 	// calculate the distance between the two consensus
-		// 	for (int l = 0; l < dim; l++) {
-		// 		sum += norm(currConsensus[l] - consensus[l]);
-		// 	}
-		// 	distances[k] = 1 / invNorm(sum);
-		// }
-		// return distances;
 	}
 
 	public double[] getTargetWeightsInteger(int fromNodeNr, List<Integer> toNodeNrs) {
-		// double[] logScores = new double[toNodeNrs.size()];
-		// for (int k = 0; k < toNodeNrs.size(); k++) {
-		// 	int nodeNr = toNodeNrs.get(k);
-		// 	double toHeight = getDefaultAttachmentHeight(getNode(nodeNr), fromNodeNr);
-		// 	logScores[k] = getAttachmentLogScore(fromNodeNr, nodeNr, fromNodeNr, toHeight);
-		// }
-		// return exponentiateLogScores(logScores);
-        double[] distances = new double[toNodeNrs.size()];
+		double[] weights = new double[toNodeNrs.size()];
 		for (int k = 0; k < toNodeNrs.size(); k++) {
-			int nodeNr = toNodeNrs.get(k);
-			double toHeight = getDefaultAttachmentHeight(getNode(nodeNr), fromNodeNr);
-            distances[k] = 1. / getMeanDist(fromNodeNr, nodeNr, fromNodeNr, toHeight);
-        }
-        return distances;
+			int toNodeNr = toNodeNrs.get(k);
+			double toHeight = getDefaultAttachmentHeight(getNode(toNodeNr), fromNodeNr);
+			weights[k] = getAttachmentWeight(fromNodeNr, toNodeNr, fromNodeNr, toHeight);
+		}
+		return weights;
 	}
 
     @Override
@@ -547,14 +575,11 @@ public class PCAWeightsBrownian extends Distribution implements EdgeWeights {
 
     @Override
 	public double[] getTargetWeightsInteger(int fromNodeNr, List<Integer> toNodeNrs, double toHeight) {
-		// double[] logScores = new double[toNodeNrs.size()];
-		double[] distances = new double[toNodeNrs.size()];
+		double[] weights = new double[toNodeNrs.size()];
 		for (int k = 0; k < toNodeNrs.size(); k++) {
-			// logScores[k] = getAttachmentLogScore(fromNodeNr, toNodeNrs.get(k), fromNodeNr, toHeight);
-            distances[k] = 1. / getMeanDist(fromNodeNr, toNodeNrs.get(k), fromNodeNr, toHeight);
+			weights[k] = getAttachmentWeight(fromNodeNr, toNodeNrs.get(k), fromNodeNr, toHeight);
 		}
-		// return exponentiateLogScores(logScores);
-		return distances;
+		return weights;
 	}
 
     @Override
@@ -564,14 +589,25 @@ public class PCAWeightsBrownian extends Distribution implements EdgeWeights {
 
     @Override
 	public double[] getTargetWeightsInteger(int fromNodeNr, List<Integer> toNodeNrs, List<Double> toHeights) {
-		// double[] logScores = new double[toNodeNrs.size()];
-		double[] distances = new double[toNodeNrs.size()];
+		double[] weights = new double[toNodeNrs.size()];
 		for (int k = 0; k < toNodeNrs.size(); k++) {
-			// logScores[k] = getAttachmentLogScore(fromNodeNr, toNodeNrs.get(k), fromNodeNr, toHeights.get(k));
-            distances[k] = 1. / getMeanDist(fromNodeNr, toNodeNrs.get(k), fromNodeNr, toHeights.get(k));
+			weights[k] = getAttachmentWeight(fromNodeNr, toNodeNrs.get(k), fromNodeNr, toHeights.get(k));
 		}
-		// return exponentiateLogScores(logScores);
-		return distances;
+		return weights;
+	}
+
+	/**
+	 * Centralized attachment scoring to keep switching between mean-distance and
+	 * log-likelihood-style scores local to one method.
+	 */
+	private double getAttachmentWeight(int fromNodeNr, int toNodeNr, int ignore, double toHeight) {
+		if (useAttachmentLogScore) {
+			double logScore = getAttachmentLogScore(fromNodeNr, toNodeNr, ignore, toHeight);
+			return Math.max(Math.exp(logScore), VARIANCE_FLOOR) + offset;
+		}
+
+		double distance = getMeanDist(fromNodeNr, toNodeNr, ignore, toHeight);
+		return 1.0 / Math.max(distance, VARIANCE_FLOOR);
 	}
 
     /**
@@ -663,8 +699,8 @@ public class PCAWeightsBrownian extends Distribution implements EdgeWeights {
     }
 
 	private GaussianState getSourceStateAtHeight(int fromNodeNr, double toHeight) {
-		double[] mean = Arrays.copyOf(getPoints(fromNodeNr), dim);
-		double[] variance = Arrays.copyOf(getVariances(fromNodeNr), dim);
+		double[] mean = Arrays.copyOf(getScoringPoints(fromNodeNr), dim);
+		double[] variance = Arrays.copyOf(getScoringVariances(fromNodeNr), dim);
 		double branchLength = Math.max(0.0, toHeight - getNode(fromNodeNr).getHeight());
 		for (int i = 0; i < dim; i++) {
 			variance[i] = propagatedVariance(variance[i], branchLength);
@@ -673,8 +709,8 @@ public class PCAWeightsBrownian extends Distribution implements EdgeWeights {
 	}
 
 	private GaussianState getAttachmentState(Node node, int ignore, double toHeight) {
-		double[] childMean = getPoints(node.getNr());
-		double[] childVariance = getVariances(node.getNr());
+		double[] childMean = getScoringPoints(node.getNr());
+		double[] childVariance = getScoringVariances(node.getNr());
 		double childBranchLength = Math.max(0.0, toHeight - node.getHeight());
 
 		Node parent = getEffectiveParent(node, ignore);
@@ -689,8 +725,8 @@ public class PCAWeightsBrownian extends Distribution implements EdgeWeights {
 
 		double[] attachmentMean = new double[dim];
 		double[] attachmentVariance = new double[dim];
-		double[] parentMean = getPoints(parent.getNr());
-		double[] parentVariance = getVariances(parent.getNr());
+		double[] parentMean = getScoringPoints(parent.getNr());
+		double[] parentVariance = getScoringVariances(parent.getNr());
 		double parentBranchLength = Math.max(0.0, parent.getHeight() - toHeight);
 
 		for (int i = 0; i < dim; i++) {

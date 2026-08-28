@@ -172,6 +172,15 @@ public class EdgeWeightRejectConsistencyTest {
 
 
     @Test
+    public void testPCAWeightsBrownian() throws Exception {
+        assertRejectRestoresCache((tree, data) -> {
+            targetedbeast.edgeweights.PCAWeightsBrownian w = new targetedbeast.edgeweights.PCAWeightsBrownian();
+            w.initByName("tree", tree, "data", data, "dimension", 3);
+            return w;
+        });
+    }
+
+    @Test
     public void testParsimonyWeights2() throws Exception {
         assertRejectRestoresCache((tree, data) -> {
             targetedbeast.alignment.ConsensusAlignment cons = new targetedbeast.alignment.ConsensusAlignment();
@@ -211,8 +220,8 @@ public class EdgeWeightRejectConsistencyTest {
     private static beast.base.spec.evolution.likelihood.TreeLikelihood lastLikelihood;
 
     static beast.base.spec.evolution.likelihood.TreeLikelihood treeLikelihood(Tree tree, Alignment data) {
-        beast.base.evolution.sitemodel.SiteModel siteModel = new beast.base.evolution.sitemodel.SiteModel();
-        siteModel.initByName("substModel", new beast.base.evolution.substitutionmodel.JukesCantor());
+        beast.base.spec.evolution.sitemodel.SiteModel siteModel = new beast.base.spec.evolution.sitemodel.SiteModel();
+        siteModel.initByName("substModel", new beast.base.spec.evolution.substitutionmodel.JukesCantor());
         beast.base.spec.evolution.likelihood.TreeLikelihood likelihood =
                 new beast.base.spec.evolution.likelihood.TreeLikelihood();
         likelihood.initByName("tree", tree, "siteModel", siteModel, "data", data,
