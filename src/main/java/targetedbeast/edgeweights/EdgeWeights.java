@@ -33,7 +33,14 @@ public interface EdgeWeights {
 	double getEdgeWeights(int nodeNr);
 	
 	/**
-	 * Get the distance from one node to a list of nodes
+	 * Get per-candidate target weights for moving one lineage to a list of targets.
+	 *
+	 * Implementations must return intrinsic weights for each candidate move. In particular,
+	 * a candidate weight must not depend on the current tree state's baseline score or on
+	 * centering against the full candidate set, because targeted operators square and
+	 * renormalize these values and may compare forward and backward masses built from
+	 * different states or candidate lists.
+	 *
 	 * @param fromNodeNr
 	 * @param toNodeNrs
 	 * @return
@@ -49,7 +56,9 @@ public interface EdgeWeights {
     }
 	
 	/**
-	 * Get the distance from one node to a list of nodes
+	 * Get per-candidate target weights for moving one lineage to a list of targets.
+	 *
+	 * The same intrinsic-weight contract as above applies to these integer-indexed targets.
 	 * 
 	 * @param fromNodeNr
 	 * @param toNodeNrs
@@ -66,5 +75,20 @@ public interface EdgeWeights {
     }
 
 	double minEdgeWeight();
+
+	/**
+	 * Whether {@link #getTargetWeights} and {@link #getTargetWeightsInteger} return weights
+	 * in log space.
+	 *
+	 * <p>This describes the <em>target</em> weights only. {@link #getEdgeWeights} returns a
+	 * real-space, non-negative scalar in every implementation and must continue to do so.
+	 *
+	 * <p>A {@code targetWeightTransform} on an operator must agree with this flag: a
+	 * transform written for real-space input applied to log-space weights, or the reverse,
+	 * silently produces a wrong proposal distribution rather than an error.
+	 */
+	default boolean isLogSpace() {
+		return false;
+	}
 
 }

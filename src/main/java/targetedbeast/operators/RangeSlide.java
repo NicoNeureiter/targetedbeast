@@ -58,7 +58,6 @@ import java.util.Map;
 
 import beast.base.core.Description;
 import beast.base.core.Input;
-import beast.base.evolution.operator.TreeOperator;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
 import beast.base.inference.operator.kernel.KernelDistribution;
@@ -70,7 +69,7 @@ import targetedbeast.edgeweights.EdgeWeights;
  * Implements the subtree slide move.
  */
 @Description("")
-public class RangeSlide extends TreeOperator {
+public class RangeSlide extends TargetedWeightOperator {
 
 	final public Input<Double> sizeInput = new Input<>("size", "size of the slide, default 1.0", 1.0);
     final public Input<KernelDistribution> kernelDistributionInput = new Input<>("kernelDistribution", "provides sample distribution for proposals", 
@@ -97,6 +96,22 @@ public class RangeSlide extends TreeOperator {
 		limit = limitInput.get();
 		edgeWeights = edgeWeightsInput.get();
         kernelDistribution = kernelDistributionInput.get();
+
+		// Unlike the Wilson-Balding operators, this one has always used the target weights as
+		// they come, so the no-transform default here is the identity rather than squaring.
+		initWeightTransforms(edgeWeights, false);
+
+		// doStep picks its target uniformly among the reachable attachment points, so there
+		// are no target weights to reshape in that mode.
+		if (targetWeightTransform != null && !useWeightedStepInput.get()) {
+			throw new IllegalArgumentException(describeOperator() + ": targetWeightTransform "
+					+ "requires useWeightedStep=true; with useWeightedStep=false the target is "
+					+ "drawn uniformly and there are no target weights to transform.");
+		}
+	}
+
+	private String describeOperator() {
+		return getID() == null ? getClass().getSimpleName() : getID();
 	}
 
 	/**
@@ -111,10 +126,27 @@ public class RangeSlide extends TreeOperator {
 
 		double val = getDelta();
 
+		// Freeze the transform coefficients, so the forward and reverse probabilities below
+		// are computed with identical weights.
+		startTransformProposal();
+
 		if (useWeightedStepInput.get())
 			return doWeightedStep(tree, val);
 		else
 			return doStep(tree, val);
+	}
+
+	/**
+	 * Transformed source weights over the feasible (non-root) nodes.
+	 *
+	 * <p>The root is left out of the vector entirely rather than given weight zero: a
+	 * transform adds its offset to every entry it receives, so a zero-weight root would
+	 * become selectable and break the {@code p = i.getParent()} that follows.
+	 */
+	private SourceWeights getSourceWeights(Tree tree) {
+		return sourceWeights(tree,
+				node -> !node.isRoot(),
+				node -> edgeWeights.getEdgeWeights(node.getNr()));
 	}
 
 	private double getDelta() {
@@ -125,33 +157,16 @@ public class RangeSlide extends TreeOperator {
 
 		double logHastingsRatio = 0.0;
 		// choose a random node avoiding root
-		double totalWeight = 0;
-		double[] weight = new double[tree.getNodeCount()];
-		for (int i = 0; i < tree.getNodeCount(); i++) {
-			if (tree.getNode(i).isRoot())
-				continue;
-			weight[i] = edgeWeights.getEdgeWeights(i);
-			totalWeight += weight[i];
-		}
-
-		double scaler = Randomizer.nextDouble() * totalWeight;
-		int nodeNr = -1;
-		double currDev = 0;
-		for (int i = 0; i < weight.length; i++) {
-			currDev += weight[i];
-			if (currDev > scaler) {
-				nodeNr = i;
-				break;
-			}
-		}
-
-		logHastingsRatio -= Math.log(weight[nodeNr] / totalWeight);
-
-		Node i = tree.getNode(nodeNr);
-
-		if (i.isRoot()) {
+		SourceWeights sourceWeights = getSourceWeights(tree);
+		int sourceIdx = sourceWeights.sampleIndex();
+		if (sourceIdx < 0) {
 			return Double.NEGATIVE_INFINITY;
 		}
+
+		int nodeNr = sourceWeights.nodeNrs[sourceIdx];
+		logHastingsRatio -= Math.log(sourceWeights.weights[sourceIdx] / sourceWeights.total);
+
+		Node i = tree.getNode(nodeNr);
 		final Node p = i.getParent();
 
 		Node CiP = getOtherChild(p, i);
@@ -251,53 +266,32 @@ public class RangeSlide extends TreeOperator {
 
 		edgeWeights.prestore();
 		edgeWeights.updateByOperator();
-		
-		// choose a random node avoiding root
-		totalWeight = 0;
-		weight = new double[tree.getNodeCount()];
-		for (int j = 0; j < tree.getNodeCount(); j++) {
-			if (tree.getNode(j).isRoot())
-				continue;
-			weight[j] = edgeWeights.getEdgeWeights(j);
-			totalWeight += weight[j];
+
+		// Reverse source-selection probability, evaluated on the moved tree T'.
+		SourceWeights reverseSourceWeights = getSourceWeights(tree);
+		double reverseWeight = reverseSourceWeights.weightFor(i.getNr());
+		if (reverseSourceWeights.isDegenerate() || !(reverseWeight > 0.0)) {
+			return Double.NEGATIVE_INFINITY;
 		}
-		logHastingsRatio += Math.log(weight[i.getNr()] / totalWeight);
+		logHastingsRatio += Math.log(reverseWeight / reverseSourceWeights.total);
 
 		return logHastingsRatio;
 	}
 
 	private double doWeightedStep(Tree tree, double val) {
-		
+
 		double logHastingsRatio = 0.0;
 		// choose a random node avoiding root
-		double totalWeight = 0;
-		double[] weight = new double[tree.getNodeCount()];
-		for (int i = 0; i < tree.getNodeCount(); i++) {
-			if (tree.getNode(i).isRoot())
-				continue;
-			weight[i] = edgeWeights.getEdgeWeights(i);
-			totalWeight += weight[i];
-		}
-
-		double scaler = Randomizer.nextDouble() * totalWeight;
-		int nodeNr = -1;
-		double currDev = 0;
-		for (int i = 0; i < weight.length; i++) {
-			currDev += weight[i];
-			if (currDev > scaler) {
-				nodeNr = i;
-				break;
-			}
-		}
-		logHastingsRatio -= Math.log(weight[nodeNr] / totalWeight);
-
-
-		Node i = tree.getNode(nodeNr);
-
-		if (i.isRoot()) {
+		SourceWeights sourceWeights = getSourceWeights(tree);
+		int sourceIdx = sourceWeights.sampleIndex();
+		if (sourceIdx < 0) {
 			return Double.NEGATIVE_INFINITY;
 		}
 
+		int nodeNr = sourceWeights.nodeNrs[sourceIdx];
+		logHastingsRatio -= Math.log(sourceWeights.weights[sourceIdx] / sourceWeights.total);
+
+		Node i = tree.getNode(nodeNr);
 		final Node p = i.getParent();
 		Node CiP = getOtherChild(p, i);
 		Node PiP = p.getParent();
@@ -340,9 +334,12 @@ public class RangeSlide extends TreeOperator {
 		edgeWeights.prestore();
 		edgeWeights.updateByOperatorWithoutNode(i.getNr(), ancestors);
 
-		double[] distance = edgeWeights.getTargetWeights(i.getNr(), new ArrayList<>(targets.keySet()));
-		
-		double totalDistance = 0;		
+		// Every key of `targets` is a reachable attachment point, which is what the transform
+		// requires: it adds its offset to every entry it receives.
+		double[] distance = applyTargetTransform(
+				edgeWeights.getTargetWeights(i.getNr(), new ArrayList<>(targets.keySet())));
+
+		double totalDistance = 0;
 		for (int k=0; k < distance.length; k++) {
             totalDistance += distance[k];
         }
@@ -427,7 +424,8 @@ public class RangeSlide extends TreeOperator {
 		// calculate the distance of the previous edge without node i, prior to updating
 		// everything
 		k = 0;
-		distance = edgeWeights.getTargetWeights(i.getNr(), new ArrayList<>(newTargets.keySet()));
+		distance = applyTargetTransform(
+				edgeWeights.getTargetWeights(i.getNr(), new ArrayList<>(newTargets.keySet())));
 		edgeWeights.reset();
 
 		totalDistance = 0;
@@ -468,20 +466,17 @@ public class RangeSlide extends TreeOperator {
 		
 		logHastingsRatio += Math.log(distance[oldNodeIndex] / totalDistance);
 
-		// reset the consensus calculated without the node i		
+		// reset the consensus calculated without the node i
 		edgeWeights.prestore();
 		edgeWeights.updateByOperator();
-		
-		// choose a random node avoiding root
-		totalWeight = 0;
-		weight = new double[tree.getNodeCount()];
-		for (int j = 0; j < tree.getNodeCount(); j++) {
-			if (tree.getNode(j).isRoot())
-				continue;
-			weight[j] = edgeWeights.getEdgeWeights(j);
-			totalWeight += weight[j];
+
+		// Reverse source-selection probability, evaluated on the moved tree T'.
+		SourceWeights reverseSourceWeights = getSourceWeights(tree);
+		double reverseWeight = reverseSourceWeights.weightFor(i.getNr());
+		if (reverseSourceWeights.isDegenerate() || !(reverseWeight > 0.0)) {
+			return Double.NEGATIVE_INFINITY;
 		}
-		logHastingsRatio += Math.log(weight[i.getNr()] / totalWeight);
+		logHastingsRatio += Math.log(reverseWeight / reverseSourceWeights.total);
 		return logHastingsRatio;
 	}
 
@@ -543,6 +538,11 @@ public class RangeSlide extends TreeOperator {
 	 */
 	@Override
 	public void optimize(final double logAlpha) {
+		// The slide size and the weight transforms are tuned by different rules from the same
+		// observation: calcDelta below drives the acceptance rate toward a target, while the
+		// transforms climb toward whatever coefficients maximize it.
+		super.optimize(logAlpha);
+
 		if (optimiseInput.get()) {
 			double delta = calcDelta(logAlpha);
 			delta += Math.log(size);

@@ -136,7 +136,7 @@ public class ConsensusAlignment extends Alignment {
         // count patterns in sorted data
         int[] weights = new int[nrOfSites];
         int nrOfPatterns = 1;
-        if (nrOfSites > 0) {
+        if (data2.length > 0) {
 	        weights[0] = 1;
 	        for (int i = 1; i < data2.length; i++) {
 	        	// check if this patterns has variable sites that are not ambiguous

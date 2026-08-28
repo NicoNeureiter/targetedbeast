@@ -504,6 +504,23 @@ public class ParsimonyWeights extends Distribution implements EdgeWeights, Logga
 	}
 
 
+	/**
+	 * Checksum over the currently-active cached state (consensus sequences and edge
+	 * mutations). Lets beast's reject validation (-Dbeast.debug=true) detect a cache that
+	 * was not correctly restored after a rejected proposal. Only the active buffers are
+	 * hashed -- the inactive/stored halves carry no guarantee.
+	 */
+	@Override
+	protected int getChecksum() {
+		int h = 1;
+		int n = treeInput.get().getNodeCount();
+		for (int nr = 0; nr < n; nr++) {
+			h = 31 * h + Arrays.hashCode(getConsensus(nr));
+			h = 31 * h + Double.hashCode(getEdgeMutations(nr));
+		}
+		return h;
+	}
+
 	public double getEdgeMutations(int i) {
 		return edgeMutations[activeMutationsIndex[i]][i];
 	}
