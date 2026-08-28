@@ -18,6 +18,7 @@ open module targetedbeast {
     exports targetedbeast.logger;
     exports targetedbeast.operators;
     exports targetedbeast.operatorschedule;
+    exports targetedbeast.tools;
     exports targetedbeast.util;
     exports targetedbeast.weighttransform;
 
