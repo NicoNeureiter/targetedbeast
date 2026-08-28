@@ -6,7 +6,6 @@
       <service type="beast.base.core.BEASTInterface">
 
 
-        <provider classname="targetedbeast.edgeweights.EdgeWeights"/>
         <provider classname="targetedbeast.edgeweights.ConsensusWeights"/>
         <provider classname="targetedbeast.edgeweights.ParsimonyWeights"/>
         <provider classname="targetedbeast.edgeweights.ParsimonyWeights2"/>
@@ -17,7 +16,6 @@
         <provider classname="targetedbeast.init.ensureNoZeroEdgeLength"/>
 
         <provider classname="targetedbeast.likelihood.SlowTreeLikelihood"/>
-        <provider classname="targetedbeast.likelihood.SlowBeerLikelihoodCore"/>
         <provider classname="targetedbeast.likelihood.RapidTreeLikelihood"/>
         <provider classname="targetedbeast.logger.CladeLogger"/>
 
@@ -36,6 +34,19 @@
         <provider classname="targetedbeast.operators.WeightedWideOperator"/>
 
         <provider classname="targetedbeast.operatorschedule.TargetedOperatorSchedule"/>
+        <provider classname="targetedbeast.edgeweights.ConstantWeights"/>
+        <provider classname="targetedbeast.likelihood.RapidGenericTreeLikelihood"/>
+        <provider classname="targetedbeast.coalescent.RapidCoalescent"/>
+        <provider classname="targetedbeast.operators.NodeRandomizer2"/>
+        <provider classname="targetedbeast.operators.NodeRandomizer22"/>
+        <provider classname="targetedbeast.altoperators.LengthConsistentUpDown"/>
+        <provider classname="targetedbeast.altoperators.SubtreeSlide2"/>
+        <provider classname="targetedbeast.altoperators.SubtreeSlide5"/>
+        <provider classname="targetedbeast.altoperators.Uni"/>
+        <provider classname="targetedbeast.altoperators.Uniform"/>
+        <provider classname="targetedbeast.altoperators.Uniform2"/>
+        <provider classname="targetedbeast.altoperators.WilsonBalding2"/>
+        <provider classname="targetedbeast.util.Alignment2PCA"/>
     </service>
 
   <!-- Add other dependencies as necessary. -->
