@@ -9,7 +9,7 @@ import beast.base.evolution.alignment.Alignment;
 import beast.base.evolution.alignment.Sequence;
 import beast.base.evolution.alignment.Taxon;
 import beast.base.evolution.alignment.TaxonSet;
-import beast.base.evolution.speciation.YuleModel;
+import beast.base.spec.evolution.speciation.YuleModel;
 import beast.base.evolution.tree.Tree;
 import beast.base.inference.CompoundDistribution;
 import beast.base.inference.Distribution;
@@ -208,13 +208,13 @@ public class EdgeWeightRejectConsistencyTest {
     }
 
     /** Set by {@link #treeLikelihood} so callers can add it to the posterior / drive its core. */
-    private static beast.base.evolution.likelihood.TreeLikelihood lastLikelihood;
+    private static beast.base.spec.evolution.likelihood.TreeLikelihood lastLikelihood;
 
-    static beast.base.evolution.likelihood.TreeLikelihood treeLikelihood(Tree tree, Alignment data) {
+    static beast.base.spec.evolution.likelihood.TreeLikelihood treeLikelihood(Tree tree, Alignment data) {
         beast.base.evolution.sitemodel.SiteModel siteModel = new beast.base.evolution.sitemodel.SiteModel();
         siteModel.initByName("substModel", new beast.base.evolution.substitutionmodel.JukesCantor());
-        beast.base.evolution.likelihood.TreeLikelihood likelihood =
-                new beast.base.evolution.likelihood.TreeLikelihood();
+        beast.base.spec.evolution.likelihood.TreeLikelihood likelihood =
+                new beast.base.spec.evolution.likelihood.TreeLikelihood();
         likelihood.initByName("tree", tree, "siteModel", siteModel, "data", data,
                 "implementation", "BeerLikelihoodCore4");
         lastLikelihood = likelihood;
@@ -291,7 +291,7 @@ public class EdgeWeightRejectConsistencyTest {
 
             lastLikelihood = null;
             targetedbeast.edgeweights.EdgeWeights w = e.getValue().apply(tree, alignment);
-            beast.base.evolution.likelihood.TreeLikelihood likelihood = lastLikelihood;
+            beast.base.spec.evolution.likelihood.TreeLikelihood likelihood = lastLikelihood;
 
             tree.setEverythingDirty(true);
             // Weights that read a TreeLikelihood core need it computed for the current tree.

@@ -9,8 +9,8 @@ import beast.base.core.Input.Validate;
 import beast.base.evolution.alignment.Alignment;
 import beast.base.evolution.likelihood.BeerLikelihoodCore;
 import beast.base.evolution.likelihood.LikelihoodCore;
-import beast.base.evolution.likelihood.TreeLikelihood;
-import beast.base.evolution.sitemodel.SiteModel;
+import beast.base.spec.evolution.likelihood.TreeLikelihood;
+import beast.base.spec.evolution.sitemodel.SiteModel;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
 import beast.base.evolution.tree.TreeInterface;
@@ -173,14 +173,11 @@ public class FelsensteinWeights2 extends Distribution implements EdgeWeights {
                 );
             }
 
-            partialsSize = likelihoodCore.getPartialsSize();
-            if (partialsSize <= 0) {
-                // Ensure core has been initialized.
-                treelikelihood.calculateLogP();
-                partialsSize = likelihoodCore.getPartialsSize();
-            }
-            if (partialsSize <= 0)
-                throw new IllegalStateException("Likelihood core has invalid partials size: " + partialsSize);
+            // BEAST3's core BeerLikelihoodCore keeps partialsSize protected and exposes no
+            // getPartialsSize() (targetedbeast's own SlowBeerLikelihoodCore adds one). Recompute
+            // it exactly as BeerLikelihoodCore.initialize does — patternCount * nrOfStates *
+            // matrixCount — from the same public values TreeLikelihood.initCore feeds it.
+            treelikelihood.calculateLogP();
 			
 			// Get matrixCount from SiteModel rather than computing from partialsSize
 			SiteModel.Base siteModel = (treelikelihood.siteModelInput.get() instanceof SiteModel.Base)
@@ -196,14 +193,12 @@ public class FelsensteinWeights2 extends Distribution implements EdgeWeights {
 				throw new IllegalStateException("SiteModel.getCategoryCount() returned " + matrixCount + ".");
 			}
 			
-			// Derive patternCount from partialsSize to match what the core was actually initialized with
-			if (partialsSize <= 0 || partialsSize % (stateCount * matrixCount) != 0) {
-				throw new IllegalStateException(
-					"Likelihood core partialsSize (" + partialsSize + ") is not divisible by stateCount*matrixCount (" +
-					stateCount + "*" + matrixCount + "=" + (stateCount * matrixCount) + "). Core may not be initialized."
-				);
+			// patternCount is what TreeLikelihood.initCore passes to the core: alignment.getPatternCount()
+			patternCount = treelikelihood.dataInput.get().getPatternCount();
+			if (patternCount <= 0) {
+				throw new IllegalStateException("Alignment reports patternCount " + patternCount + ".");
 			}
-			patternCount = partialsSize / (stateCount * matrixCount);
+			partialsSize = patternCount * stateCount * matrixCount;
 			matrixSize = stateCount * stateCount;
 			
 			// Allocate temp buffer for reading partials
@@ -216,7 +211,8 @@ public class FelsensteinWeights2 extends Distribution implements EdgeWeights {
 	 * Get the size of the partials array for a node.
 	 */
     protected int getPartialSize() {
-        return getLikelihoodCore().getPartialsSize();
+        getLikelihoodCore();
+        return partialsSize;
     }
     
     /**

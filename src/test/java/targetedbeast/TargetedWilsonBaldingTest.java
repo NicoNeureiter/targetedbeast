@@ -7,7 +7,7 @@ import beast.base.evolution.alignment.Alignment;
 import beast.base.evolution.alignment.Taxon;
 import beast.base.evolution.alignment.TaxonSet;
 import beast.base.evolution.operator.SubtreeSlide;
-import beast.base.evolution.speciation.YuleModel;
+import beast.base.spec.evolution.speciation.YuleModel;
 import beast.base.evolution.tree.Tree;
 import beast.base.inference.DirectSimulator;
 import targetedbeast.edgeweights.PCAWeights;

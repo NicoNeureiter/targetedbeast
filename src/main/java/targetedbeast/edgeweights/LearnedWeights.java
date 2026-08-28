@@ -17,8 +17,8 @@ import beast.base.core.Input;
 import beast.base.core.Input.Validate;
 import beast.base.core.Log;
 import beast.base.evolution.alignment.Alignment;
-import beast.base.evolution.branchratemodel.BranchRateModel;
-import beast.base.evolution.likelihood.GenericTreeLikelihood;
+import beast.base.spec.evolution.branchratemodel.Base;
+import beast.base.spec.evolution.likelihood.GenericTreeLikelihood;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
 import beast.base.evolution.tree.TreeInterface;
@@ -166,7 +166,7 @@ public class LearnedWeights extends Distribution implements EdgeWeights {
     }
 
     private PCAWeightsBrownianFullLikelihood createRuntimeModel(TreeInterface tree, String value) {
-        BranchRateModel.Base branchRateModel = likelihoodInput.get().branchRateModelInput.get();
+        Base branchRateModel = likelihoodInput.get().branchRateModelInput.get();
         PCAWeightsBrownianFullLikelihood model = new PCAWeightsBrownianFullLikelihood();
         model.initByName(
             "data", dataInput.get(),

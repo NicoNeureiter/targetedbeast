@@ -8,7 +8,7 @@ import beast.base.evolution.alignment.Taxon;
 import beast.base.evolution.alignment.TaxonSet;
 import beast.base.evolution.operator.TreeOperator;
 import beast.base.evolution.operator.WilsonBalding;
-import beast.base.evolution.speciation.YuleModel;
+import beast.base.spec.evolution.speciation.YuleModel;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
 import beast.base.evolution.tree.TreeDistribution;

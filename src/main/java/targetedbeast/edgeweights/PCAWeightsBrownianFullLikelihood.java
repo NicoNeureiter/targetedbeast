@@ -11,7 +11,7 @@ import beast.base.core.Input;
 import beast.base.core.Input.Validate;
 import beast.base.core.Log;
 import beast.base.evolution.alignment.Alignment;
-import beast.base.evolution.branchratemodel.BranchRateModel;
+import beast.base.spec.evolution.branchratemodel.Base;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
 import beast.base.evolution.tree.TreeInterface;
@@ -34,7 +34,7 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
     final public Input<Boolean> distanceBasedInput = new Input<>("distanceBased", "use distance matrix for PCA", true);
     final public Input<Boolean> compressedInput = new Input<>("compressed", "remove duplicate entries for PCA", true);
     final public Input<Boolean> useOneNormInput = new Input<>("useOneNorm", "use one norm for edge weights", true);
-    final public Input<BranchRateModel.Base> branchRateModelInput = new Input<>(
+    final public Input<Base> branchRateModelInput = new Input<>(
             "branchRateModel",
             "optional branch rate model used to scale Brownian variance propagation along branches");
     final public Input<Boolean> useInverseMeanDistanceProposalInput = new Input<>(
@@ -55,7 +55,7 @@ public class PCAWeightsBrownianFullLikelihood extends Distribution implements Ed
     private double offset;
     private boolean useOneNorm;
     private boolean useInverseMeanDistanceProposal;
-    private BranchRateModel.Base branchRateModel;
+    private Base branchRateModel;
     private double brownianRate;
     private double rootPriorVariance;
     private double proposalLogLikelihoodScale = 1.0;

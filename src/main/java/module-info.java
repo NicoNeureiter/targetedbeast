@@ -12,12 +12,14 @@ open module targetedbeast {
     exports targetedbeast.annotator;
     exports targetedbeast.coalescent;
     exports targetedbeast.edgeweights;
+    exports targetedbeast.edgeweights.learnedweights;
     exports targetedbeast.init;
     exports targetedbeast.likelihood;
     exports targetedbeast.logger;
     exports targetedbeast.operators;
     exports targetedbeast.operatorschedule;
     exports targetedbeast.util;
+    exports targetedbeast.weighttransform;
 
     // targetedbeast.altoperators is deliberately neither exported nor provided:
     // unfinished scratch code, unregistered in version.xml upstream.
@@ -30,9 +32,15 @@ open module targetedbeast {
         targetedbeast.edgeweights.ConsensusWeights,
         targetedbeast.edgeweights.ConstantWeights,
         targetedbeast.edgeweights.FelsensteinWeights,
+        targetedbeast.edgeweights.FelsensteinWeights2,
+        targetedbeast.edgeweights.LearnedWeights,
         targetedbeast.edgeweights.PCAWeights,
+        targetedbeast.edgeweights.PCAWeights2,
+        targetedbeast.edgeweights.PCAWeightsBrownian,
+        targetedbeast.edgeweights.PCAWeightsBrownianFullLikelihood,
         targetedbeast.edgeweights.ParsimonyWeights,
         targetedbeast.edgeweights.ParsimonyWeights2,
+        targetedbeast.edgeweights.PartialWeights,
         targetedbeast.init.ensureNoZeroEdgeLength,
         targetedbeast.likelihood.RapidGenericTreeLikelihood,
         targetedbeast.likelihood.RapidTreeLikelihood,
@@ -46,8 +54,14 @@ open module targetedbeast {
         targetedbeast.operators.NodeRandomizer22,
         targetedbeast.operators.RangeSlide,
         targetedbeast.operators.TargetedWilsonBalding,
+        targetedbeast.operators.TargetedWilsonBaldingFixedHeight,
+        targetedbeast.operators.TargetedWilsonBaldingHeightDelta,
         targetedbeast.operators.WeightBasedNodeRandomizer,
         targetedbeast.operators.WeightedWideOperator,
         targetedbeast.operatorschedule.TargetedOperatorSchedule,
-        targetedbeast.util.Alignment2PCA;
+        targetedbeast.util.Alignment2PCA,
+        targetedbeast.weighttransform.ExpOffsetTransform,
+        targetedbeast.weighttransform.GridTuner,
+        targetedbeast.weighttransform.PowerOffsetTransform,
+        targetedbeast.weighttransform.SpsaTuner;
 }

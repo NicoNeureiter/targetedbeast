@@ -3,8 +3,8 @@ package targetedbeast.weighttransform;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 
-import org.json.JSONException;
-import org.json.JSONObject;
+import beast.base.internal.json.JSONException;
+import beast.base.internal.json.JSONObject;
 import org.junit.Assert;
 import org.junit.Test;
 

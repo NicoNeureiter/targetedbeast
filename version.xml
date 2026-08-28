@@ -20,7 +20,6 @@
         <provider classname="targetedbeast.edgeweights.PartialWeights"/>
         <provider classname="targetedbeast.edgeweights.CombinedEdgeWeights"/>
 
-        <provider classname="targetedbeast.weighttransform.WeightTransform"/>
         <provider classname="targetedbeast.weighttransform.SpsaTuner"/>
         <provider classname="targetedbeast.weighttransform.GridTuner"/>
         <provider classname="targetedbeast.weighttransform.PowerOffsetTransform"/>

@@ -23,9 +23,9 @@ import beast.base.core.BEASTInterface;
 import beast.base.core.Input;
 import beast.base.core.Log;
 import beast.base.evolution.alignment.Alignment;
-import beast.base.evolution.branchratemodel.BranchRateModel;
-import beast.base.evolution.branchratemodel.StrictClockModel;
-import beast.base.evolution.likelihood.GenericTreeLikelihood;
+import beast.base.spec.evolution.branchratemodel.Base;
+import beast.base.spec.evolution.branchratemodel.StrictClockModel;
+import beast.base.spec.evolution.likelihood.GenericTreeLikelihood;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
 import beast.base.evolution.tree.TreeParser;
@@ -33,8 +33,8 @@ import beast.base.evolution.tree.TreeInterface;
 import beast.base.inference.parameter.IntegerParameter;
 import beast.base.inference.parameter.Parameter;
 import beast.base.inference.parameter.RealParameter;
-import beast.base.evolution.tree.coalescent.ConstantPopulation;
-import beast.base.evolution.tree.coalescent.RandomTree;
+import beast.base.spec.evolution.tree.coalescent.ConstantPopulation;
+import beast.base.spec.evolution.tree.coalescent.RandomTree;
 import beast.base.parser.NexusParser;
 import org.apache.commons.math3.linear.Array2DRowRealMatrix;
 import org.apache.commons.math3.linear.CholeskyDecomposition;
@@ -878,7 +878,7 @@ public class LearnedWeightsTreeTrainer {
 
     private GenericTreeLikelihood createTrainingLikelihoodEvaluator(
             GenericTreeLikelihood template,
-            BranchRateModel.Base branchRateModel) {
+            Base branchRateModel) {
         try {
             if (!(template.treeInput.get() instanceof Tree templateTree)) {
                 throw new IllegalArgumentException("likelihood template must use a mutable Tree state node");
@@ -1454,15 +1454,19 @@ public class LearnedWeightsTreeTrainer {
         }
     }
 
-    private static final class SampledBranchRateModel extends BranchRateModel.Base {
-        private final BranchRateModel.Base delegate;
+    // The simple name `Base` must be fully qualified inside this class. Spec Base implements
+    // beast.base.evolution.branchratemodel.BranchRateModel, which has its own nested class
+    // named Base; that inherited member type shadows the single-type import in this scope.
+    private static final class SampledBranchRateModel
+            extends beast.base.spec.evolution.branchratemodel.Base {
+        private final beast.base.spec.evolution.branchratemodel.Base delegate;
         private SampledRateContext currentSampledRateContext = SampledRateContext.empty();
 
-        private SampledBranchRateModel(BranchRateModel.Base delegate) {
+        private SampledBranchRateModel(beast.base.spec.evolution.branchratemodel.Base delegate) {
             this.delegate = delegate;
         }
 
-        private BranchRateModel.Base getDelegate() {
+        private beast.base.spec.evolution.branchratemodel.Base getDelegate() {
             return delegate;
         }
 
