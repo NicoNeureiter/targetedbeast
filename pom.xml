@@ -38,7 +38,12 @@
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <maven.compiler.release>25</maven.compiler.release>
 
-        <beast.version>2.8.0-beta8</beast.version>
+        <!-- Local build of the NicoNeureiter/beast3 fork: branch
+         expose-likelihood-core-internals restores public access to
+         BeerLikelihoodCore.getPartialsSize/calculateIntegratePartials/
+         calculatePartialsPartialsPruning, which FelsensteinWeights needs.
+         Revert to a released version once that lands upstream. -->
+        <beast.version>2.8.0-SNAPSHOT</beast.version>
         <colt.version>1.2.0</colt.version>
         <commons-math3.version>3.6.1</commons-math3.version>
 

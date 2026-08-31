@@ -5,6 +5,7 @@ import targetedbeast.edgeweights.CombinedEdgeWeights;
 import targetedbeast.edgeweights.ConstantWeights;
 import targetedbeast.edgeweights.EdgeWeights;
 import targetedbeast.edgeweights.LearnedWeights;
+import targetedbeast.edgeweights.FelsensteinWeights;
 import targetedbeast.edgeweights.PCAWeights;
 import targetedbeast.edgeweights.PCAWeights2;
 import targetedbeast.edgeweights.PCAWeightsBrownian;
@@ -255,6 +256,15 @@ public class TargetedOperatorDetailedBalanceTest extends DetailedBalanceTest<Tre
         testDetailedBalance(new TreeTrial(tree -> {
             TreeOperator operator = new TargetedWilsonBaldingHeightDelta();
             operator.initByName("tree", tree, "weight", 1.0, "edgeWeights", getParsimonyWeights(tree), "useEdgeLength", true, "size", 0.25);
+            return operator;
+        }));
+    }
+
+    @Test
+    public void testTargWilsonBaldingFelsenstein() throws Exception {
+        testDetailedBalance(new TreeTrial(tree -> {
+            TreeOperator operator = new TargetedWilsonBalding();
+            operator.initByName("tree", tree, "weight", 1.0, "edgeWeights", getLikelihoodWeights(tree));
             return operator;
         }));
     }
@@ -771,4 +781,11 @@ public class TargetedOperatorDetailedBalanceTest extends DetailedBalanceTest<Tre
         }));
     }
 
+    FelsensteinWeights getLikelihoodWeights(Tree tree) {
+        TreeLikelihood treeLikelihood = new TreeLikelihood();
+        treeLikelihood.initByName("tree", tree, "siteModel", getSiteModel(), "data", alignment, "implementation", "BeerLikelihoodCore4");
+        FelsensteinWeights edgeWeights = new FelsensteinWeights();
+        edgeWeights.initByName("tree", tree, "likelihood", treeLikelihood, "data", alignment);
+        return edgeWeights;
+    }
 }
