@@ -219,9 +219,7 @@
                 <f idref="gammaShape"/>
                 <f idref="kappa"/>
             </transformations>
-            <transformations id="AVMNNoTransform.infB_HA" spec="beast.base.spec.inference.operator.Transform$NoTransform">
-                <f idref="tree"/>
-            </transformations>
+            <!-- AVMNNoTransform.infB_HA (tree) removed: typed Transform$NoTransform requires Tensor, which Tree does not implement. -->
         </operator>
         <operator id="strictClockRateScalerX" parameter="@clockRate" upper="10.0" weight="2.0" spec="beast.base.spec.inference.operator.ScaleOperator"/>
         <operator id="strictClockUpDownOperatorX" spec="beast.base.spec.evolution.operator.UpDownOperator" scaleFactor="0.75" weight="2.0">
