@@ -2,6 +2,7 @@
   <depends on='BEAST.base' atleast='2.8.0'/>
   <depends on='BEAST.app' atleast='2.8.0'/>
   <depends on='BEASTlabs'/>
+  <depends on='BDMM-Prime'/>
 
 
       <service type="beast.base.core.BEASTInterface">
