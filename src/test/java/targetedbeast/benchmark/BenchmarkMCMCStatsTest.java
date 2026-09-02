@@ -157,4 +157,59 @@ public class BenchmarkMCMCStatsTest {
         assertTrue("expected at least one operator with a defined meanJumpGivenAccepted",
                 sawADefinedValue);
     }
+
+    /**
+     * instrumentationOverheadMs must reflect the tree copy, not just the metric distance call - the
+     * copy is the dominant cost (2n-1 Node allocations per sampled proposal) and must be visible in
+     * the reported overhead, even though it must stay out of the ESJD/s denominator.
+     */
+    @Test
+    public void instrumentationOverheadIsRecordedForEverySampledOperator() {
+        Map<Operator, OperatorStats> stats = mcmc.getOperatorStatsForTesting();
+        boolean sawASampledOperator = false;
+        for (Map.Entry<Operator, OperatorStats> e : stats.entrySet()) {
+            OperatorStats s = e.getValue();
+            if (s.sampledProposals > 0) {
+                sawASampledOperator = true;
+                assertTrue("instrumentationOverheadMs for " + e.getKey().getID()
+                        + " should be > 0 once tree-copy time is included, not just metric "
+                        + "distance time", s.instrumentationOverheadMeanMs() > 0);
+            }
+        }
+        assertTrue("expected at least one operator with sampled proposals", sawASampledOperator);
+    }
+
+    /**
+     * An empty metric list must be well-defined, not an edge case that throws: no tree is ever
+     * copied, ESJD/meanJumpGivenAccepted read NaN, and instrumentationOverheadMs reads 0 - not an
+     * ArrayIndexOutOfBoundsException from indexing metric 0 that doesn't exist.
+     */
+    @Test
+    public void emptyMetricListIsWellDefinedNotAnException() throws Exception {
+        Path dir = Files.createTempDirectory("benchmark-stats-no-metric");
+        String template = PrimatesFixture.loadTemplate();
+        template = PrimatesFixture.withChainLength(template, 500);
+        template = PrimatesFixture.withAbsoluteLogPaths(template, dir.resolve("run.log"), dir.resolve("run.trees"));
+        Path statsOut = dir.resolve("run");
+        template = PrimatesFixture.toBenchmarkVariant(template, statsOut, JUMP_INTERVAL, null, false);
+
+        Path xmlFile = dir.resolve("run.xml");
+        PrimatesFixture.write(template, xmlFile);
+
+        Randomizer.setSeed(SEED);
+        XMLParser parser = new XMLParser();
+        BenchmarkMCMC noMetricMcmc = (BenchmarkMCMC) parser.parseFile(new File(xmlFile.toString()));
+        noMetricMcmc.run();
+
+        assertTrue("test fixture should have zero metrics", noMetricMcmc.getMetricsForTesting().isEmpty());
+        Map<Operator, OperatorStats> stats = noMetricMcmc.getOperatorStatsForTesting();
+        assertTrue(stats.size() > 0);
+        for (OperatorStats s : stats.values()) {
+            assertEquals("no proposal should ever be sampled with zero metrics", 0, s.sampledProposals);
+            assertTrue("meanJumpGivenAccepted should be NaN, not throw",
+                    Double.isNaN(s.meanJumpGivenAccepted()));
+            assertEquals("instrumentationOverheadMeanMs should be 0 when nothing was ever sampled",
+                    0.0, s.instrumentationOverheadMeanMs(), 0.0);
+        }
+    }
 }

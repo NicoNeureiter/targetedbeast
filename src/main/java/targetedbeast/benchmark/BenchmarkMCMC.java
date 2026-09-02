@@ -35,7 +35,8 @@ import targetedbeast.operators.AdaptableOperatorSampler;
  * <ul>
  * <li>tree copies (the expensive part) happen only on every {@code jumpInterval}-th proposal;</li>
  * <li>ESJD/second is computed against operator+likelihood time only, never against time spent
- * computing metrics (that cost is its own column, {@code metricOverheadMs});</li>
+ * copying trees or computing metrics (that cost is its own column,
+ * {@code instrumentationOverheadMs} - the tree copy dominates it, not the distance calls);</li>
  * <li>the headline is the chain-level row (operator {@value #CHAIN_ROW_NAME}): sum-of(n_i * ESJD_i)
  * over total operator+likelihood time; per-operator rows are diagnostics;</li>
  * <li>the {@link Randomizer} seed is recorded, and no metric may call {@link Randomizer}.</li>
@@ -55,8 +56,10 @@ public class BenchmarkMCMC extends MCMC {
             + "If not specified, statistics are accumulated in memory but not written to file.");
 
     final public Input<List<TreeMetric>> metricInput = new Input<>("metric",
-            "tree metrics used to measure jump distance between consecutive states. The first "
-            + "metric in this list is primary: it backs the meanJumpGivenAccepted column. "
+            "tree metrics used to measure jump distance between consecutive states. List position "
+            + "0 is the primary metric: it alone backs the meanJumpGivenAccepted column. If this "
+            + "list is empty, no tree is ever copied, every ESJD/meanJumpGivenAccepted column reads "
+            + "NaN, and instrumentationOverheadMs reads 0. "
             + "Invariant: no metric implementation may call Randomizer, or this benchmark would "
             + "perturb the chain it measures.",
             new ArrayList<>());
@@ -103,7 +106,17 @@ public class BenchmarkMCMC extends MCMC {
         final boolean sampled = postBurnin && !metrics.isEmpty()
                 && (postBurninProposalIndex % jumpInterval == 0);
 
-        final List<Tree> treesBefore = sampled ? copyStateTrees() : null;
+        // Timed even though it happens before the operator+likelihood clock starts: the tree copy
+        // is the dominant instrumentation cost (2n-1 Node allocations per sampled proposal - ~1100
+        // at 551 taxa), far more than the distance calls below, so it must count toward the
+        // reported overhead even though it must never count toward the ESJD/s denominator.
+        long treeCopyNs = 0;
+        List<Tree> treesBefore = null;
+        if (sampled) {
+            final long c0 = System.nanoTime();
+            treesBefore = copyStateTrees();
+            treeCopyNs = System.nanoTime() - c0;
+        }
         if (postBurnin) {
             snapshotOperatorCounts();
         }
@@ -152,7 +165,8 @@ public class BenchmarkMCMC extends MCMC {
                 jump[i] = Math.sqrt(sumSq);
             }
             final long m1 = System.nanoTime();
-            stats.recordSample(accepted, jump, (m1 - m0) / 1e6);
+            final double instrumentationMs = (treeCopyNs + (m1 - m0)) / 1e6;
+            stats.recordSample(accepted, jump, instrumentationMs);
             writeJumpTraceRow(sampleNr, leaf, accepted, jump);
         }
 
@@ -328,14 +342,14 @@ public class BenchmarkMCMC extends MCMC {
             double totalSqDeltaLogPosterior = 0;
             long totalSampledProposals = 0;
             long totalSampledAccepts = 0;
-            double totalMetricOverheadMs = 0;
+            double totalInstrumentationOverheadMs = 0;
             double totalPrimaryJumpSumGivenAccepted = 0;
             final double[] totalWeightedEsjd = new double[metrics.size()];
 
             for (OperatorStats s : statsByOperator.values()) {
                 out.println(formatRow(seed, s.name, s.proposals, s.accepts, s.acceptRate(),
                         s.meanTimeMs(), s.meanJumpGivenAccepted(), esjdArray(s), esjdPerSecArray(s),
-                        s.metricOverheadMeanMs(), s.meanSqDeltaLogPosterior()));
+                        s.instrumentationOverheadMeanMs(), s.meanSqDeltaLogPosterior()));
 
                 totalProposals += s.proposals;
                 totalAccepts += s.accepts;
@@ -343,7 +357,7 @@ public class BenchmarkMCMC extends MCMC {
                 totalSqDeltaLogPosterior += s.meanSqDeltaLogPosterior() * s.proposals;
                 totalSampledProposals += s.sampledProposals;
                 totalSampledAccepts += s.sampledAccepts;
-                totalMetricOverheadMs += s.metricOverheadMeanMs() * s.sampledProposals;
+                totalInstrumentationOverheadMs += s.instrumentationOverheadMeanMs() * s.sampledProposals;
                 totalPrimaryJumpSumGivenAccepted += s.primaryJumpSumGivenAccepted();
                 for (int i = 0; i < metrics.size(); i++) {
                     totalWeightedEsjd[i] += s.esjd(i) * s.proposals;
@@ -358,8 +372,8 @@ public class BenchmarkMCMC extends MCMC {
                     : totalTimeMs / totalProposals;
             final double chainMeanJumpGivenAccepted = totalSampledAccepts == 0 ? Double.NaN
                     : totalPrimaryJumpSumGivenAccepted / totalSampledAccepts;
-            final double chainMetricOverheadMs = totalSampledProposals == 0 ? Double.NaN
-                    : totalMetricOverheadMs / totalSampledProposals;
+            final double chainInstrumentationOverheadMs = totalSampledProposals == 0 ? Double.NaN
+                    : totalInstrumentationOverheadMs / totalSampledProposals;
             final double chainSqDeltaLogPosterior = totalProposals == 0 ? Double.NaN
                     : totalSqDeltaLogPosterior / totalProposals;
             final double[] chainEsjd = new double[metrics.size()];
@@ -372,7 +386,7 @@ public class BenchmarkMCMC extends MCMC {
 
             out.println(formatRow(seed, CHAIN_ROW_NAME, totalProposals, totalAccepts, chainAcceptRate,
                     chainMeanTimeMs, chainMeanJumpGivenAccepted, chainEsjd, chainEsjdPerSec,
-                    chainMetricOverheadMs, chainSqDeltaLogPosterior));
+                    chainInstrumentationOverheadMs, chainSqDeltaLogPosterior));
         } catch (IOException e) {
             throw new RuntimeException("Could not write benchmark statistics to " + path, e);
         }
@@ -403,13 +417,13 @@ public class BenchmarkMCMC extends MCMC {
         for (TreeMetric metric : metrics) {
             h.append("\tesjdPerSec_").append(metricName(metric));
         }
-        h.append("\tmetricOverheadMs\tsqDeltaLogPosterior_DIAGNOSTIC_NOT_A_HEADLINE");
+        h.append("\tinstrumentationOverheadMs\tsqDeltaLogPosterior_DIAGNOSTIC_NOT_A_HEADLINE");
         return h.toString();
     }
 
     private String formatRow(long seed, String name, long proposals, long accepts, double acceptRate,
             double meanTimeMs, double meanJumpGivenAccepted, double[] esjd, double[] esjdPerSec,
-            double metricOverheadMs, double sqDeltaLogPosterior) {
+            double instrumentationOverheadMs, double sqDeltaLogPosterior) {
         final StringBuilder row = new StringBuilder();
         row.append(seed).append('\t').append(name).append('\t').append(proposals).append('\t')
                 .append(accepts).append('\t').append(acceptRate).append('\t').append(meanTimeMs)
@@ -420,7 +434,7 @@ public class BenchmarkMCMC extends MCMC {
         for (double v : esjdPerSec) {
             row.append('\t').append(v);
         }
-        row.append('\t').append(metricOverheadMs).append('\t').append(sqDeltaLogPosterior);
+        row.append('\t').append(instrumentationOverheadMs).append('\t').append(sqDeltaLogPosterior);
         return row.toString();
     }
 }

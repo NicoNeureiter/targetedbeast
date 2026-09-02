@@ -52,9 +52,21 @@ final class PrimatesFixture {
      * depends on.
      */
     static String toBenchmarkVariant(String xml, Path statsOutPrefix, int jumpInterval, Path jumpTrace) {
+        return toBenchmarkVariant(xml, statsOutPrefix, jumpInterval, jumpTrace, true);
+    }
+
+    /**
+     * @param withRnniMetric if false, no {@code metric} input is added at all - used to test that
+     *                       an empty metric list is well-defined (NaN/zero columns, no exception)
+     *                       rather than just the common case.
+     */
+    static String toBenchmarkVariant(String xml, Path statsOutPrefix, int jumpInterval, Path jumpTrace,
+            boolean withRnniMetric) {
         String runNeedle = "<run spec=\"MCMC\" id=\"mcmc\" chainLength=";
         require(xml, runNeedle);
-        String taxonInput = "<input id=\"taxa\" spec=\"beast.base.evolution.alignment.TaxonSet\" alignment=\"@alignment\"/>\n\n    ";
+        String taxonInput = withRnniMetric
+                ? "<input id=\"taxa\" spec=\"beast.base.evolution.alignment.TaxonSet\" alignment=\"@alignment\"/>\n\n    "
+                : "";
         xml = xml.replace("<run spec=\"MCMC\" id=\"mcmc\" chainLength=",
                 taxonInput + "<run spec=\"targetedbeast.benchmark.BenchmarkMCMC\" id=\"mcmc\""
                         + " statsOut=\"" + statsOutPrefix.toAbsolutePath() + "\""
@@ -62,11 +74,13 @@ final class PrimatesFixture {
                         + (jumpTrace == null ? "" : " jumpTrace=\"" + jumpTrace.toAbsolutePath() + "\"")
                         + " chainLength=");
 
-        String stateNeedle = "<state>";
-        require(xml, stateNeedle);
-        xml = xml.replaceFirst("<state>",
-                "<metric id=\"rnni\" spec=\"beastlabs.evolution.tree.RNNIMetric\" taxonset=\"@taxa\"/>\n"
-                + "        <state>");
+        if (withRnniMetric) {
+            String stateNeedle = "<state>";
+            require(xml, stateNeedle);
+            xml = xml.replaceFirst("<state>",
+                    "<metric id=\"rnni\" spec=\"beastlabs.evolution.tree.RNNIMetric\" taxonset=\"@taxa\"/>\n"
+                    + "        <state>");
+        }
         return xml;
     }
 

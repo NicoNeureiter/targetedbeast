@@ -13,8 +13,14 @@ package targetedbeast.benchmark;
  * <li>{@code proposals} - every post-burnin proposal of this operator; backs acceptance rate,
  * mean operator+likelihood time, and the (free) squared-Delta-log-posterior diagnostic.</li>
  * <li>{@code sampledProposals} - only every {@code jumpInterval}-th proposal; backs the ESJD
- * columns and the metric-overhead column, since those require an expensive tree copy.</li>
+ * columns and the instrumentation-overhead column, since those require an expensive tree copy.</li>
  * </ul>
+ *
+ * <p>{@code instrumentationOverheadMeanMs} covers <em>all</em> per-sample instrumentation cost -
+ * the tree copy (dominant: 2n-1 {@code Node} allocations) plus every metric's
+ * {@code distance(...)} call - not just the metric computation. The tree copy is what makes this
+ * cost worth showing at all: it is what {@code jumpInterval} subsamples away from most proposals,
+ * and it grows with taxon count exactly where the tier decision (Phase 3) gets made.
  */
 public class OperatorStats {
 
@@ -29,7 +35,7 @@ public class OperatorStats {
     long sampledProposals = 0;
     long sampledAccepts = 0;
     private final double[] meanSqJump;
-    private double metricOverheadMeanMs = 0;
+    private double instrumentationOverheadMeanMs = 0;
     private double primaryJumpSumGivenAccepted = 0;
 
     OperatorStats(String name, int numMetrics) {
@@ -61,11 +67,11 @@ public class OperatorStats {
      * @param accepted whether this proposal was accepted
      * @param jump     per-metric jump distance (not squared), same order as the metric list;
      *                 {@code jump[0]} is the primary metric, used for meanJumpGivenAccepted
-     * @param metricComputationTimeMs wall time spent computing these distances (tree copy + all metrics)
+     * @param instrumentationTimeMs wall time spent computing these distances (tree copy + all metrics)
      */
-    void recordSample(boolean accepted, double[] jump, double metricComputationTimeMs) {
+    void recordSample(boolean accepted, double[] jump, double instrumentationTimeMs) {
         sampledProposals++;
-        metricOverheadMeanMs += (metricComputationTimeMs - metricOverheadMeanMs) / sampledProposals;
+        instrumentationOverheadMeanMs += (instrumentationTimeMs - instrumentationOverheadMeanMs) / sampledProposals;
         for (int i = 0; i < numMetrics; i++) {
             double sq = jump[i] * jump[i];
             meanSqJump[i] += (sq - meanSqJump[i]) / sampledProposals;
@@ -90,6 +96,11 @@ public class OperatorStats {
         return meanSqDeltaLogPosterior;
     }
 
+    /**
+     * Mean jump distance under the primary (list position 0) metric, conditional on acceptance.
+     * {@code NaN} when undefined: no metric configured (so nothing is ever sampled), or no sampled
+     * proposal for this operator was accepted yet.
+     */
     double meanJumpGivenAccepted() {
         return sampledAccepts == 0 ? Double.NaN : primaryJumpSumGivenAccepted / sampledAccepts;
     }
@@ -107,8 +118,8 @@ public class OperatorStats {
         return meanTimeMs == 0 ? Double.NaN : esjd(i) / (meanTimeMs / 1000.0);
     }
 
-    double metricOverheadMeanMs() {
-        return metricOverheadMeanMs;
+    double instrumentationOverheadMeanMs() {
+        return instrumentationOverheadMeanMs;
     }
 
     double primaryJumpSumGivenAccepted() {
