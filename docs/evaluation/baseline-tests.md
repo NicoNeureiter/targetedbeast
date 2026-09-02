@@ -224,27 +224,111 @@ leaving the other 2 fixed, and there is now only 1 epoch, the masking has nothin
 `samplingProportionPrior` is now a plain `IID(Beta(1,1))` on the single element, matching the
 `R0`/`becomeUninfectiousRate`/`rho` pattern above, not a hand-migration of `ExcludablePrior` itself.
 
-**Throughput measurement is still blocked — by a different, broader problem.** With the tree-prior
-swap complete, a scratch run (`chainLength` shortened, `-overwrite`) parses cleanly through the
-entire prior section (confirming the BDMM-Prime wiring above is correct) and well into the
-likelihood section, before hitting a *second*, unrelated wall: `iecor.xml`'s substitution/clock
-model blocks have their own pre-existing, previously-undiscovered typed-migration defects, e.g.
-`beast.base.spec.inference.distribution.Gamma`'s scale input renamed `beta`→`theta` (found on the
-`ucldStdev` prior), bare legacy `Function$Constant` elements passed to a typed `Gamma`'s
-alpha/theta (the `bcov_s` prior), `BinaryCovarion`'s `switchRate` requiring a `RealVector` while
-`alpha` requires a `RealScalar` (so only one of the pair needed converting), and a bare,
-spec-less `<LogNormal name='distr'>` inside the relaxed-clock model (the same "legacy map tag,
-now unresolvable since the file's `<map>` declarations were dropped during Phase 0b's migration"
-failure mode noted there). These predate this task — they went undiscovered because iecor could
-never previously be parsed at all (blocked on `bdsky`) — and they recur throughout a 1300+ line
-file with several more partitions after the one just reached. Fixing them properly means
-re-running the `beast3-xml-migration` converter and working through its per-file report, per the
-workspace rule ("never hand-edit BEAST XML to migrate it"), not patching each one by hand as
-found; that is a distinct task from "change only the tree-prior block" and was not attempted
-beyond the isolated, disposable scratch-copy patches used to reach this diagnosis (not applied to
-the committed corpus). **iecor's states/sec and site-pattern count remain unmeasured.** The tier
-table below reflects only the two datasets that currently run (infB, lassaL@120); iecor stays
-out until this second migration pass happens.
+### iecor — substitution/clock migration defects fixed; one new blocker found
+
+With the tree-prior swap complete, the substitution/clock defects the previous session diagnosed
+were fixed by re-running `beast3-xml-migration` per the workspace rule ("never hand-edit BEAST
+XML to migrate it"), not by hand-patching each one. Two runs were needed to see the full picture:
+running the converter on the **committed** (already partially migrated) `iecor.xml` reports only
+16 changes — mostly `[warn]` confirmations that already-typed `ScaleOperator`/`Uniform` usages are
+fine — because most of the legacy short-name classes were already renamed. Running it fresh on the
+**true, untouched BEAST2 original** (`/Users/nneureiter/Projects/BEAST3/targetedbeast/examples/iecor/{pca,vanilla}/iecor.xml`,
+`version="2.7"`, `<map>` declarations intact — never committed to this repo) reports the full
+108-change/25-warning/14-todo picture, confirming every domain-narrowing `[todo]` already present
+in the committed file (`bcov_alpha.s:five`, `bcov_s.s:five`, `ucldMean.c:clock`, `ucldStdev.c:clock`,
+`reproductiveNumber`, and the R0/becomeUninfectiousRate/samplingProportion/rho prior parameters)
+matches what the committed file already had, and that the `StandardData`/`TwoStateCovarion`/
+`RateStatistic` `[todo]`s are the same false positives already documented above (no spec twin
+needed — both classes exist unchanged in `beast-base-2.8.0-beta8.jar`).
+
+**Neither converter run flags the four defects the previous session diagnosed** — confirmed by
+inspecting both reports line-by-line. This is a real gap in the converter's rule set for this
+file, not a report I overlooked: `Function$Constant` isn't in `deprecated_classes.md` (it isn't a
+deprecated class, just one that fails a typed `Input`'s generic bound, so `resolve_spec()` never
+even considers it); the bare `<LogNormal>` tag is a `<map name="LogNormal">` alias usage the
+converter strips without rewriting the *usage site* (it only migrates `spec="ShortName"`
+attributes, not tag-name-as-class references — the skill's own docs anticipate this: "verify no
+usage still leans on a stripped alias ... If one remains, set its `spec=` by hand"); and neither
+run's report distinguishes `RealScalar` from `RealVector` shape, only the `PositiveReal`/`Real`
+*domain* — so `BinaryCovarion.switchRate` needing a vector while `.alpha` needs a scalar is
+invisible to it. Each was verified against the actual compiled class (`javap`/decompiled sources
+from `beast-base-2.8.0-beta6-sources.jar`, since beta8 ships no sources jar) before fixing, per
+the task's "verify against the actual current file and the actual BEAST 3 class definitions"
+instruction:
+
+- **`Gamma`'s `beta` → `theta`, not `lambda`.** `beast.base.spec.inference.distribution.Gamma` has
+  *two* mutually-exclusive scale/rate inputs: `theta` (shape-scale form) and an input *named*
+  `"lambda"` on the Java field called `betaInput` (shape-rate form, `Input.Validate.XOR` against
+  `theta`). Legacy `beast.base.inference.distribution.Gamma`'s `beta` input defaults to
+  `mode=ShapeScale` (confirmed by reading its source) — i.e. legacy `beta` *is* scale, which is
+  `theta` in the typed twin, not the rate-named `lambda` despite the surface-level name match.
+  Fixed on `ucldStdevPrior`'s `Gamma.204` (renamed `name="beta"` → `name="theta"`, and widened its
+  domain from `Real` to `PositiveReal` since `thetaInput` requires `RealScalar<PositiveReal>`, not
+  just any real).
+- **Bare `Function$Constant` → typed `RealScalarParam`.** `bcov_s_prior`'s `Gamma.0` fed
+  `<alpha spec="Function$Constant" value="0.05"/>` / `<beta spec="Function$Constant" .../>`
+  directly — `Function$Constant` implements the legacy `Function` interface, not
+  `RealScalar<PositiveReal>`, so it cannot satisfy `Gamma`'s typed `alpha`/`theta` inputs. Replaced
+  both with fixed, non-estimated `RealScalarParam`s (matching the file's own established pattern
+  for fixed hyperparameters elsewhere), renaming `beta`→`theta` as above.
+- **`BinaryCovarion.switchRate` needs `RealVector<PositiveReal>`; `.alpha` needs `RealScalar<PositiveReal>`.**
+  Confirmed by reading `BinaryCovarion.java`'s `Input` declarations directly
+  (`alphaInput = new Input<RealScalar<PositiveReal>>(...)`,
+  `switchRateInput = new Input<RealVector<PositiveReal>>(...)`) — this is the exact vector/scalar
+  split the task described, and it is real, not a false positive like the three `[todo]`s above.
+  `bcov_s.s:five` is now a dimension-1 `RealVectorParam` (domain unchanged, `PositiveReal`); its
+  prior (`Gamma.0`, a `ScalarDistribution`) is wrapped in `IID`, matching the same
+  `IID`-wrapped-scalar-prior-on-a-vector-parameter pattern already established for
+  `reproductiveNumber`/`becomeUninfectiousRate`/`rho`/`samplingProportion`. `bcov_alpha.s:five`
+  needed no change (already a correctly-typed scalar).
+- **Bare `<LogNormal name='distr'>` resolves to the untyped legacy class, not the typed twin.**
+  `UCRelaxedClockModel`'s `distr` input requires
+  `ScalarDistribution<RealScalar<? extends NonNegativeReal>, Double>` (the typed base class).
+  Without its stripped `<map name="LogNormal">beast.base.inference.distribution.LogNormalDistributionModel</map>`
+  alias, the bare `<LogNormal>` tag falls back to namespace-scan resolution and hits
+  `beast.base.inference.distribution.LogNormal` — a `@Deprecated` one-line subclass of
+  `LogNormalDistributionModel` kept only for this legacy short-name convenience, which does **not**
+  extend the typed `ScalarDistribution` base and so cannot satisfy `distr`. Fixed by adding
+  `spec="beast.base.spec.inference.distribution.LogNormal"` explicitly, per the skill's own
+  documented handling for a stripped map alias with no inline resolution left.
+
+None of these four needed the 341-partition/171-`TreeLikelihood` structure the plan's dataset
+description mentions — **that entire structure turns out to be commented out** (a single
+`<!-- ... -->` block spanning ~1,050 lines, confirmed with `lxml`: it parses only 215 elements
+from the file, not the ~2,000+ the raw byte count would suggest, because everything inside the
+comment is opaque text to the XML parser). The only *live* partition is `focalsubset`
+(41 taxa, 2,653 sites, 1,071 patterns, one `TreeLikelihood`) — the four defects above live in that
+one live partition's substitution/clock blocks and needed fixing exactly once per file, not
+171 times. **This corrects the dataset description in the pipeline plan and in Phase 0's dataset
+list**: iecor's live/runnable content is a single-partition analysis, not 171 `TreeLikelihood`s
+over 341 partitions — the throughput and pattern-count numbers below reflect what actually runs.
+
+**A fifth, unrelated defect was found and left BLOCKED — needs your input, not guessed at.**
+`almostUniformOrigin`, live in the prior section (not commented out), is
+`spec="almostbeast.math.distributions.AlmostUniform"` on the `origin` parameter. `almostbeast` has
+no BEAST 3 port, no jar or source anywhere in this workspace, and — unlike `bdsky` — is not even
+in `deprecated_classes.md`, so the converter has no way to flag it at all (a `[todo]` requires the
+class to at least be a *recognized* deprecated one). It cannot simply be replaced with a literal
+`Uniform(0, 10)`: the pre-migration `origin` stateNode had **hard bounds `[0.0, 100.0]` with an
+initial value of `100.0`** — right at the *old* upper bound and an order of magnitude past
+`AlmostUniform`'s own `upper="10.0"`. A hard-bounded `Uniform(0,10)` prior is inconsistent with the
+model's own initial state (confirmed empirically: substituting it makes BEAST3 throw
+`IllegalArgumentException: Tensor param is not valid ! origin: 100.0` at `initAndValidate`).
+`AlmostUniform` must therefore be some kind of soft, non-truncating density — flat-ish near
+`[0,10]` but still positive out past `100` — and its exact form cannot be reconstructed from
+anything available here. Deciding what to substitute is a modelling judgement call, not a syntax
+migration, so — per the task's own "never change requirements, STOP and report BLOCKED"
+instruction — **the committed XML still has the original, unresolvable `AlmostUniform` element**,
+now with an explanatory comment, rather than a guessed replacement. This is the one item in this
+pass that is genuinely unresolved.
+
+To get the throughput and pattern-count numbers below despite this, a **disposable, uncommitted**
+scratch copy substitutes `beast.base.spec.inference.distribution.Uniform(param="@origin", upper="1.0E6")`
+for `almostUniformOrigin` — a wide-enough-to-be-harmless placeholder (matching the same
+`Infinity`→`1.0E6` finite-bound convention the converter itself already uses elsewhere in this
+file for `bcov_alpha`'s prior), used only to unblock measurement, exactly as the previous session
+used disposable, uncommitted patches to reach its diagnosis. It is not applied to the committed
+corpus and is not a proposed fix.
 
 ### Method
 
@@ -253,7 +337,10 @@ Java stub only; native library load falls back to `BeerLikelihoodCore4` in all r
 consistent with normal use). `examples/primates.xml`: chain shortened to 20k in a scratch copy.
 `examples/infb_HA_141/template.xml`: `{chain_length}` → 10k (later re-verified at 2k after the
 AVMVN fix), `{edge_weights}` → `targetedbeast.edgeweights.ConstantWeights`.
-`examples/iecor/*/iecor.xml`: blocked, not run (BDMM-Prime does not build — see above).
+`examples/iecor/{pca,vanilla}/iecor.xml`: `chainLength` shortened to 50k in a scratch copy
+(`-overwrite`), plus the disposable, uncommitted `almostUniformOrigin` substitution described
+above; run via `mvn -o exec:exec -Dbeast.args="-seed 1 -overwrite <scratch xml>"` directly (iecor
+uses no `feast.*` classes, so it needed none of the manual module-path assembly infB/lassaL do).
 `lassaL_kli22/template.xml`: `{chain_length}` → 5k, `{edge_weights}` → `ConstantWeights`,
 `{alignment_file}` → the user-supplied `ali_normalized.fasta` (551 taxa) or its seeded
 `ali_normalized.n120.fasta` subsample (120 taxa, via `generate_xmls.py`'s
@@ -274,7 +361,8 @@ literal name) since `mvn exec:exec`'s `%classpath` does not include the repo's r
 | `primates.xml` | 6 | 768 | 69 | 20,000 | 0.217 s | ~92,200 |
 | `infb_HA_141/template.xml` | 141 | 1,856 | 489 | 10,000 | 5.275 s | ~1,900 |
 | `infb_HA_141/template.xml` (re-verified, AVMVN fix, committed XML) | 141 | 1,856 | 489 | 2,000 | 1.063 s | ~1,881 |
-| `iecor/{pca,vanilla}/iecor.xml` | 41 | 2,659×341 partitions | **blocked** (BDMM-Prime) | — | — | **blocked** |
+| `iecor/vanilla/iecor.xml` (no edge weights, live `focalsubset` partition only) | 41 | 2,653 | 1,071 | 50,000 | 4.617 s | ~10,831 |
+| `iecor/pca/iecor.xml` (`PCAWeights`, live `focalsubset` partition only) | 41 | 2,653 | 1,071 | 50,000 | 5.853 s | ~8,543 |
 | `lassaL_kli22` (+ user's `ali_normalized.fasta`, full) | 551 | 7,038 | 6,119 | 5,000 | 100.274 s | ~50 |
 | `lassaL_kli22@120` (seeded subsample, committed XML) | 120 | 7,038 | 4,572 | 5,000 | 17.003 s | ~294 |
 
@@ -284,7 +372,12 @@ count does not scale linearly with taxa: infB has 2.3x primates' taxa but 7.1x i
 lassaL has 3.9x infB's taxa but 12.5x its patterns; lassaL@120 (0.22x lassaL's taxa) still keeps
 0.75x its patterns — cost does not fall in proportion to the taxon subsample, which is exactly why
 the tier arithmetic below uses the measured lassaL@120 number rather than extrapolating from taxa
-alone.
+alone. iecor is the outlier in the other direction: its live content (one partition, 1,071
+patterns) is smaller than infB's, so it is by far the *cheapest* of the three runnable datasets,
+not the most expensive as the original 341-partition dataset description implied — see the
+"substitution/clock migration defects" note above for why. `vanilla` (no edge-weights operator) is
+used as the tier-arithmetic baseline, matching how `ConstantWeights` is used for infB/lassaL@120;
+`pca`'s ~21% slower throughput is the sensitivity check below.
 
 ### The 10-hour rule and the derived tier table
 
@@ -294,45 +387,50 @@ machine-days, not hours, and is dataset-dominated by lassaL:
 - infB: 10,000,000 / 1,900 ≈ **1.5 hours** for one replicate — fine on its own.
 - lassaL (551 taxa): 10,000,000 / 50 ≈ **55.7 hours (≈2.3 days)** for one replicate; at 4 reps ×
   ~6 settings that is **~56 days of sequential compute** — an order of magnitude past "overnight."
-- iecor: still unmeasured — BDMM-Prime now builds and the tree-prior swap is done and verified as
-  far as parsing goes, but a *different*, pre-existing set of typed-migration defects elsewhere in
-  the file (substitution/clock models, unrelated to the tree prior) blocks an actual run; see
-  above. The plan's only prior calibration point, `examples/iecor/vanilla/IECOR_untargeted.log`,
-  is a trace log with no wall-clock metadata either way.
+- iecor: now measured (~10,831 states/sec, `vanilla`) — cheap enough that a single 10M-state
+  replicate would take ≈4.2 minutes; the constraint below is fitting 24 reps at a chain length
+  worth running, not fitting within 10h at all.
 
 **Decision: lassaL's full 551-taxon alignment is not part of the pipeline at all** — not just at
 the `full` tier. Every tier uses the lassaL@120 subsample (or smaller, at `fast`, once Phase 0
 step 4 picks a size) instead. The full-taxon analysis is a user-initiated cluster job, not
 something any tier runs.
 
-**Full-tier arithmetic, from measured throughput, under the 10-hour rule.** Budget: 10h =
-36,000s. Split evenly across the two datasets that currently run end-to-end (infB, lassaL@120);
-iecor is excluded because it still cannot be run at all (see above) — its cost is unknown, so it
-cannot be budgeted yet. Each dataset gets ≈3h of margin below its half-budget, held back because the
-`ConstantWeights` baseline used to measure throughput is the *cheapest* of the ~6 settings —
-`PCAWeights2`, `PartialWeights`, `FelsensteinWeights`, and the `PowerOffsetTransform`/`GridTuner`
-grid all do more per-proposal work — and because JVM start-up and log/tree-file I/O across 48 runs
-are not in the measured "chain time."
+**Full-tier arithmetic, from measured throughput, under the 10-hour rule — now all three runnable
+datasets.** Budget: 10h = 36,000s. infB and lassaL@120 keep their existing chain lengths and
+budget exactly as before (their arithmetic did not change — see below); iecor's throughput is now
+measured, so its cost can be carved out of the *remaining* budget rather than left open-ended:
 
 | dataset | measured states/sec | `full` chain | time/rep | × 24 reps (6 settings × 4 reps) |
 |---|---:|---:|---:|---:|
 | infB (full, 141 taxa) | 1,900 | 1,000,000 | 526 s | ≈3.51 h |
 | lassaL@120 | 294 | 150,000 | 510 s | ≈3.40 h |
-| iecor | **blocked** | **blocked** | — | — |
+| iecor (`vanilla`, 41 taxa, 1,071 patterns) | 10,831 | 3,000,000 | 277 s | ≈1.85 h |
 
-Sequential total for the two runnable datasets: ≈**6.91 h**, inside the 10h ceiling with ≈3h
-(≈30%) to spare. `medium` scales both chain lengths down 10× (infB 100,000, lassaL@120 15,000),
-giving a ≈41-minute medium-tier sweep — so **neither tier needs to drop below 6 settings × 4
-reps to fit the 10-hour rule**; the constraint is met by right-sizing chain length and dataset
-(lassaL@120, not lassaL@551), not by shrinking the experimental design.
+- infB + lassaL@120 subtotal: 12,624 s + 12,240 s = 24,864 s ≈ **6.91 h**, unchanged from before.
+- Remaining budget to the 10h ceiling: 36,000 s − 24,864 s = 11,136 s ≈ **3.09 h**.
+- iecor at a 3,000,000-state `full` chain: 3,000,000 / 10,831 ≈ 277.0 s/rep × 24 reps ≈ 6,649 s ≈
+  **1.85 h** — comfortably inside the remaining 3.09 h, with 4,487 s (≈1.25 h, ≈12.5% of the total
+  10h budget) of margin left over.
+- **Sensitivity check with the slower `pca` throughput** (8,543 states/sec, `PCAWeights` rather
+  than no edge-weights operator — the same margin logic the original arithmetic used for
+  `PCAWeights2`/`PartialWeights`/`FelsensteinWeights` being costlier than the `ConstantWeights`
+  baseline): 3,000,000 / 8,543 ≈ 351.2 s/rep × 24 ≈ 8,428 s ≈ 2.34 h. Total across all three
+  datasets at this pessimistic rate: 24,864 + 8,428 = 33,292 s ≈ **9.25 h** — still inside the 10h
+  ceiling, with 2,708 s (≈0.75 h) to spare.
+- **Grand total, all three datasets, 6 settings × 4 reps each: ≈8.75 h (vanilla-rate estimate) to
+  ≈9.25 h (pca-rate, worst-case estimate) — inside the 10-hour ceiling either way.** No reps or
+  settings need to be cut for any of the three datasets; infB and lassaL@120's chain lengths are
+  unchanged (1,000,000 / 150,000, as before) and iecor's `full` chain length is set to **3,000,000
+  states**.
+- `medium` scales every dataset's `full` chain length down 10× (infB 100,000, lassaL@120 15,000,
+  iecor 300,000): 1,262 s + 1,224 s + 665 s ≈ 3,151 s ≈ **53 minutes** for a complete medium-tier
+  sweep across all three datasets, six settings, four reps each.
 
-Once iecor actually runs and its throughput is measured (its BDMM-Prime tree-prior swap no
-longer blocks this; a second, unrelated migration-defect pass through its substitution/clock
-models does), its `full`/`medium` chain lengths must be set the same way (its own time budget
-carved out of, or added on top of, the same 10h ceiling) — this doc's numbers for infB/lassaL@120
-may need to shrink to make room, or iecor may need to run as a separate overnight job. Per the
-instruction not to silently cut reps or settings: **this doc does not shrink infB/lassaL@120's
-reps or settings to make room for an iecor number that does not exist yet** — their current
-chains (1,000,000 / 150,000, ≈6.91h total) stand unchanged until iecor is actually measured. This
-is the same tier table now recorded in `targetedbeast-evaluation-pipeline.md`'s Phase 3 tier
-table.
+This is the same tier table now recorded in `targetedbeast-evaluation-pipeline.md`'s Phase 3 tier
+table. The one caveat: iecor's throughput was measured with `almostUniformOrigin`'s disposable
+`Uniform(0, 1.0E6)` placeholder (see above), not the original, still-unresolved `AlmostUniform`
+prior — if `AlmostUniform` is eventually restored with a real implementation that is
+computationally heavier than a plain `Uniform` evaluation, iecor's throughput number here would
+need re-measuring, though a single scalar-parameter prior's `calculateLogP()` is very unlikely to
+be the dominant cost against a 1,071-pattern tree likelihood.

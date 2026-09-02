@@ -80,7 +80,10 @@
             <parameter id="mutationRate.s:ant" name="stateNode" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="Real">1.0</parameter>
             <parameter id="mutationRate.s:burn" name="stateNode" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="Real">1.0</parameter>
             <parameter id="bcov_alpha.s:five" name="stateNode" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal">0.5</parameter>
-            <parameter id="bcov_s.s:five" name="stateNode" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal">0.5</parameter>
+            <!-- bcov_s.s:five is a dimension-1 RealVectorParam, not a scalar: BinaryCovarion's
+                 switchRate input requires RealVector<PositiveReal> (unlike alpha, which requires a
+                 RealScalar) - confirmed by reading BinaryCovarion.java's Input declarations. -->
+            <parameter id="bcov_s.s:five" name="stateNode" dimension="1" spec="beast.base.spec.inference.parameter.RealVectorParam" domain="PositiveReal">0.5</parameter>
             <parameter id="frequencies.s:five" dimension="2" name="stateNode" spec="beast.base.spec.inference.parameter.SimplexParam">0.974 0.026</parameter>
             <parameter id="ucldMean.c:clock" name="stateNode" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal">0.004</parameter>
             <parameter id="ucldStdev.c:clock" name="stateNode" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal">0.1</parameter>
@@ -143,15 +146,25 @@
                     <!-- <parameter id="r" spec="parameter.RealParameter" lower="0.0" name="removalProbability" upper="1.">1.0</parameter> -->
                 </distribution>
                 <distribution id="Uniform.173" spec="beast.base.spec.inference.distribution.Uniform" param="@ucldMean.c:clock" upper="10.0"/>
+                <!-- legacy Gamma's "beta" defaults to mode=ShapeScale (beast.base.inference.distribution.Gamma),
+                     which matches the typed spec twin's "theta" (shape-scale) input, not "lambda" (rate) -
+                     confirmed by reading both classes' source. theta requires RealScalar<PositiveReal>. -->
                 <distribution id="Gamma.204" spec="beast.base.spec.inference.distribution.Gamma" param="@ucldStdev.c:clock">
                         <parameter id="RealParameter.7" estimate="false" name="alpha" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal">0.5396</parameter>
-                        <parameter id="RealParameter.8" estimate="false" name="beta" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="Real">0.3819</parameter>
+                        <parameter id="RealParameter.8" estimate="false" name="theta" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal">0.3819</parameter>
                     </distribution>
                 <distribution id="Uniform.1" spec="beast.base.spec.inference.distribution.Uniform" param="@bcov_alpha.s:five" upper="1.0E6"/>
-                <distribution id="Gamma.0" spec="beast.base.spec.inference.distribution.Gamma" param="@bcov_s.s:five">
-                        <alpha id="Function$Constant.0" spec="Function$Constant" value="0.05"/>
-                        <beta id="Function$Constant.1" spec="Function$Constant" value="10.0"/>
-                    </distribution>
+                <!-- bcov_s.s:five is now a vector (see its stateNode declaration above), and Gamma is a
+                     ScalarDistribution, so its prior is wrapped in IID (same pattern as R0/becomeUninfectiousRate
+                     below). The bare Function$Constant elements have no spec twin and do not satisfy Gamma's
+                     typed alpha/theta inputs (RealScalar<PositiveReal>); replaced with fixed, non-estimated
+                     RealScalarParams, and "beta" renamed to "theta" as above. -->
+                <distribution id="bcov_s_prior" spec="beast.base.spec.inference.distribution.IID" param="@bcov_s.s:five">
+                    <distr id="Gamma.0" spec="beast.base.spec.inference.distribution.Gamma">
+                        <parameter id="RealParameter.100" estimate="false" name="alpha" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal">0.05</parameter>
+                        <parameter id="RealParameter.101" estimate="false" name="theta" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal">10.0</parameter>
+                    </distr>
+                </distribution>
                 <distribution id="R0Prior" spec="beast.base.spec.inference.distribution.IID" param="@reproductiveNumber">
                     <distr id="LogNormalDistributionModel.0" spec="beast.base.spec.inference.distribution.LogNormal">
                         <parameter id="RealParameter.0" name="M" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="Real">0.0</parameter>
@@ -185,6 +198,19 @@
                     </distr>
                 </distribution>
 
+                <!-- BLOCKED (not fixed - needs the user's input, unlike everything else on this page):
+                     almostbeast.math.distributions.AlmostUniform has no BEAST 3 port, no jar/source
+                     anywhere in this workspace, and is not in deprecated_classes.md (an unavailable
+                     third-party class, not a renamed one - the xml-migration converter has no way to
+                     even flag it as a [todo]). It cannot be a literal Uniform(0,10): origin's own
+                     pre-migration bounds were [0.0, 100.0] with initial value 100.0 (right at the old
+                     upper bound, and BEAST3's domain-typed RealScalarParam no longer enforces a literal
+                     numeric bound at all), so a hard Uniform(0,10) prior here is inconsistent with the
+                     model's own stateNode - AlmostUniform must be a soft/non-truncating density, and its
+                     exact form cannot be reconstructed from anything available here. Left AS THE ORIGINAL
+                     BEAST2 CLASS (still not parseable) rather than guessing at a replacement distribution,
+                     which would be a modelling decision, not a syntax migration. See
+                     docs/evaluation/baseline-tests.md. -->
                 <distribution id="almostUniformOrigin" spec="almostbeast.math.distributions.AlmostUniform" param="@origin" lower="0.0" upper="10.0"/>
 
             </distribution>
@@ -203,7 +229,14 @@
                         </substModel>
                     </siteModel>
                     <branchRateModel id="RelaxedClock.c:clock" spec="beast.base.spec.evolution.branchratemodel.UCRelaxedClockModel" clock.rate="@ucldMean.c:clock" rateCategories="@rateCategories.c:clock" tree="@Tree.t:tree">
-                        <LogNormal id="LogNormalDistributionModel.c:clock" S="@ucldStdev.c:clock" meanInRealSpace="true" name="distr">
+                        <!-- Bare <LogNormal> (tag-name-as-class, no spec=) resolved via the source file's
+                             <map name="LogNormal"> alias, which the migration strips; without it the tag
+                             falls back to namespace scan and hits the legacy, untyped
+                             beast.base.inference.distribution.LogNormal, which UCRelaxedClockModel's typed
+                             "distr" input (ScalarDistribution<RealScalar<? extends NonNegativeReal>, Double>)
+                             cannot bind. Set spec= explicitly to the typed twin, per the skill's own
+                             post-conversion check for a stripped map alias with no inline resolution. -->
+                        <LogNormal id="LogNormalDistributionModel.c:clock" spec="beast.base.spec.inference.distribution.LogNormal" S="@ucldStdev.c:clock" meanInRealSpace="true" name="distr">
                             <parameter id="RealParameter.4" estimate="false" name="M" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="UnitInterval">1.0</parameter>
                         </LogNormal>
                     </branchRateModel>
