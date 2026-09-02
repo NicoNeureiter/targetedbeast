@@ -106,10 +106,13 @@
         </dependency>
 
         <!-- feast: the lassaL template loads its alignment via feast.fileio.AlignmentFromFasta and
-             its tip dates via TraitSetFromTaxonSet. lib/feast.v10.6.0.jar supplies these at package
-             time but is not on the module path under exec:exec or surefire, so any benchmark run of
-             lassaL fails with ClassNotFoundException. This dependency does not bundle it into lib/:
-             src/assembly/beast-package.xml has an includes allow-list. -->
+             its tip dates via TraitSetFromTaxonSet. At runtime an installed package gets these from
+             the feast BEAST package, declared as <depends on='feast'/> in version.xml; this
+             dependency exists so the classes are on the module path for compile, surefire and
+             exec:exec, where the package manager is not involved. Compile scope, not 'provided':
+             exec:exec resolves %classpath without provided-scope artifacts, so lassaL fails to
+             parse under it. Nothing bundles this into the zip: src/assembly/beast-package.xml
+             has an includes allow-list naming only targetedbeast, colt and commons-math3. -->
         <dependency>
             <groupId>io.github.tgvaughan</groupId>
             <artifactId>feast</artifactId>
