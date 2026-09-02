@@ -1,19 +1,11 @@
-<?xml version="1.0" encoding="UTF-8" standalone="no"?><beast beautitemplate='Standard' beautistatus='' namespace="beast.core:beast.evolution.alignment:beast.evolution.tree.coalescent:beast.core.util:beast.evolution.nuc:beast.evolution.operators:beast.evolution.sitemodel:beast.evolution.substitutionmodel:beast.base.evolution.alignment:beast.pkgmgmt:beast.base.core:beast.base.inference:beast.base.evolution.tree.coalescent:beast.pkgmgmt:beast.base.core:beast.base.inference.util:beast.evolution.nuc:beast.base.evolution.operator:beast.base.inference.operator:beast.base.evolution.sitemodel:beast.base.evolution.substitutionmodel:beast.base.evolution.likelihood" required="BEAST.base v2.7.7" version="2.7">
+<?xml version='1.0' encoding='UTF-8'?>
+<beast version="2.8"
+       namespace="beast.core:beast.core.util:beast.evolution.alignment:beast.evolution.nuc:beast.evolution.operators:beast.evolution.sitemodel:beast.evolution.substitutionmodel:beast.evolution.tree.coalescent:beast.base.core:beast.base.evolution.alignment:beast.base.evolution.likelihood:beast.base.evolution.operator:beast.base.evolution.sitemodel:beast.base.evolution.substitutionmodel:beast.base.evolution.tree:beast.base.evolution.tree.coalescent:beast.base.inference:beast.base.inference.operator:beast.base.inference.util:beast.pkgmgmt"
+       beautitemplate="Standard"
+       beautistatus=""
+       required="BEAST.base v2.7.7">
 
-    <alignment id="alignment" spec="feast.fileio.AlignmentFromFasta"
-               fileName="{alignment_file}"/>
-
-    <map name="Uniform" >beast.base.inference.distribution.Uniform</map>
-    <map name="Exponential" >beast.base.inference.distribution.Exponential</map>
-    <map name="LogNormal" >beast.base.inference.distribution.LogNormalDistributionModel</map>
-    <map name="Normal" >beast.base.inference.distribution.Normal</map>
-    <map name="Beta" >beast.base.inference.distribution.Beta</map>
-    <map name="Gamma" >beast.base.inference.distribution.Gamma</map>
-    <map name="LaplaceDistribution" >beast.base.inference.distribution.LaplaceDistribution</map>
-    <map name="prior" >beast.base.inference.distribution.Prior</map>
-    <map name="InverseGamma" >beast.base.inference.distribution.InverseGamma</map>
-    <map name="OneOnX" >beast.base.inference.distribution.OneOnX</map>
-
+    <alignment id="alignment" spec="feast.fileio.AlignmentFromFasta" fileName="{alignment_file}"/>
 
     <run id="mcmc" spec="MCMC" chainLength="{chain_length}">
         <state id="state" spec="State" storeEvery="10000">
@@ -23,15 +15,14 @@
                 </trait>
                 <taxonset idref="taxonSet"/>
             </tree>
-            <parameter id="clockRate" spec="parameter.RealParameter" upper="0.01" name="stateNode">0.001</parameter>
-            <parameter id="gammaShape" spec="parameter.RealParameter" lower="0.1" name="stateNode">1.0</parameter>
-            <parameter id="kappa" spec="parameter.RealParameter" lower="0.0" name="stateNode">2.0</parameter>
-            <parameter id="freqs" spec="parameter.RealParameter" dimension="4" lower="0.0" name="stateNode" upper="1.0">0.25</parameter>
-            <parameter id="popSize" spec="parameter.RealParameter" lower="0.0" name="stateNode">0.3</parameter>
+            <parameter id="clockRate" name="stateNode" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal">0.001</parameter>
+            <parameter id="gammaShape" name="stateNode" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal">1.0</parameter>
+            <parameter id="kappa" name="stateNode" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal">2.0</parameter>
+            <parameter id="freqs" dimension="4" name="stateNode" spec="beast.base.spec.inference.parameter.SimplexParam">0.25</parameter>
+            <parameter id="popSize" name="stateNode" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal">0.3</parameter>
         </state>
         
-		<init spec='targetedbeast.init.ensureNoZeroEdgeLength' id='UPGMATree.t:XYZ26'
-          initial="@tree" clusterType='upgma' taxa='@alignment'/>
+		<init spec="targetedbeast.init.ensureNoZeroEdgeLength" id="UPGMATree.t:XYZ26" initial="@tree" clusterType="upgma" taxa="@alignment"/>
 
         <!-- <init id="Randomtree" spec="RandomTree" estimate="false" initial="@tree" taxa="@alignment">
             <populationModel id="ConstantPopulation0" spec="ConstantPopulation">
@@ -42,80 +33,68 @@
         <distribution id="posterior" spec="CompoundDistribution">
             <distribution id="prior" spec="CompoundDistribution">
                 <distribution id="CoalescentConstant" spec="Coalescent">
-                    <populationModel id="ConstantPopulation" spec="ConstantPopulation" popSize="@popSize"/>
+                    <populationModel id="ConstantPopulation" spec="beast.base.spec.evolution.tree.coalescent.ConstantPopulation" popSize="@popSize"/>
                     <treeIntervals id="TreeIntervals" spec="targetedbeast.coalescent.RapidTreeIntervals" tree="@tree"/>
                 </distribution>
-                <prior id="ClockPrior" name="distribution" x="@clockRate">
-                    <Uniform id="Uniform.0" name="distr" upper="Infinity"/>
-                </prior>
-                <prior id="frequenciesPrior" name="distribution" x="@freqs">
-                    <distr id="Dirichlet.0" spec="distribution.Dirichlet">
-                        <parameter id="RealParameter.5" spec="parameter.RealParameter" dimension="4" estimate="false" name="alpha">4.0 4.0 4.0 4.0</parameter>
-                    </distr>
-                </prior>
-                <prior id="GammaShapePrior" name="distribution" x="@gammaShape">
-                    <Exponential id="Exponential.0" name="distr">
-                        <parameter id="RealParameter.0" spec="parameter.RealParameter" estimate="false" name="mean">1.0</parameter>
-                    </Exponential>
-                </prior>
-                <prior id="KappaPrior" name="distribution" x="@kappa">
-                    <LogNormal id="LogNormalDistributionModel.0" name="distr">
-                        <parameter id="RealParameter.3" spec="parameter.RealParameter" estimate="false" name="M">1.0</parameter>
-                        <parameter id="RealParameter.4" spec="parameter.RealParameter" estimate="false" name="S">1.25</parameter>
-                    </LogNormal>
-                </prior>
-                <prior id="PopSizePrior" name="distribution" x="@popSize">
-                    <OneOnX id="OneOnX.1" name="distr"/>
-                </prior>
+                <distribution id="Uniform.0" spec="beast.base.spec.inference.distribution.Uniform" param="@clockRate" upper="1.0E6"/>
+                <distribution id="Dirichlet.0" spec="beast.base.spec.inference.distribution.Dirichlet" param="@freqs">
+                        <parameter id="RealParameter.5" dimension="4" estimate="false" name="alpha" spec="beast.base.spec.inference.parameter.RealVectorParam" domain="PositiveReal">4.0 4.0 4.0 4.0</parameter>
+                    </distribution>
+                <distribution id="Exponential.0" spec="beast.base.spec.inference.distribution.Exponential" param="@gammaShape">
+                        <parameter id="RealParameter.0" estimate="false" name="mean" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal">1.0</parameter>
+                    </distribution>
+                <distribution id="LogNormalDistributionModel.0" spec="beast.base.spec.inference.distribution.LogNormal" param="@kappa">
+                        <parameter id="RealParameter.3" estimate="false" name="M" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="Real">1.0</parameter>
+                        <parameter id="RealParameter.4" estimate="false" name="S" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal">1.25</parameter>
+                    </distribution>
+                <distribution id="PopSizePrior" spec="beast.base.spec.inference.distribution.LogNormal" param="@popSize"><M spec="beast.base.spec.inference.parameter.RealScalarParam" domain="Real" value="3.0"/><S spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal" value="2.5"/></distribution>
                 
                 {edge_weights}
             
             </distribution>
             <distribution id="likelihood" spec="CompoundDistribution" useThreads="true">
-                <distribution id="treeLikelihood" spec="ThreadedTreeLikelihood" data="@alignment" tree="@tree">
+                <distribution id="treeLikelihood" spec="beast.base.spec.evolution.likelihood.ThreadedTreeLikelihood" data="@alignment" tree="@tree">
                 <!-- <distribution id="treeLikelihood" spec="TreeLikelihood" data="@alignment" tree="@tree" implementation="BeerLikelihoodCore4"> -->
-                    <siteModel id="siteModel" spec="SiteModel" gammaCategoryCount="4" shape="@gammaShape">
-                        <parameter id="mutationRate" spec="parameter.RealParameter" estimate="false" lower="0.0" name="mutationRate">1.0</parameter>
-                        <parameter id="proportionInvariant" spec="parameter.RealParameter" estimate="false" lower="0.0" name="proportionInvariant" upper="1.0">0.0</parameter>
-                        <substModel id="hky.s:alignment" spec="HKY" kappa="@kappa">
-                            <frequencies id="estimatedFreqs.s:alignment" spec="Frequencies" frequencies="@freqs"/>
+                    <siteModel id="siteModel" spec="beast.base.spec.evolution.sitemodel.SiteModel" gammaCategoryCount="4" shape="@gammaShape">
+                        <parameter id="mutationRate" estimate="false" name="mutationRate" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal">1.0</parameter>
+                        <parameter id="proportionInvariant" estimate="false" name="proportionInvariant" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="UnitInterval">0.0</parameter>
+                        <substModel id="hky.s:alignment" spec="beast.base.spec.evolution.substitutionmodel.HKY" kappa="@kappa">
+                            <frequencies id="estimatedFreqs.s:alignment" spec="beast.base.spec.evolution.substitutionmodel.Frequencies" frequencies="@freqs"/>
                         </substModel>
                     </siteModel>
-                    <branchRateModel id="StrictClock.c:alignment" spec="beast.base.evolution.branchratemodel.StrictClockModel" clock.rate="@clockRate"/>
+                    <branchRateModel id="StrictClock.c:alignment" spec="beast.base.spec.evolution.branchratemodel.StrictClockModel" clock.rate="@clockRate"/>
                 </distribution>
             </distribution>
         </distribution>
 
-
-
-        <operator id="AVMNOperator" spec="kernel.AdaptableVarianceMultivariateNormalOperator" allowNonsense="true" beta="0.05" burnin="400" initial="800" weight="1.0">
-            <transformations id="AVMNSumTransform.freqs" spec="operator.kernel.Transform$LogConstrainedSumTransform">
+        <operator id="AVMNOperator" spec="beast.base.spec.evolution.operator.AdaptableVarianceMultivariateNormalOperator" allowNonsense="true" beta="0.05" burnin="400" initial="800" weight="1.0">
+            <transformations id="AVMNSumTransform.freqs" spec="beast.base.spec.inference.operator.Transform$LogConstrainedSumTransform">
                 <f idref="freqs"/>
             </transformations>
-            <transformations id="AVMNLogTransform" spec="operator.kernel.Transform$LogTransform">
+            <transformations id="AVMNLogTransform" spec="beast.base.spec.inference.operator.Transform$LogTransform">
                 <f idref="clockRate"/>
                 <f idref="gammaShape"/>
                 <f idref="kappa"/>
             </transformations>
-            <transformations id="AVMNNoTransform" spec="operator.kernel.Transform$NoTransform">
+            <transformations id="AVMNNoTransform" spec="beast.base.spec.inference.operator.Transform$NoTransform">
                 <f idref="tree"/>
             </transformations>
         </operator>
-        <operator id="strictClockRateScalerX" spec="kernel.BactrianScaleOperator" parameter="@clockRate" upper="10.0" weight="2.0"/>
-        <operator id="strictClockUpDownOperatorX" spec="operator.kernel.BactrianUpDownOperator" scaleFactor="0.75" weight="2.0">
+        <operator id="strictClockRateScalerX" parameter="@clockRate" upper="10.0" weight="2.0" spec="beast.base.spec.inference.operator.ScaleOperator"/>
+        <operator id="strictClockUpDownOperatorX" spec="beast.base.spec.evolution.operator.UpDownOperator" scaleFactor="0.75" weight="2.0">
             <up idref="clockRate"/>
             <down idref="tree"/>
         </operator>
 
-        <operator id="gammaShapeScaler.s:alignment" spec="AdaptableOperatorSampler" weight="0.25">
+        <operator id="gammaShapeScaler.s:alignment" spec="beast.base.spec.evolution.operator.AdaptableOperatorSampler" weight="0.25">
             <parameter idref="gammaShape"/>
             <operator idref="AVMNOperator"/>
-            <operator id="gammaShapeScalerX.s:alignment" spec="kernel.BactrianScaleOperator" parameter="@gammaShape" scaleFactor="0.5" upper="10.0" weight="0.1"/>
+            <operator id="gammaShapeScalerX.s:alignment" parameter="@gammaShape" scaleFactor="0.5" upper="10.0" weight="0.1" spec="beast.base.spec.inference.operator.ScaleOperator"/>
         </operator>
-        <operator id="KappaScaler.s:alignment" spec="AdaptableOperatorSampler" weight="0.25">
+        <operator id="KappaScaler.s:alignment" spec="beast.base.spec.evolution.operator.AdaptableOperatorSampler" weight="0.25">
             <parameter idref="kappa"/>
             <operator idref="AVMNOperator"/>
-            <operator id="KappaScalerX.s:alignment" spec="kernel.BactrianScaleOperator" parameter="@kappa" scaleFactor="0.1" upper="10.0" weight="0.1"/>
+            <operator id="KappaScalerX.s:alignment" parameter="@kappa" scaleFactor="0.1" upper="10.0" weight="0.1" spec="beast.base.spec.inference.operator.ScaleOperator"/>
         </operator>
         <!-- <operator id="FrequenciesExchanger.s:alignment" spec="AdaptableOperatorSampler" weight="0.25">
             <parameter idref="freqs"/>
@@ -125,12 +104,12 @@
             </operator>
         </operator> -->
         
-        <operator id="PopSizeScaler" spec="kernel.BactrianScaleOperator" parameter="@popSize" upper="10.0" scaleFactor="0.2" weight="1.5"/>
+        <operator id="PopSizeScaler" parameter="@popSize" upper="10.0" scaleFactor="0.2" weight="1.5" spec="beast.base.spec.inference.operator.ScaleOperator"/>
 
 		<!-- <operator id="WeightBasedNodeRandomizer" spec="targetedbeast.operators.WeightBasedNodeRandomizer" percentage="0.01" optimise="true" tree="@tree" weight="0.5" edgeWeights="@edgeweights"/> -->
         <operator id="HeightBasedNodeRandomizer" spec="targetedbeast.operators.HeightBasedNodeRandomizer" percentage="0.01" optimise="true" tree="@tree" weight="0.5"/>
 
-        <operator id="subtreeSlide" spec="SubtreeSlide" tree="@tree" gaussian="false" size="2.0" weight="4"/>
+        <operator id="subtreeSlide" spec="beast.base.evolution.operator.kernel.BactrianSubtreeSlide" tree="@tree" size="2.0" weight="4"/>
         <operator id="BactrianSubtreeSlide" spec="kernel.BactrianSubtreeSlide" tree="@tree" size="2.0" weight="4"/>
 		<!-- No target transform here: useWeightedStep defaults to false, so this one draws its
 		     target uniformly and has no target weights to reshape. -->
@@ -152,8 +131,7 @@
         <!-- RangeSlide uses its target weights raw rather than squared, so the shared transform
              (which starts at exponent 2.0 to reproduce the Wilson-Balding default) changes this
              operator's starting proposal, not just its adaptability. -->
-        <operator id="targetedRangeSlide" spec="targetedbeast.operators.RangeSlide" tree="@tree" edgeWeights="@edgeweights" weight="5"
-                        size="2.0" optimise="false" useWeightedStep="true"{target_weight_transform_ref}/>
+        <operator id="targetedRangeSlide" spec="targetedbeast.operators.RangeSlide" tree="@tree" edgeWeights="@edgeweights" weight="5" size="2.0" optimise="false" useWeightedStep="true"{target_weight_transform_ref}/>
 
         <operator id="ScaleAll" spec="targetedbeast.operators.IntervalScaleOperator" tree="@tree" weight="1.0" scaleFactor="0.9" up="@popSize" down="@clockRate"/>
         <operator id="ScaleIntervalsRandomly" spec="targetedbeast.operators.IntervalScaleOperator" tree="@tree" weight="1.0" scaleFactor="0.9" scaleAllNodesIndependently="true"/>
@@ -178,7 +156,7 @@
             <log idref="prior"/>
         </logger>
         <logger id="treelog" spec="Logger" fileName="$(filebase).trees" logEvery="125" mode="tree">
-            <log id="TreeWithMetaDataLogger" spec="beast.base.evolution.TreeWithMetaDataLogger" tree="@tree"/>
+            <log id="TreeWithMetaDataLogger" spec="beast.base.spec.evolution.TreeWithMetaDataLogger" tree="@tree"/>
         </logger>
 
     </run>

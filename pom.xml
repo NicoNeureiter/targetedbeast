@@ -39,6 +39,7 @@
         <maven.compiler.release>25</maven.compiler.release>
 
         <beast.version>2.8.0-beta8</beast.version>
+        <beastlabs.version>2.1.0-SNAPSHOT</beastlabs.version>
         <colt.version>1.2.0</colt.version>
         <commons-math3.version>3.6.1</commons-math3.version>
 
@@ -81,6 +82,15 @@
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-math3</artifactId>
             <version>${commons-math3.version}</version>
+        </dependency>
+
+        <!-- BEASTLabs: SimpleRandomTree and tree metrics (RobinsonsFouldMetric, RNNIMetric,
+             BranchScoreMetric) for the evaluation pipeline. Built locally against
+             beast.version 2.8.0-beta5; not bundled into lib/ (see src/assembly/beast-package.xml). -->
+        <dependency>
+            <groupId>io.github.beast2-dev</groupId>
+            <artifactId>beast-labs</artifactId>
+            <version>${beastlabs.version}</version>
         </dependency>
 
         <!-- Tests: the suite mixes JUnit 4 and JUnit 5, so both engines are needed -->
