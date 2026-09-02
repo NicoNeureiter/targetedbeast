@@ -138,40 +138,113 @@ transformations (`clockRate`/`gammaShape`/`kappa` and the `freqs` sum-to-one con
 unchanged. Verified by running both templates end-to-end (see Results below) — this is no longer
 a scratch-copy workaround, it is the shipped XML.
 
-### iecor — BDSKY replaced with BDMM-Prime, build blocked
+### iecor — BDSKY replaced with BDMM-Prime
 
-The original blocker — `bdsky.evolution.speciation.BirthDeathSkylineModel` has no BEAST 3 port
-anywhere in this workspace — is superseded by the user's decision to replace the BDSKY tree prior
-with **BDMM-Prime** (single-type `bdmmprime.distribution.BirthDeathMigrationDistribution` +
-`bdmmprime.parameterization.EpiParameterization`, whose `Re`/`becomeUninfectiousRate`/
-`samplingProportion`/`rhoSampling` inputs map one-to-one onto iecor's existing BDSKY parameters).
-The XML migration itself was not attempted because the dependency does not build:
+**Dependency unblocked.** The original `sampled-ancestors:2.3.0-beta1` resolution failure was an
+offline-mode problem, not the version skew it first looked like: that artifact lives in the
+GitHub Packages repo BDMM-Prime's pom declares (`https://maven.pkg.github.com/CompEvol/beast3`),
+which `mvn -o` cannot reach. Fetched with network access once, `mvn clean install -DskipTests` in
+`/Users/nneureiter/Projects/BEAST3/BDMM-Prime` (branch `beast2.8-migration`) then succeeded, and
+both `io.github.compevol:sampled-ancestors:2.3.0-beta1` and `io.github.tgvaughan:bdmm-prime:3.0.0`
+are now in the local m2; `mvn -o` resolves them from here on. Wired in: `bdmm-prime:3.0.0` as a
+Maven dependency (`pom.xml`), `<depends on='BDMM-Prime'/>` in `version.xml` (matching BDMM-Prime's
+own declared package name/capitalisation), not bundled into `lib/` (the assembly's `<includes>`
+allow-list already only lists `targetedbeast`/`colt`/`commons-math3`).
 
-```
-mvn -o clean install -DskipTests   (in /Users/nneureiter/Projects/BEAST3/BDMM-Prime, branch beast2.8-migration)
+**Tree-prior mapping.** `examples/iecor/{vanilla,pca}/iecor.xml`'s `birthDeathPrior` is now a
+single-type `bdmmprime.distribution.BirthDeathMigrationDistribution` with
+`bdmmprime.parameterization.EpiParameterization`, read from BDMM-Prime's own worked XMLs
+(`validation/tip_date_sampling/infer_tip_dates.xml`, the `EpiParameterization` subtemplate in
+`src/main/resources/bdmmprime/fxtemplates/BDMMPrimeParameterizations.xml`) and source
+(`EpiParameterization.java`, `SkylineVectorParameter.java`/`SkylineParameter.java`,
+`TimedParameter.java`, `ProcessLength.java`), not guessed:
 
-[WARNING] The POM for io.github.compevol:sampled-ancestors:jar:2.3.0-beta1 is missing, no dependency information available
-[ERROR] Failed to execute goal on project bdmm-prime: Could not resolve dependencies for project io.github.tgvaughan:bdmm-prime:jar:3.0.0
-[ERROR] dependency: io.github.compevol:sampled-ancestors:jar:2.3.0-beta1 (compile)
-[ERROR] 	Cannot access github (https://maven.pkg.github.com/CompEvol/beast3) in offline mode and the artifact io.github.compevol:sampled-ancestors:jar:2.3.0-beta1 has not been downloaded from it before.
-[ERROR] 	Cannot access central (https://repo.maven.apache.org/maven2) in offline mode and the artifact io.github.compevol:sampled-ancestors:jar:2.3.0-beta1 has not been downloaded from it before.
-```
+- `origin`'s domain is tightened `Real` → `NonNegativeReal`: `bdmmprime.util.ProcessLength`'s
+  `origin` input requires `RealScalar<? extends NonNegativeReal>`. `origin` was already
+  lower-bounded at 0.0 in the pre-migration BDSKY XML, so this restores rather than adds a
+  constraint.
+- `reproductiveNumber`, `becomeUninfectiousRate`, `rho` are now dimension-1 `RealVectorParam`,
+  not scalars. `Re`/`becomeUninfectiousRate` need `SkylineVectorParameter`, and `rhoSampling`
+  needs `TimedParameter`; both take a `RealVector`-typed values input (`SkylineParameter.java:48`,
+  `TimedParameter.java:66`), which a `RealScalarParam` cannot satisfy — confirmed by reading the
+  actual `Input<>` declarations, not inferred. Their existing scalar priors (`LogNormal`,
+  `Exponential`, `Beta`) are preserved by wrapping each in `beast.base.spec.inference.distribution.IID`
+  (`param` = the vector, `distr` = the unchanged scalar distribution with its original
+  hyperparameters) — the framework's own pattern for a scalar distribution applied to a
+  vector-typed parameter (`IID.java`'s own comment: "when param is vector, dist is univariate,
+  then apply dist to each dim").
+- `removalProb` has no equivalent on the old model (its optional `r`/removal-probability was
+  commented out, i.e. `r=1`), so it is a fixed, non-estimated `SkylineVectorParameter` at 1.0.
+- `rhoSampling` is a `TimedParameter` with `values="@rho"` and a fixed, non-estimated
+  `times="0.0"` (a single rho-sampling event at the present).
 
-BDMM-Prime's pom hard-pins `io.github.compevol:sampled-ancestors:2.3.0-beta1`. That coordinate is
-not in the local m2 and (offline) not reachable from GitHub Packages or Central. The only local
-`sampled-ancestors` checkout (`/Users/nneureiter/Projects/BEAST3/sampled-ancestors`) is versioned
-`2.3.0-SNAPSHOT` and built against `beast.version=2.8.0-beta8` — a different artifact coordinate
-and a different BEAST base version than BDMM-Prime (`2.8.0-beta5`) declares. This is exactly the
-beta5-vs-beta8 skew called out as a possible blocker: unlike BEASTLabs (whose `2.8.0-beta5` pin
-resolved and compiled cleanly alongside this project's `beta8` pin with no missing transitive
-dependency), BDMM-Prime cannot be built offline at all, because the artifact it needs under its
-declared coordinate exists nowhere in this workspace, not because of an API mismatch that could be
-patched around. **BLOCKED** — not attempted further (installing the local SA checkout under a
-different, unauthorized version coordinate, or editing BDMM-Prime's pom, would be improvising
-outside this task's scope). iecor could not be migrated, parsed, run, or measured for throughput
-or pattern count. Needs a user decision: publish/vendor `sampled-ancestors:2.3.0-beta1` somewhere
-reachable, rebuild BDMM-Prime against the local SA `2.3.0-SNAPSHOT`/`beta8` combination (and verify
-BDMM-Prime still compiles/runs against that pair), or another resolution.
+**`reproductiveNumber` type conflict — resolved by an authorized operator-set deviation.**
+`reproductiveNumber` was also used by `ScaleAll`
+(`spec="targetedbeast.operators.IntervalScaleOperator"`, `<up idref="reproductiveNumber"/>`),
+whose `up`/`down` inputs are hard-typed `List<RealScalarParam<PositiveReal>>`
+(`IntervalScaleOperator.java:37`) — scalar-only, and structurally incompatible with the
+vector-typed `Re` it must also satisfy. Reported as BLOCKED with three options; the user chose:
+drop `<up idref="reproductiveNumber"/>` from `ScaleAll` (both XMLs, with an explanatory comment at
+the site) and let `reproductiveNumber` become the vector `Re` needs. This is an explicit,
+authorized deviation from "keep the existing operator set" — iecor is in the corpus for its data
+regime (binary cognate characters, 341 partitions, relaxed clock, birth-death prior) to benchmark
+tree-operator mixing, and `ScaleAll` moving one fewer scalar parameter does not affect that
+measurement. The two rejected options: decoupling `Re` from a frozen copy of `reproductiveNumber`
+(the operator would move a value the likelihood never reads — a silent correctness bug), or
+widening `IntervalScaleOperator`'s type (editing nicfel's third-party TargetedBeast operator code,
+which is out of scope for "change only the tree-prior block").
+
+**`samplingProportion` — simplified to a constant, not ported as a skyline.** The original had 3
+epochs (`samplingRateChangeTimes.t:tree` = `[4.401, 0.9, 0.0]`, values `[0.0, 0.01, 0.0]`) with a
+per-array `reverseTimeArrays[2]=true` flag on the old BDSKY model. BDMM-Prime's
+`SkylineVectorParameter` uses a different convention (`nIntervals = nChangeTimes + 1`, raw
+`changeTimes` values must be ascending) that does not translate 1:1 from BDSKY's without knowing
+BDSKY's exact interval-to-value time direction — and BDSKY has no BEAST 3 port and no source
+anywhere in this workspace to check against. A plausible reconstruction exists (the trailing `0.0`
+self-fixes under the shared `ScaleOperator` and carries no prior in either `xInclude` mask, so it
+reads as a fixed "present" marker rather than a free change time, leaving `[0.9, 4.401]` ascending
+as the two real change times) but it is unverifiable, and a silently time-reversed model is worse
+than a known simplification. Per the user's decision: `samplingProportion` is now a single
+dimension-1 constant (`0.01`, its one nonzero epoch), `samplingRateChangeTimes.t:tree` and its two
+`ExcludablePrior`-based change-time priors and its `ScaleOperator` are removed entirely (nothing
+left for them to act on). iecor is in the corpus to benchmark tree-operator mixing on its data
+regime, not to reproduce the published epidemiological analysis, so this simplification does not
+compromise the evaluation's purpose — but it means iecor's tree-prior no longer matches the
+original publication and that must not be forgotten if this XML is ever reused for anything else.
+
+**`samplingProportionPrior` also needed its wrapper class changed, not just its mask.**
+`beastlabs.math.distributions.ExcludablePrior` turns out to `extends beast.base.inference.distribution.Prior`
+— legacy-typed (`x` is `Input<Function>`, `distr` is `Input<ParametricDistribution>`), predating the
+`beast.base.spec` split, and it cannot bind to a typed `RealVectorParam` or a typed `Beta` at all
+(this is *not* a niche edge case — the `xInclude` input is even still typed to the legacy
+`BooleanParameter`, so the pre-existing migrated XML's `spec="...BoolVectorParam"` mask was already
+mismatched before this task touched it, just never caught because iecor never previously parsed).
+Since `ExcludablePrior`'s per-element masking existed only to prior one of 3 skyline epochs while
+leaving the other 2 fixed, and there is now only 1 epoch, the masking has nothing left to do:
+`samplingProportionPrior` is now a plain `IID(Beta(1,1))` on the single element, matching the
+`R0`/`becomeUninfectiousRate`/`rho` pattern above, not a hand-migration of `ExcludablePrior` itself.
+
+**Throughput measurement is still blocked — by a different, broader problem.** With the tree-prior
+swap complete, a scratch run (`chainLength` shortened, `-overwrite`) parses cleanly through the
+entire prior section (confirming the BDMM-Prime wiring above is correct) and well into the
+likelihood section, before hitting a *second*, unrelated wall: `iecor.xml`'s substitution/clock
+model blocks have their own pre-existing, previously-undiscovered typed-migration defects, e.g.
+`beast.base.spec.inference.distribution.Gamma`'s scale input renamed `beta`→`theta` (found on the
+`ucldStdev` prior), bare legacy `Function$Constant` elements passed to a typed `Gamma`'s
+alpha/theta (the `bcov_s` prior), `BinaryCovarion`'s `switchRate` requiring a `RealVector` while
+`alpha` requires a `RealScalar` (so only one of the pair needed converting), and a bare,
+spec-less `<LogNormal name='distr'>` inside the relaxed-clock model (the same "legacy map tag,
+now unresolvable since the file's `<map>` declarations were dropped during Phase 0b's migration"
+failure mode noted there). These predate this task — they went undiscovered because iecor could
+never previously be parsed at all (blocked on `bdsky`) — and they recur throughout a 1300+ line
+file with several more partitions after the one just reached. Fixing them properly means
+re-running the `beast3-xml-migration` converter and working through its per-file report, per the
+workspace rule ("never hand-edit BEAST XML to migrate it"), not patching each one by hand as
+found; that is a distinct task from "change only the tree-prior block" and was not attempted
+beyond the isolated, disposable scratch-copy patches used to reach this diagnosis (not applied to
+the committed corpus). **iecor's states/sec and site-pattern count remain unmeasured.** The tier
+table below reflects only the two datasets that currently run (infB, lassaL@120); iecor stays
+out until this second migration pass happens.
 
 ### Method
 
@@ -221,8 +294,11 @@ machine-days, not hours, and is dataset-dominated by lassaL:
 - infB: 10,000,000 / 1,900 ≈ **1.5 hours** for one replicate — fine on its own.
 - lassaL (551 taxa): 10,000,000 / 50 ≈ **55.7 hours (≈2.3 days)** for one replicate; at 4 reps ×
   ~6 settings that is **~56 days of sequential compute** — an order of magnitude past "overnight."
-- iecor: was unmeasured (now known blocked — see above); the plan's only prior calibration point,
-  `examples/iecor/vanilla/IECOR_untargeted.log`, is a trace log with no wall-clock metadata.
+- iecor: still unmeasured — BDMM-Prime now builds and the tree-prior swap is done and verified as
+  far as parsing goes, but a *different*, pre-existing set of typed-migration defects elsewhere in
+  the file (substitution/clock models, unrelated to the tree prior) blocks an actual run; see
+  above. The plan's only prior calibration point, `examples/iecor/vanilla/IECOR_untargeted.log`,
+  is a trace log with no wall-clock metadata either way.
 
 **Decision: lassaL's full 551-taxon alignment is not part of the pipeline at all** — not just at
 the `full` tier. Every tier uses the lassaL@120 subsample (or smaller, at `fast`, once Phase 0
@@ -230,9 +306,9 @@ step 4 picks a size) instead. The full-taxon analysis is a user-initiated cluste
 something any tier runs.
 
 **Full-tier arithmetic, from measured throughput, under the 10-hour rule.** Budget: 10h =
-36,000s. Split evenly across the two datasets that currently build and run (infB, lassaL@120);
-iecor is excluded until BDMM-Prime builds (see above) — its cost is unknown, so it cannot be
-budgeted yet. Each dataset gets ≈3h of margin below its half-budget, held back because the
+36,000s. Split evenly across the two datasets that currently run end-to-end (infB, lassaL@120);
+iecor is excluded because it still cannot be run at all (see above) — its cost is unknown, so it
+cannot be budgeted yet. Each dataset gets ≈3h of margin below its half-budget, held back because the
 `ConstantWeights` baseline used to measure throughput is the *cheapest* of the ~6 settings —
 `PCAWeights2`, `PartialWeights`, `FelsensteinWeights`, and the `PowerOffsetTransform`/`GridTuner`
 grid all do more per-proposal work — and because JVM start-up and log/tree-file I/O across 48 runs
@@ -250,8 +326,13 @@ giving a ≈41-minute medium-tier sweep — so **neither tier needs to drop belo
 reps to fit the 10-hour rule**; the constraint is met by right-sizing chain length and dataset
 (lassaL@120, not lassaL@551), not by shrinking the experimental design.
 
-Once BDMM-Prime is unblocked and iecor's throughput is measured, its `full`/`medium` chain
-lengths must be set the same way (its own time budget carved out of, or added on top of, the same
-10h ceiling) — this doc's numbers for infB/lassaL@120 may need to shrink to make room, or iecor
-may need to run as a separate overnight job. This is the same tier table now recorded in
-`targetedbeast-evaluation-pipeline.md`'s Phase 3 tier table.
+Once iecor actually runs and its throughput is measured (its BDMM-Prime tree-prior swap no
+longer blocks this; a second, unrelated migration-defect pass through its substitution/clock
+models does), its `full`/`medium` chain lengths must be set the same way (its own time budget
+carved out of, or added on top of, the same 10h ceiling) — this doc's numbers for infB/lassaL@120
+may need to shrink to make room, or iecor may need to run as a separate overnight job. Per the
+instruction not to silently cut reps or settings: **this doc does not shrink infB/lassaL@120's
+reps or settings to make room for an iecor number that does not exist yet** — their current
+chains (1,000,000 / 150,000, ≈6.91h total) stand unchanged until iecor is actually measured. This
+is the same tier table now recorded in `targetedbeast-evaluation-pipeline.md`'s Phase 3 tier
+table.
