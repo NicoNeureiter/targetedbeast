@@ -329,3 +329,185 @@ such hint under either weighting. The next step to distinguish signal from noise
 one already flagged: more reps (or a variance-reduction technique) targeted specifically at
 lassaL@80 `PCAWeights2` vs `ConstantWeights`, since that is now the single most promising
 (case, weighting) pair in the whole comparison, not a blanket re-run of the full design.
+
+---
+
+# infB — 5x extended run (ESS-gated re-check)
+
+**Context / why this run exists.** The convergence checks used everywhere above (flat posterior
+trace across reps, agreement within a "tens of units" band) turned out not to be sufficient: an
+actual `loganalyser -oneline -b 10 -quiet` pass on the underlying `run.log` files, run after the
+fact, showed `posterior.ESS` of only 13–82 for every infB cell above (and 2.6–9.9 for every
+lassaL cell, which is why lassaL is being set aside entirely, not extended). A flat trace and
+agreeing final-sample posteriors are consistent with a chain that has *found* the right region but
+is still autocorrelated enough that its effective sample size is far too low to trust a paired
+comparison. This run redoes `constant` vs `pca` on infB (141 taxa) with a ~5x larger total
+proposal budget and uses `posterior.ESS`/`tree.height.ESS`, gated at ≥100, as the actual
+convergence criterion.
+
+## Chain length chosen, and why
+
+Previous infB cells used `preBurnin=20,000 / chainLength=150,000` (170,000 total proposals).
+Scaled ~5x to `preBurnin=100,000 / chainLength=750,000` (850,000 total proposals), keeping
+`jumpInterval=20` as before. A timed calibration cell (`constant` rep0, seed 1000) took 452.7s of
+chain time (7:34 wall including JVM/module boot) at ~1,890 states/sec, matching the throughput
+measured earlier — confirming the ~450s/cell, ~60min/8-cell estimate before committing to the
+full run. No further extension was needed (see below).
+
+Rendered via `scripts/render_infb_benchmark_xml.py --settings constant pca --reps 4
+--chain-length 750000 --pre-burnin 100000 --jump-interval 20 --out-root runs/eval3/infb` (script
+unchanged from the earlier phase). Seeds `1000+rep` (1000–1003), shared between `constant` and
+`pca` at a given rep (paired), matching every other design in this document.
+
+## Convergence check — ESS gate
+
+All 8 cells clear the ESS≥100 bar comfortably, on both `posterior.ESS` and `tree.height.ESS`:
+
+| setting | rep | posterior.ESS | tree.height.ESS |
+|---|---:|---:|---:|
+| constant | 0 | 157.7 | 366.2 |
+| constant | 1 | 222.5 | 325.3 |
+| constant | 2 | 141.3 | 271.1 |
+| constant | 3 | 269.3 | 274.6 |
+| pca | 0 | 322.9 | 341.5 |
+| pca | 1 | 241.8 | 458.8 |
+| pca | 2 | 332.1 | 535.8 |
+| pca | 3 | 264.9 | 541.4 |
+
+Range 141.3–332.1 (posterior), 271.1–541.4 (tree.height) — an order of magnitude above the 13–82
+seen at 1x proposals, and comfortably above the ≥100 rule of thumb for every cell in both
+settings. **This is the first infB comparison in this document where the ESS gate is actually
+satisfied, so it is the first one whose paired result should be trusted.**
+
+## Raw results — chain-level (`__CHAIN__` row), per cell
+
+| setting | rep | acceptRate | meanJumpGivenAccepted | esjdPerSec_rnni |
+|---|---:|---:|---:|---:|
+| constant | 0 | 0.1490 | 4.569 | 21230.5 |
+| constant | 1 | 0.1544 | 4.397 | 19742.1 |
+| constant | 2 | 0.1550 | 4.298 | 20425.2 |
+| constant | 3 | 0.1504 | 4.405 | 20740.3 |
+| pca | 0 | 0.1670 | 4.068 | 21870.7 |
+| pca | 1 | 0.1654 | 4.282 | 21560.3 |
+| pca | 2 | 0.1659 | 3.935 | 21649.6 |
+| pca | 3 | 0.1639 | 4.234 | 23067.5 |
+
+## Paired analysis (pca − constant), t-based 90% CI, n=4, df=3
+
+| mean diff (ESJD/s) | 90% CI | excludes zero? | relative to constant mean |
+|---:|---|---|---:|
+| +1502.5 | (643.1, 2361.9) | **yes** | +7.3% |
+
+This is the first CI in the whole evaluation (across every dataset/size/weighting tried) that
+excludes zero. At an ESS the earlier "converged" cells never actually reached, `PCAWeights2`
+shows a small but statistically supported ~7% ESJD/s advantage over `ConstantWeights` on infB at
+its full 141 taxa. This does not retroactively validate any of the earlier null results above (all
+of those remain confounded by inadequate ESS and cannot be un-confounded after the fact) — it is
+a new, independently-gated data point, and the only one in this document that currently passes
+the ESS≥100 bar.
+
+---
+
+# iecor — constant vs PCAWeights2 (IN PROGRESS — see resume instructions)
+
+**Status at time of writing: `constant` (4/4 reps) complete and ESS-checked; `pca` (0/4 reps) not
+yet run.** This section will be completed in a follow-up pass; the exact resume command is below
+so no recalibration is needed.
+
+## Renderer
+
+No benchmark renderer existed for iecor before this task. `scripts/render_iecor_benchmark_xml.py`
+was written, modeled on `scripts/render_infb_benchmark_xml.py`'s `<run>`/`<state>`/RNNIMetric
+rewrite pattern. It reads `examples/iecor/vanilla/iecor.xml` directly (chosen as the base: it is
+the simpler of the two committed files — no active edge-weights distribution, no targeted
+operators wired up at all, only inert `<!-- -->`-commented alternatives and plain
+`WilsonBalding`/`Exchange` topology operators) and:
+
+- makes the `edgeweights` distribution swappable (`ConstantWeights` / `PCAWeights2` with
+  `maxWeight=20`, `dimension=10`, `data="@focalsubset"` — iecor's actual alignment id, not
+  infB's/lassaL's), inserted where vanilla's own inert alternatives already lived;
+- splices in the four targeted operators (`RangeSlide`, `TargetedWilsonBalding`,
+  `TargetedWilsonBaldingFixedHeight`, `WeightedWideOperator`, all wired to `@edgeweights`)
+  verbatim from `examples/iecor/pca/iecor.xml` (the only place they already exist, wired to that
+  file's own `PCAWeights`/dimension=6 convention — replaced here with the `PCAWeights2`
+  convention used everywhere else in this doc), in place of vanilla's plain
+  `WilsonBalding`/`WideExchange` pair. `pca/iecor.xml`'s own independent tuning changes
+  (`SubtreeSlide` weight 2.0→5.0, `screenlog` interval) were deliberately **not** copied — they're
+  orthogonal to the constant/pca comparison this renderer exists for, and copying only the
+  targeted-operator block keeps `constant` and `pca` identical except for the one thing being
+  compared.
+- points `RNNIMetric`'s `taxonset` at `@TaxonSet.five` — iecor's only `TaxonSet` element (built
+  off a site-filtered view of `focalsubset`; `FilteredAlignment` filters sites, not taxa, so it
+  carries the same 41 taxa as the full alignment and is what the tree itself uses).
+
+Deviation from the task's premise worth flagging explicitly: the task description assumed
+`vanilla/iecor.xml` "currently declares its own edge-weights distribution (likely
+`ConstantWeights` or similar)". It does not — all three of its `edgeweights` alternatives are
+commented out and it has no targeted operators active at all, so a "constant vs pca" comparison
+had nothing to vary without the operator-splicing step above. This was not treated as blocking:
+it's resolved by following the same convention every other renderer in this doc already uses
+(operators fixed, only `edgeweights` swaps), just sourced from `pca/iecor.xml` since that's the
+only file where the targeted-operator wiring already exists.
+
+## Chain length chosen, and why
+
+No prior direct throughput measurement existed for iecor with targeted operators active (the
+~10,428 states/sec figure elsewhere in this doc's baseline section was for a *shorter* probe
+without them). A first calibration cell (`pca`, seed 1000, `preBurnin=200,000 /
+chainLength=2,000,000`, `jumpInterval=20`) ran in 5:00 wall time (~7,330 states/sec measured from
+2.2M total proposals / ~300s chain time) and gave `posterior.ESS=95.8`, `Tree.t:tree.height.ESS
+=264.3` — just under the ≥100 gate on the headline parameter. Rather than accept a borderline
+result, the chain length was bumped 1.5x to `preBurnin=300,000 / chainLength=3,000,000` (3.3M
+total proposals, ~7.5 min/cell at the measured rate, ~60 min for the full 8-cell design), and the
+full `constant` side (4 reps) was rerun at this setting — see ESS table below, all comfortably
+clear ≥100. The `pca` side has not yet been rerun at this setting (see "Resume instructions").
+
+Rendered via `scripts/render_iecor_benchmark_xml.py --settings constant pca --reps 4
+--chain-length 3000000 --pre-burnin 300000 --jump-interval 20 --out-root runs/eval3/iecor`. Seeds
+`1000+rep` (1000–1003), paired with `pca` at the same seeds once run.
+
+## `constant` — convergence check (ESS gate) and raw results — DONE
+
+| rep | seed | posterior.ESS | Tree.t:tree.height.ESS | acceptRate | meanJumpGivenAccepted | esjdPerSec_rnni |
+|---:|---:|---:|---:|---:|---:|---:|
+| 0 | 1000 | 279.7 | 377.3 | 0.2775 | 0.3253 | 2237.4 |
+| 1 | 1001 | 209.4 | 301.6 | 0.2764 | 0.3109 | 2255.0 |
+| 2 | 1002 | 163.8 | 192.0 | 0.2718 | 0.3167 | 2177.5 |
+| 3 | 1003 | 214.5 | 355.6 | 0.2757 | 0.3083 | 2103.8 |
+
+All 4 `constant` reps clear ESS≥100 (163.8–279.7 posterior, 192.0–377.3 tree.height).
+
+## `pca` — NOT YET RUN
+
+`runs/eval3/iecor/pca/rep0/run.xml` on disk was rendered at the *current* (3,000,000/300,000)
+setting but has not been executed yet — the `run.log`/`run.opstats.tsv` present in that directory
+right now are stale leftovers from the 2,000,000/200,000 calibration cell (confirm via
+`awk -F'\t' '$2=="__CHAIN__"{print $3}' runs/eval3/iecor/pca/rep0/run.opstats.tsv` — if it prints
+`2000001` it is stale and needs rerunning; `3000001` means it's already the real result).
+
+## Resume instructions
+
+XML files for all 8 cells (`constant` rep0-3, `pca` rep0-3) are already rendered at the final
+setting under `runs/eval3/iecor/{constant,pca}/rep{0..3}/run.xml` — no need to re-render. Run each
+remaining cell (all 4 `pca` reps) with:
+
+```
+cd /path/to/targetedbeast   # this worktree
+mvn -o exec:exec -Dbeast.args="-seed <seed> -overwrite runs/eval3/iecor/pca/rep<rep>/run.xml" \
+    > runs/eval3/iecor/pca/rep<rep>/mvn.out 2>&1
+/Users/nneureiter/Projects/BEAST3/beast3/bin/loganalyser -oneline -b 10 -quiet \
+    runs/eval3/iecor/pca/rep<rep>/run.log > runs/eval3/iecor/pca/rep<rep>/run.ess.tsv
+```
+
+with `seed = 1000, 1001, 1002, 1003` for `rep = 0, 1, 2, 3` respectively (paired with the
+`constant` seeds above). Each cell takes ~7.5 minutes. `scripts/run_and_ess.sh <run_dir> <seed>`
+(uncommitted, scratch-only helper — not part of the tracked script set) wraps exactly this
+sequence if it still exists in the working tree; otherwise just run the two commands directly.
+
+Once all 4 `pca` reps are done: pull each cell's `__CHAIN__` row from
+`run.opstats.tsv` (`acceptRate`, `meanJumpGivenAccepted`, `esjdPerSec_rnni`) and each cell's
+`posterior.ESS`/`Tree.t:tree.height.ESS` from `run.ess.tsv`, confirm all 4 clear ESS≥100, then
+compute the same paired (pca − constant) t-based 90% CI (n=4, df=3, t=2.353) used everywhere else
+in this document, using the `constant` numbers already recorded above (do not rerun `constant` —
+same seeds, already ESS-gated and valid). Append the finished table, CI, and an explicit
+ESS-gate verdict to replace this "IN PROGRESS" section.
