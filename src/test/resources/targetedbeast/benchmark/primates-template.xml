@@ -1,0 +1,116 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<beast version="2.8"
+       namespace="beast.core:beast.core.util:beast.evolution.alignment:beast.evolution.nuc:beast.evolution.operators:beast.evolution.sitemodel:beast.evolution.substitutionmodel:beast.evolution.tree.coalescent:beast.base.core:beast.base.evolution.alignment:beast.base.evolution.likelihood:beast.base.evolution.operator:beast.base.evolution.sitemodel:beast.base.evolution.substitutionmodel:beast.base.evolution.tree:beast.base.evolution.tree.coalescent:beast.base.inference:beast.base.inference.operator:beast.base.inference.util:beast.pkgmgmt">
+
+    <!-- The sequence alignment (each sequence refers to a taxon above).         -->
+    <!-- ntax=6 nchar=768                                                        -->
+    <!-- npatterns=69                                                            -->
+    <data id="alignment" dataType="nucleotide">
+        <sequence taxon="human">
+            AGAAATATGTCTGATAAAAGAGTTACTTTGATAGAGTAAATAATAGGAGCTTAAACCCCCTTATTTCTACTAGGACTATGAGAATCGAACCCATCCCTGAGAATCCAAAATTCTCCGTGCCACCTATCACACCCCATCCTAAGTAAGGTCAGCTAAATAAGCTATCGGGCCCATACCCCGAAAATGTTGGTTATACCCTTCCCGTACTAAGAAATTTAGGTTAAATACAGACCAAGAGCCTTCAAAGCCCTCAGTAAGTTG-CAATACTTAATTTCTGTAAGGACTGCAAAACCCCACTCTGCATCAACTGAACGCAAATCAGCCACTTTAATTAAGCTAAGCCCTTCTAGACCAATGGGACTTAAACCCACAAACACTTAGTTAACAGCTAAGCACCCTAATCAAC-TGGCTTCAATCTAAAGCCCCGGCAGG-TTTGAAGCTGCTTCTTCGAATTTGCAATTCAATATGAAAA-TCACCTCGGAGCTTGGTAAAAAGAGGCCTAACCCCTGTCTTTAGATTTACAGTCCAATGCTTCA-CTCAGCCATTTTACCACAAAAAAGGAAGGAATCGAACCCCCCAAAGCTGGTTTCAAGCCAACCCCATGGCCTCCATGACTTTTTCAAAAGGTATTAGAAAAACCATTTCATAACTTTGTCAAAGTTAAATTATAGGCT-AAATCCTATATATCTTA-CACTGTAAAGCTAACTTAGCATTAACCTTTTAAGTTAAAGATTAAGAGAACCAACACCTCTTTACAGTGA
+        </sequence>
+        <sequence taxon="chimp">
+            AGAAATATGTCTGATAAAAGAATTACTTTGATAGAGTAAATAATAGGAGTTCAAATCCCCTTATTTCTACTAGGACTATAAGAATCGAACTCATCCCTGAGAATCCAAAATTCTCCGTGCCACCTATCACACCCCATCCTAAGTAAGGTCAGCTAAATAAGCTATCGGGCCCATACCCCGAAAATGTTGGTTACACCCTTCCCGTACTAAGAAATTTAGGTTAAGCACAGACCAAGAGCCTTCAAAGCCCTCAGCAAGTTA-CAATACTTAATTTCTGTAAGGACTGCAAAACCCCACTCTGCATCAACTGAACGCAAATCAGCCACTTTAATTAAGCTAAGCCCTTCTAGATTAATGGGACTTAAACCCACAAACATTTAGTTAACAGCTAAACACCCTAATCAAC-TGGCTTCAATCTAAAGCCCCGGCAGG-TTTGAAGCTGCTTCTTCGAATTTGCAATTCAATATGAAAA-TCACCTCAGAGCTTGGTAAAAAGAGGCTTAACCCCTGTCTTTAGATTTACAGTCCAATGCTTCA-CTCAGCCATTTTACCACAAAAAAGGAAGGAATCGAACCCCCTAAAGCTGGTTTCAAGCCAACCCCATGACCTCCATGACTTTTTCAAAAGATATTAGAAAAACTATTTCATAACTTTGTCAAAGTTAAATTACAGGTT-AACCCCCGTATATCTTA-CACTGTAAAGCTAACCTAGCATTAACCTTTTAAGTTAAAGATTAAGAGGACCGACACCTCTTTACAGTGA
+        </sequence>
+        <sequence taxon="bonobo">
+            AGAAATATGTCTGATAAAAGAATTACTTTGATAGAGTAAATAATAGGAGTTTAAATCCCCTTATTTCTACTAGGACTATGAGAGTCGAACCCATCCCTGAGAATCCAAAATTCTCCGTGCCACCTATCACACCCCATCCTAAGTAAGGTCAGCTAAATAAGCTATCGGGCCCATACCCCGAAAATGTTGGTTATACCCTTCCCGTACTAAGAAATTTAGGTTAAACACAGACCAAGAGCCTTCAAAGCTCTCAGTAAGTTA-CAATACTTAATTTCTGTAAGGACTGCAAAACCCCACTCTGCATCAACTGAACGCAAATCAGCCACTTTAATTAAGCTAAGCCCTTCTAGATTAATGGGACTTAAACCCACAAACATTTAGTTAACAGCTAAACACCCTAATCAGC-TGGCTTCAATCTAAAGCCCCGGCAGG-TTTGAAGCTGCTTCTTTGAATTTGCAATTCAATATGAAAA-TCACCTCAGAGCTTGGTAAAAAGAGGCTTAACCCCTGTCTTTAGATTTACAGTCCAATGCTTCA-CTCAGCCATTTTACCACAAAAAAGGAAGGAATCGAACCCCCTAAAGCTGGTTTCAAGCCAACCCCATGACCCCCATGACTTTTTCAAAAGATATTAGAAAAACTATTTCATAACTTTGTCAAAGTTAAATTACAGGTT-AAACCCCGTATATCTTA-CACTGTAAAGCTAACCTAGCATTAACCTTTTAAGTTAAAGATTAAGAGGACCAACACCTCTTTACAGTGA
+        </sequence>
+        <sequence taxon="gorilla">
+            AGAAATATGTCTGATAAAAGAGTTACTTTGATAGAGTAAATAATAGAGGTTTAAACCCCCTTATTTCTACTAGGACTATGAGAATTGAACCCATCCCTGAGAATCCAAAATTCTCCGTGCCACCTGTCACACCCCATCCTAAGTAAGGTCAGCTAAATAAGCTATCGGGCCCATACCCCGAAAATGTTGGTCACATCCTTCCCGTACTAAGAAATTTAGGTTAAACATAGACCAAGAGCCTTCAAAGCCCTTAGTAAGTTA-CAACACTTAATTTCTGTAAGGACTGCAAAACCCTACTCTGCATCAACTGAACGCAAATCAGCCACTTTAATTAAGCTAAGCCCTTCTAGATCAATGGGACTCAAACCCACAAACATTTAGTTAACAGCTAAACACCCTAGTCAAC-TGGCTTCAATCTAAAGCCCCGGCAGG-TTTGAAGCTGCTTCTTCGAATTTGCAATTCAATATGAAAT-TCACCTCGGAGCTTGGTAAAAAGAGGCCCAGCCTCTGTCTTTAGATTTACAGTCCAATGCCTTA-CTCAGCCATTTTACCACAAAAAAGGAAGGAATCGAACCCCCCAAAGCTGGTTTCAAGCCAACCCCATGACCTTCATGACTTTTTCAAAAGATATTAGAAAAACTATTTCATAACTTTGTCAAGGTTAAATTACGGGTT-AAACCCCGTATATCTTA-CACTGTAAAGCTAACCTAGCGTTAACCTTTTAAGTTAAAGATTAAGAGTATCGGCACCTCTTTGCAGTGA
+        </sequence>
+        <sequence taxon="orangutan">
+            AGAAATATGTCTGACAAAAGAGTTACTTTGATAGAGTAAAAAATAGAGGTCTAAATCCCCTTATTTCTACTAGGACTATGGGAATTGAACCCACCCCTGAGAATCCAAAATTCTCCGTGCCACCCATCACACCCCATCCTAAGTAAGGTCAGCTAAATAAGCTATCGGGCCCATACCCCGAAAATGTTGGTTACACCCTTCCCGTACTAAGAAATTTAGGTTA--CACAGACCAAGAGCCTTCAAAGCCCTCAGCAAGTCA-CAGCACTTAATTTCTGTAAGGACTGCAAAACCCCACTTTGCATCAACTGAGCGCAAATCAGCCACTTTAATTAAGCTAAGCCCTCCTAGACCGATGGGACTTAAACCCACAAACATTTAGTTAACAGCTAAACACCCTAGTCAAT-TGGCTTCAGTCCAAAGCCCCGGCAGGCCTTAAAGCTGCTCCTTCGAATTTGCAATTCAACATGACAA-TCACCTCAGGGCTTGGTAAAAAGAGGTCTGACCCCTGTTCTTAGATTTACAGCCTAATGCCTTAACTCGGCCATTTTACCGCAAAAAAGGAAGGAATCGAACCTCCTAAAGCTGGTTTCAAGCCAACCCCATAACCCCCATGACTTTTTCAAAAGGTACTAGAAAAACCATTTCGTAACTTTGTCAAAGTTAAATTACAGGTC-AGACCCTGTGTATCTTA-CATTGCAAAGCTAACCTAGCATTAACCTTTTAAGTTAAAGACTAAGAGAACCAGCCTCTCTTTGCAATGA
+        </sequence>
+        <sequence taxon="siamang">
+            AGAAATACGTCTGACGAAAGAGTTACTTTGATAGAGTAAATAACAGGGGTTTAAATCCCCTTATTTCTACTAGAACCATAGGAGTCGAACCCATCCTTGAGAATCCAAAACTCTCCGTGCCACCCGTCGCACCCTGTTCTAAGTAAGGTCAGCTAAATAAGCTATCGGGCCCATACCCCGAAAATGTTGGTTATACCCTTCCCATACTAAGAAATTTAGGTTAAACACAGACCAAGAGCCTTCAAAGCCCTCAGTAAGTTAACAAAACTTAATTTCTGCAAGGGCTGCAAAACCCTACTTTGCATCAACCGAACGCAAATCAGCCACTTTAATTAAGCTAAGCCCTTCTAGATCGATGGGACTTAAACCCATAAAAATTTAGTTAACAGCTAAACACCCTAAACAACCTGGCTTCAATCTAAAGCCCCGGCAGA-GTTGAAGCTGCTTCTTTGAACTTGCAATTCAACGTGAAAAATCACTTCGGAGCTTGGCAAAAAGAGGTTTCACCTCTGTCCTTAGATTTACAGTCTAATGCTTTA-CTCAGCCACTTTACCACAAAAAAGGAAGGAATCGAACCCTCTAAAACCGGTTTCAAGCCAGCCCCATAACCTTTATGACTTTTTCAAAAGATATTAGAAAAACTATTTCATAACTTTGTCAAAGTTAAATCACAGGTCCAAACCCCGTATATCTTATCACTGTAGAGCTAGACCAGCATTAACCTTTTAAGTTAAAGACTAAGAGAACTACCGCCTCTTTACAGTGA
+        </sequence>
+    </data>
+
+    <!-- The HKY substitution model (Hasegawa, Kishino & Yano, 1985)             -->
+    <input spec="beast.base.spec.evolution.substitutionmodel.HKY" id="hky">
+        <parameter name="kappa" idref="hky.kappa"/>
+        <input id="freqs" name="frequencies" spec="beast.base.spec.evolution.substitutionmodel.Frequencies">
+            <input name="data" idref="alignment"/>
+        </input>
+    </input>
+
+    <!-- site model                                                              -->
+    <input spec="beast.base.spec.evolution.sitemodel.SiteModel" id="siteModel">
+        <!--<parameter name='mutationRate'>1.0</parameter>-->
+        <input name="substModel" idref="hky"/>
+    </input>
+
+    <input spec="beast.base.spec.evolution.likelihood.TreeLikelihood" id="treeLikelihood">
+        <input name="data" idref="alignment"/>
+        <input name="tree" idref="tree"/>
+        <input name="siteModel" idref="siteModel"/>
+    </input>
+
+    <input spec="beast.base.spec.evolution.tree.ClusterTree" id="tree" clusterType="upgma">
+        <input name="taxa" idref="alignment"/>
+    </input>
+
+    <input id="hky.kappa" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal">1.0</input>
+
+    <input id="popSize" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal">1.0</input>
+
+    <run spec="MCMC" id="mcmc" chainLength="5000000"> <!--autoOptimize="true"-->
+        <state>
+            <input name="stateNode" idref="hky.kappa"/>
+            <input name="stateNode" idref="popSize"/>
+            <input name="stateNode" idref="tree"/>
+        </state>
+
+        <distribution spec="CompoundDistribution" id="posterior">
+            <distribution id="coalescent" spec="Coalescent">
+                <treeIntervals spec="beast.base.evolution.tree.TreeIntervals" id="TreeIntervals">
+                     <tree idref="tree"/>
+                </treeIntervals>
+                <populationModel spec="beast.base.spec.evolution.tree.coalescent.ConstantPopulation" id="ConstantPopulation">
+                    <parameter name="popSize" idref="popSize"/>
+                </populationModel>
+            </distribution>
+
+            <distribution id="likelihood" idref="treeLikelihood"/>
+
+            <!-- <distribution id="edgeweights" spec="targetedbeast.edgeweights.PCAWeights" tree="@tree" maxWeight="20" data="@alignment" dimension="6" useOneNorm="false"/> -->
+            <!-- <distribution id="edgeweights" spec="targetedbeast.edgeweights.PCAWeights2" tree="@tree" maxWeight="20" data="@alignment" dimension="6" useOneNorm="true"/> -->
+            <distribution id="edgeweights" spec="targetedbeast.edgeweights.PartialWeights" tree="@tree" data="@alignment" likelihood="@treeLikelihood"/>
+            
+        </distribution>
+
+        <operator id="kappaScaler" parameter="@hky.kappa" scaleFactor="0.5" weight="1" spec="beast.base.spec.inference.operator.ScaleOperator"/>
+        <operator id="popSizeScaler" parameter="@popSize" scaleFactor="0.5" weight="3" spec="beast.base.spec.inference.operator.ScaleOperator"/>
+        <operator id="treeScaler" scaleFactor="0.5" tree="@tree" weight="1" spec="beast.base.spec.evolution.operator.ScaleTreeOperator"/>
+        <operator id="treeUniform" tree="@tree" weight="10" spec="beast.base.evolution.operator.Uniform"/>
+        <operator id="subtreeSlide" spec="beast.base.evolution.operator.SubtreeSlide" tree="@tree" gaussian="true" size="1.0" weight="5"/>
+        <operator id="narrow" spec="Exchange" tree="@tree" isNarrow="true" weight="1"/>
+        <operator id="wide" spec="Exchange" tree="@tree" isNarrow="false" weight="1"/>
+        <!-- <operator id='wilsonBalding' spec='WilsonBalding' tree="@tree" weight="1" /> -->
+        <!-- <operator id="targetedWilsonBalding" spec="targetedbeast.operators.TargetedWilsonBalding" tree="@tree" weight="10" edgeWeights="@edgeweights" useEdgeLength="false"/> -->
+        <operator id="targetedWilsonBalding" spec="targetedbeast.operators.TargetedWilsonBaldingFixedHeight" tree="@tree" weight="10" edgeWeights="@edgeweights"/>
+        <operator id="targetedWilsonBaldingDelta" spec="targetedbeast.operators.TargetedWilsonBaldingHeightDelta" tree="@tree" weight="10" edgeWeights="@edgeweights" subtreeSlide="@subtreeSlide" shrinkage="0.2"/>
+
+        <!-- <logger logEvery="50" fileName="$(filebase).$(seed).log"> -->
+        <logger logEvery="20" fileName="$(filebase).log">
+            <log idref="posterior"/>
+            <log idref="likelihood"/>
+            <log idref="coalescent"/>
+            <log idref="popSize"/>
+            <log idref="hky.kappa"/>
+        </logger>
+        <!-- <logger logEvery="50" fileName="$(filebase).$(seed).trees"> -->
+        <logger logEvery="50" fileName="$(filebase).trees">
+            <log idref="tree"/>
+        </logger>
+        <logger logEvery="50000">
+            <log idref="posterior"/>
+            <log idref="likelihood"/>
+            <log idref="coalescent"/>
+            <log idref="popSize"/>
+            <log idref="hky.kappa"/>
+            <log id="ESS" spec="beast.base.spec.inference.util.ESS" arg="@likelihood"/>
+        </logger>
+    </run>
+
+</beast>

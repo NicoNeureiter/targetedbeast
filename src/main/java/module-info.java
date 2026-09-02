@@ -10,6 +10,7 @@ open module targetedbeast {
 
     exports targetedbeast.alignment;
     exports targetedbeast.annotator;
+    exports targetedbeast.benchmark;
     exports targetedbeast.coalescent;
     exports targetedbeast.edgeweights;
     exports targetedbeast.edgeweights.learnedweights;
@@ -26,6 +27,7 @@ open module targetedbeast {
     provides beast.base.core.BEASTInterface with
         targetedbeast.alignment.ConsensusAlignment,
         targetedbeast.alignment.RapidAlignment,
+        targetedbeast.benchmark.BenchmarkMCMC,
         targetedbeast.coalescent.RapidCoalescent,
         targetedbeast.coalescent.RapidTreeIntervals,
         targetedbeast.edgeweights.CombinedEdgeWeights,

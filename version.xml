@@ -23,6 +23,8 @@
         <provider classname="targetedbeast.edgeweights.CombinedEdgeWeights"/>
 
         <provider classname="targetedbeast.weighttransform.SpsaTuner"/>
+
+        <provider classname="targetedbeast.benchmark.BenchmarkMCMC"/>
         <provider classname="targetedbeast.weighttransform.GridTuner"/>
         <provider classname="targetedbeast.weighttransform.PowerOffsetTransform"/>
         <provider classname="targetedbeast.weighttransform.ExpOffsetTransform"/>
