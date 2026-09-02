@@ -124,41 +124,75 @@ failures as above).
   regardless of classpath placement; `infb_HA_141` and `lassaL_kli22` both use
   `feast.fileio.TraitSetFromTaxonSet` for the date trait.
 
-### New blockers found (outside this task's authorized scope)
+### AVMVN tree transform — resolved
 
-- **`iecor/{pca,vanilla}/iecor.xml` — `bdsky.evolution.speciation.BirthDeathSkylineModel` is not
-  available anywhere** (not in any local BEAST3 checkout, not in the local m2). This is a
-  different missing package than the pre-identified `BEASTLabs`/`SimpleRandomTree` issue — no
-  BEAST3 port of BDSKY exists in this workspace. **iecor could not be parsed, run, or measured for
-  throughput or pattern count.** This needs a user decision (port BDSKY, find/build an existing
-  BEAST3 build of it, or substitute a different tree prior in the example) before iecor is usable;
-  not attempted here since only a `BEASTlabs` dependency was authorized.
-- **`infb_HA_141` and `lassaL_kli22` — `Transform$NoTransform` no longer accepts a `Tree`.** Both
-  templates feed the tree directly into an `AVMNOperator` joint transform
-  (`<transformations spec="Transform$NoTransform"><f idref="tree"/></transformations>`), which
-  worked in BEAST2 because `Tree` implements `Function`. The spec-typed twin's `f` input is typed
-  to `Tensor`, which `beast.base.evolution.tree.Tree` does not implement in `2.8.0-beta8` (no
-  spec-typed tree-as-vector wrapper exists yet in `beast.base.spec.evolution.tree`). This blocks
-  both templates from parsing as committed. **For the throughput measurement below only**, this one
-  `<transformations>` block was dropped from a disposable scratch copy of each XML (not the
-  committed corpus) — the operator still has two other valid transforms (frequencies,
-  clock/shape/kappa), so the run is otherwise unmodified. This is a core-level typed-system gap,
-  not something fixable via XML or `version.xml` configuration.
+**`infb_HA_141` and `lassaL_kli22` — `Transform$NoTransform` no longer accepts a `Tree`.** Both
+templates fed the tree directly into an `AVMNOperator` joint transform
+(`<transformations spec="Transform$NoTransform"><f idref="tree"/></transformations>`), which
+worked in BEAST2 because `Tree` implements `Function`. The spec-typed twin's `f` input is typed
+to `Tensor`, which `beast.base.evolution.tree.Tree` does not implement in `2.8.0-beta8` (no
+spec-typed tree-as-vector wrapper exists yet in `beast.base.spec.evolution.tree`). **Fixed in the
+committed corpus**: that one `<transformations>` block is removed (with an explanatory XML
+comment) from both `template.xml` files. The `AVMNOperator` itself and its other two
+transformations (`clockRate`/`gammaShape`/`kappa` and the `freqs` sum-to-one constraint) are
+unchanged. Verified by running both templates end-to-end (see Results below) — this is no longer
+a scratch-copy workaround, it is the shipped XML.
+
+### iecor — BDSKY replaced with BDMM-Prime, build blocked
+
+The original blocker — `bdsky.evolution.speciation.BirthDeathSkylineModel` has no BEAST 3 port
+anywhere in this workspace — is superseded by the user's decision to replace the BDSKY tree prior
+with **BDMM-Prime** (single-type `bdmmprime.distribution.BirthDeathMigrationDistribution` +
+`bdmmprime.parameterization.EpiParameterization`, whose `Re`/`becomeUninfectiousRate`/
+`samplingProportion`/`rhoSampling` inputs map one-to-one onto iecor's existing BDSKY parameters).
+The XML migration itself was not attempted because the dependency does not build:
+
+```
+mvn -o clean install -DskipTests   (in /Users/nneureiter/Projects/BEAST3/BDMM-Prime, branch beast2.8-migration)
+
+[WARNING] The POM for io.github.compevol:sampled-ancestors:jar:2.3.0-beta1 is missing, no dependency information available
+[ERROR] Failed to execute goal on project bdmm-prime: Could not resolve dependencies for project io.github.tgvaughan:bdmm-prime:jar:3.0.0
+[ERROR] dependency: io.github.compevol:sampled-ancestors:jar:2.3.0-beta1 (compile)
+[ERROR] 	Cannot access github (https://maven.pkg.github.com/CompEvol/beast3) in offline mode and the artifact io.github.compevol:sampled-ancestors:jar:2.3.0-beta1 has not been downloaded from it before.
+[ERROR] 	Cannot access central (https://repo.maven.apache.org/maven2) in offline mode and the artifact io.github.compevol:sampled-ancestors:jar:2.3.0-beta1 has not been downloaded from it before.
+```
+
+BDMM-Prime's pom hard-pins `io.github.compevol:sampled-ancestors:2.3.0-beta1`. That coordinate is
+not in the local m2 and (offline) not reachable from GitHub Packages or Central. The only local
+`sampled-ancestors` checkout (`/Users/nneureiter/Projects/BEAST3/sampled-ancestors`) is versioned
+`2.3.0-SNAPSHOT` and built against `beast.version=2.8.0-beta8` — a different artifact coordinate
+and a different BEAST base version than BDMM-Prime (`2.8.0-beta5`) declares. This is exactly the
+beta5-vs-beta8 skew called out as a possible blocker: unlike BEASTLabs (whose `2.8.0-beta5` pin
+resolved and compiled cleanly alongside this project's `beta8` pin with no missing transitive
+dependency), BDMM-Prime cannot be built offline at all, because the artifact it needs under its
+declared coordinate exists nowhere in this workspace, not because of an API mismatch that could be
+patched around. **BLOCKED** — not attempted further (installing the local SA checkout under a
+different, unauthorized version coordinate, or editing BDMM-Prime's pom, would be improvising
+outside this task's scope). iecor could not be migrated, parsed, run, or measured for throughput
+or pattern count. Needs a user decision: publish/vendor `sampled-ancestors:2.3.0-beta1` somewhere
+reachable, rebuild BDMM-Prime against the local SA `2.3.0-SNAPSHOT`/`beta8` combination (and verify
+BDMM-Prime still compiles/runs against that pair), or another resolution.
 
 ### Method
 
 Fixed-length runs, no BEAGLE (not installed — `beagle-1.0.0.jar` is present in the local m2 as a
 Java stub only; native library load falls back to `BeerLikelihoodCore4` in all runs below,
 consistent with normal use). `examples/primates.xml`: chain shortened to 20k in a scratch copy.
-`examples/infb_HA_141/template.xml`: `{chain_length}` → 10k, `{edge_weights}` →
-`targetedbeast.edgeweights.ConstantWeights`. `examples/iecor/*/iecor.xml`: chain shortened to 5k
-(blocked before running — see above). `lassaL_kli22/template.xml`: `{chain_length}` → 5k,
-`{edge_weights}` → `ConstantWeights`, `{alignment_file}` → the user-supplied
-`ali_normalized.fasta` (present in the user's checkout, copied read-only into this worktree,
-untracked per `.gitignore`), all `{target_weight_transform*}` slots emptied (no transform
-declared — `RangeSlide`/`WeightedWideOperator`/`TargetedWilsonBalding` all still take their
-untransformed defaults). "Total calculation time" is BEAST's own reported chain time, excluding
-JVM/module-boot overhead.
+`examples/infb_HA_141/template.xml`: `{chain_length}` → 10k (later re-verified at 2k after the
+AVMVN fix), `{edge_weights}` → `targetedbeast.edgeweights.ConstantWeights`.
+`examples/iecor/*/iecor.xml`: blocked, not run (BDMM-Prime does not build — see above).
+`lassaL_kli22/template.xml`: `{chain_length}` → 5k, `{edge_weights}` → `ConstantWeights`,
+`{alignment_file}` → the user-supplied `ali_normalized.fasta` (551 taxa) or its seeded
+`ali_normalized.n120.fasta` subsample (120 taxa, via `generate_xmls.py`'s
+`subsampled_alignment(120)`, `SUBSAMPLE_SEED = 42`), all `{target_weight_transform*}` slots
+emptied. Runs used `render_xml`'s own template rendering (`generate_xmls.py`'s `render_xml`
+function called directly for the `ConstantWeights`/`none` combination it doesn't currently
+generate by default) against the **committed** template (post AVMVN fix) — no scratch-copy
+XML surgery was needed this time. "Total calculation time" is BEAST's own reported chain time,
+excluding JVM/module-boot overhead. Runs used a manually assembled module path
+(`target/classes` + the Maven dependency classpath + `lib/feast.v10.6.0.jar`, copied to a
+JPMS-compliant filename since automatic-module-name derivation rejects `feast.v10.6.0.jar`'s
+literal name) since `mvn exec:exec`'s `%classpath` does not include the repo's raw `lib/` jars.
 
 ### Results
 
@@ -166,29 +200,58 @@ JVM/module-boot overhead.
 |---|---:|---:|---:|---:|---:|---:|
 | `primates.xml` | 6 | 768 | 69 | 20,000 | 0.217 s | ~92,200 |
 | `infb_HA_141/template.xml` | 141 | 1,856 | 489 | 10,000 | 5.275 s | ~1,900 |
-| `iecor/{pca,vanilla}/iecor.xml` | 41 | 2,659×341 partitions | **blocked** (BDSKY) | — | — | **blocked** |
-| `lassaL_kli22` (+ user's `ali_normalized.fasta`) | 551 | 7,038 | 6,119 | 5,000 | 100.274 s | ~50 |
+| `infb_HA_141/template.xml` (re-verified, AVMVN fix, committed XML) | 141 | 1,856 | 489 | 2,000 | 1.063 s | ~1,881 |
+| `iecor/{pca,vanilla}/iecor.xml` | 41 | 2,659×341 partitions | **blocked** (BDMM-Prime) | — | — | **blocked** |
+| `lassaL_kli22` (+ user's `ali_normalized.fasta`, full) | 551 | 7,038 | 6,119 | 5,000 | 100.274 s | ~50 |
+| `lassaL_kli22@120` (seeded subsample, committed XML) | 120 | 7,038 | 4,572 | 5,000 | 17.003 s | ~294 |
 
 Pattern counts and taxon counts are both BEAST's own startup report
 (`Alignment(...): [taxa, patterns, sites] = [...]`), confirming the plan's point that pattern
 count does not scale linearly with taxa: infB has 2.3x primates' taxa but 7.1x its patterns;
-lassaL has 3.9x infB's taxa but 12.5x its patterns.
+lassaL has 3.9x infB's taxa but 12.5x its patterns; lassaL@120 (0.22x lassaL's taxa) still keeps
+0.75x its patterns — cost does not fall in proportion to the taxon subsample, which is exactly why
+the tier arithmetic below uses the measured lassaL@120 number rather than extrapolating from taxa
+alone.
 
-### Tier wall-time estimates this contradicts
+### The 10-hour rule and the derived tier table
 
-The plan's `full` tier (10M states, 4 reps, ~6 settings, 3 datasets) is described as "machine-days,
-not hours." At the measured per-dataset throughput, a **single** 10M-state replicate would take:
+The original `full` tier (10M states, 4 reps, ~6 settings, 3 datasets, all at full taxon count) is
+machine-days, not hours, and is dataset-dominated by lassaL:
 
-- infB: 10,000,000 / 1,896 ≈ **1.5 hours** — not "machine-days" on its own.
-- lassaL: 10,000,000 / 50 ≈ **55.7 hours (≈2.3 days)** — confirms and sharpens the plan's warning;
-  at 4 reps × ~6 settings this dataset alone is **~56 days of sequential compute**, an order of
-  magnitude past "overnight-to-multi-day" unless run with substantial parallelism
-  (`--config parallel_subdirs=1`) or a smaller `full`-tier chain length for this dataset
-  specifically.
-- iecor: unmeasured (blocked); the plan's only calibration point,
-  `examples/iecor/vanilla/IECOR_untargeted.log`, is a trace log with no wall-clock metadata, so it
-  could not be used to estimate iecor throughput independently of a working run.
+- infB: 10,000,000 / 1,900 ≈ **1.5 hours** for one replicate — fine on its own.
+- lassaL (551 taxa): 10,000,000 / 50 ≈ **55.7 hours (≈2.3 days)** for one replicate; at 4 reps ×
+  ~6 settings that is **~56 days of sequential compute** — an order of magnitude past "overnight."
+- iecor: was unmeasured (now known blocked — see above); the plan's only prior calibration point,
+  `examples/iecor/vanilla/IECOR_untargeted.log`, is a trace log with no wall-clock metadata.
 
-The `full`-tier estimate is dataset-dominated by lassaL, not uniform across datasets as the plan's
-single "machine-days" framing implies — infB is cheap enough to run overnight by itself, while
-lassaL is not, at these settings.
+**Decision: lassaL's full 551-taxon alignment is not part of the pipeline at all** — not just at
+the `full` tier. Every tier uses the lassaL@120 subsample (or smaller, at `fast`, once Phase 0
+step 4 picks a size) instead. The full-taxon analysis is a user-initiated cluster job, not
+something any tier runs.
+
+**Full-tier arithmetic, from measured throughput, under the 10-hour rule.** Budget: 10h =
+36,000s. Split evenly across the two datasets that currently build and run (infB, lassaL@120);
+iecor is excluded until BDMM-Prime builds (see above) — its cost is unknown, so it cannot be
+budgeted yet. Each dataset gets ≈3h of margin below its half-budget, held back because the
+`ConstantWeights` baseline used to measure throughput is the *cheapest* of the ~6 settings —
+`PCAWeights2`, `PartialWeights`, `FelsensteinWeights`, and the `PowerOffsetTransform`/`GridTuner`
+grid all do more per-proposal work — and because JVM start-up and log/tree-file I/O across 48 runs
+are not in the measured "chain time."
+
+| dataset | measured states/sec | `full` chain | time/rep | × 24 reps (6 settings × 4 reps) |
+|---|---:|---:|---:|---:|
+| infB (full, 141 taxa) | 1,900 | 1,000,000 | 526 s | ≈3.51 h |
+| lassaL@120 | 294 | 150,000 | 510 s | ≈3.40 h |
+| iecor | **blocked** | **blocked** | — | — |
+
+Sequential total for the two runnable datasets: ≈**6.91 h**, inside the 10h ceiling with ≈3h
+(≈30%) to spare. `medium` scales both chain lengths down 10× (infB 100,000, lassaL@120 15,000),
+giving a ≈41-minute medium-tier sweep — so **neither tier needs to drop below 6 settings × 4
+reps to fit the 10-hour rule**; the constraint is met by right-sizing chain length and dataset
+(lassaL@120, not lassaL@551), not by shrinking the experimental design.
+
+Once BDMM-Prime is unblocked and iecor's throughput is measured, its `full`/`medium` chain
+lengths must be set the same way (its own time budget carved out of, or added on top of, the same
+10h ceiling) — this doc's numbers for infB/lassaL@120 may need to shrink to make room, or iecor
+may need to run as a separate overnight job. This is the same tier table now recorded in
+`targetedbeast-evaluation-pipeline.md`'s Phase 3 tier table.
