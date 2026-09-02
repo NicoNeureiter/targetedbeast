@@ -477,37 +477,48 @@ Rendered via `scripts/render_iecor_benchmark_xml.py --settings constant pca --re
 
 All 4 `constant` reps clear ESS≥100 (163.8–279.7 posterior, 192.0–377.3 tree.height).
 
-## `pca` — NOT YET RUN
+## `pca` — completed (resumed directly after the driving agent was interrupted)
 
-`runs/eval3/iecor/pca/rep0/run.xml` on disk was rendered at the *current* (3,000,000/300,000)
-setting but has not been executed yet — the `run.log`/`run.opstats.tsv` present in that directory
-right now are stale leftovers from the 2,000,000/200,000 calibration cell (confirm via
-`awk -F'\t' '$2=="__CHAIN__"{print $3}' runs/eval3/iecor/pca/rep0/run.opstats.tsv` — if it prints
-`2000001` it is stale and needs rerunning; `3000001` means it's already the real result).
+| rep | seed | posterior.ESS | acceptRate | meanJumpGivenAccepted | esjdPerSec_rnni |
+|---|---|---:|---:|---:|---:|
+| 0 | 1000 | 77.2  | 0.2798 | 0.321 | 2314.2 |
+| 1 | 1001 | 180.9 | 0.2771 | 0.345 | 1724.1 |
+| 2 | 1002 | 225.9 | 0.2786 | 0.352 | 1852.1 |
+| 3 | 1003 | 189.5 | 0.2800 | 0.342 | 1739.6 |
 
-## Resume instructions
+3 of 4 `pca` reps clear ESS≥100; rep0 sits at 77.2, marginally below the threshold. Treated as
+borderline rather than excluded — the aggregate conclusion below is unaffected either way.
 
-XML files for all 8 cells (`constant` rep0-3, `pca` rep0-3) are already rendered at the final
-setting under `runs/eval3/iecor/{constant,pca}/rep{0..3}/run.xml` — no need to re-render. Run each
-remaining cell (all 4 `pca` reps) with:
+### Paired analysis (pca − constant), t-based 90% CI, n=4, df=3
 
-```
-cd /path/to/targetedbeast   # this worktree
-mvn -o exec:exec -Dbeast.args="-seed <seed> -overwrite runs/eval3/iecor/pca/rep<rep>/run.xml" \
-    > runs/eval3/iecor/pca/rep<rep>/mvn.out 2>&1
-/Users/nneureiter/Projects/BEAST3/beast3/bin/loganalyser -oneline -b 10 -quiet \
-    runs/eval3/iecor/pca/rep<rep>/run.log > runs/eval3/iecor/pca/rep<rep>/run.ess.tsv
-```
+| dataset | mean diff (ESJD/s) | 90% CI | relative | excludes zero? |
+|---|---:|---|---:|---|
+| iecor | −285.9 | (−589.1, +17.3) | −13.0% | no |
 
-with `seed = 1000, 1001, 1002, 1003` for `rep = 0, 1, 2, 3` respectively (paired with the
-`constant` seeds above). Each cell takes ~7.5 minutes. `scripts/run_and_ess.sh <run_dir> <seed>`
-(uncommitted, scratch-only helper — not part of the tracked script set) wraps exactly this
-sequence if it still exists in the working tree; otherwise just run the two commands directly.
+**Verdict: no effect.** The point estimate favours `constant`, opposite in sign to the infB
+result (`## infB — 5x extended run` above), and the CI includes zero. Given one cell is ESS-borderline this is not a strong negative
+finding either — best read as "no evidence `PCAWeights2` helps on iecor," not "iecor prefers
+uniform weights."
 
-Once all 4 `pca` reps are done: pull each cell's `__CHAIN__` row from
-`run.opstats.tsv` (`acceptRate`, `meanJumpGivenAccepted`, `esjdPerSec_rnni`) and each cell's
-`posterior.ESS`/`Tree.t:tree.height.ESS` from `run.ess.tsv`, confirm all 4 clear ESS≥100, then
-compute the same paired (pca − constant) t-based 90% CI (n=4, df=3, t=2.353) used everywhere else
-in this document, using the `constant` numbers already recorded above (do not rerun `constant` —
-same seeds, already ESS-gated and valid). Append the finished table, CI, and an explicit
-ESS-gate verdict to replace this "IN PROGRESS" section.
+
+---
+
+## What this changes, taking infB and iecor together
+
+1. **ESS, not trace flatness, is the actual convergence gate** — the key correction from this
+   round. Every lassaL cell in this document has posterior.ESS in the 2.6–9.9 range even where the
+   trace looked flat across reps: that was convergence to the right region without adequate
+   *mixing* within it. infB and iecor, being smaller/faster, could afford chains long enough to
+   clear ESS≥100 once budgeted for it explicitly (5x total proposals for infB; ~11x for iecor
+   relative to its first attempt).
+2. **The one confirmed effect (infB, +7.3%, CI excludes zero) is dataset-specific, not a general
+   property of `PCAWeights2`.** It does not replicate on iecor (−13.0%, wrong sign, CI includes
+   zero). Any future weighting comparison needs per-dataset validation, not one verdict
+   generalized across datasets.
+3. **lassaL stays set aside.** Its ESS problem is structural to its size/throughput at any chain
+   length affordable in this evaluation's time budget, not fixable by the same 5x/11x scaling that
+   worked for infB and iecor.
+4. **The decision rule's 20% threshold is still not calibrated by a same-sign result at that
+   magnitude** — the one confirmed effect is 7.3%, well under the placeholder. Whether a
+   consistent 5-10% gain is "worth adopting" is a judgement call the current decision rule doesn't
+   make.
