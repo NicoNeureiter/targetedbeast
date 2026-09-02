@@ -119,3 +119,129 @@ convergence-length pilot at that size specifically (track the posterior trace, e
 independent reps agree, the same check applied here) rather than assuming a chain length scaled
 linearly from smaller sizes is sufficient. Given how much throughput drops with taxon count, this
 pilot should be run once per size and its result cached, not re-derived per experiment.
+
+---
+
+# Follow-up — infB full (141 taxa) and lassaL@100
+
+Extends the experiment above to two more cases chosen to bracket the previous result: **infB
+full** (141 taxa, 489 patterns, nucleotide/HKY/strict-clock — a different data regime from lassaL
+entirely) and **lassaL@100** (a seeded 100-taxon subsample, `SUBSAMPLE_SEED=42`, same alignment
+and template as above), which sits between the converged-but-null lassaL n80 and the
+never-converged lassaL n150/n250. Same design as above: `ConstantWeights` vs `ParsimonyWeights2`
+(`maxWeight=20`), 4 reps per (case, setting) cell, seed = 1000+rep shared between settings at a
+given rep (paired), RNNI metric (`jumpInterval=20`), chain-level `__CHAIN__` row. infB has no
+external alignment or `{target_weight_transform}` slots to fill (verified directly against
+`examples/infb_HA_141/template.xml`) — only `{chain_length}` and `{edge_weights}` — so it needed a
+standalone renderer, `scripts/render_infb_benchmark_xml.py`, mirroring
+`render_benchmark_xml.py`'s `<run>`/`<state>` rewrite and RNNI-injection pattern but pointing the
+metric's `taxonset` at infB's own `TaxonSet.infB_HA` and `ParsimonyWeights2`'s `data` at infB's own
+`infB_HA` alignment id instead of lassaL's `@taxonSet`/`@alignment`.
+
+## Chain length chosen, and why
+
+Measured throughput first (both used to set the initial chain-length guess):
+
+- infB: reused the ~1,900 states/sec baseline in `docs/evaluation/baseline-tests.md` (re-verified
+  live: 8 cells at chain 150,000 + preBurnin 20,000 averaged ~1,880 states/sec, matching).
+- lassaL@100: no prior direct measurement existed (only n80/n120/n551), so it was measured with a
+  short 3,000-proposal probe (`ConstantWeights`, `runs/eval1/throughput/n100`): 3,000 states in
+  8.939 s ≈ 335 states/sec — consistent with interpolating between the measured lassaL@120 rate
+  (294 states/sec, 4,572 patterns) and lassaL@80's implicit rate from the earlier experiment
+  (higher, since n80 fit a 50k-proposal chain into the earlier 2h/32-cell budget).
+
+Initial chain lengths, set to fit comfortably inside the ~90-minute total budget while giving each
+case a proposal budget at or above the smallest converged budget from the first experiment (lassaL
+n80 converged at ~51,000 total proposals):
+
+| case | preBurnin | chainLength (post-burnin) | total proposals | throughput | time/cell |
+|---|---:|---:|---:|---:|---:|
+| infB full (141 taxa)  | 20,000 | 150,000 | 170,000 | ~1,880/s | ~90 s |
+| lassaL@100 | 5,000 | 95,000 | 100,000 | ~335/s | ~300 s |
+
+8 cells × ~90 s (infB) + 8 cells × ~300 s (lassaL@100) ≈ 12 min + 40 min ≈ 52 min wall-clock for
+both full designs, run once — no extension was needed for either case (see below), so the
+one-extension budget was never spent.
+
+## Convergence check
+
+**infB full: converged, cleanly, on the first attempt.** All 8 reps (4 `constant`, 4 `parsimony`)
+land in a tight -9226 to -9274 posterior band at the final sample (150,000), agreeing within ~48
+log-posterior units — an order of magnitude tighter than the "tens of units" bar — and the trace
+for every rep is flat over the last 500 samples (checked directly in each `run.log` tail, not
+just two reps). infB's smaller pattern count and shorter tree evidently make it far easier to mix
+than lassaL at a comparable taxon count.
+
+**lassaL@100: converged.** Checked the full posterior trajectory (every 20,000 samples), not just
+the tail, for `constant` reps 0 and 1: `-123448 → -121095 → -120977 → -120981 → -120969` and
+`-124217 → -121144 → -120974 → -120966 → -120967` — both flat from sample 20,000 onward, matching
+plateaus. All 8 reps (both settings) land in the range -120964 to -120991 at the final sample
+(95,000) — within 27 log-posterior units, comparable to the converged n40/n80 tolerance in the
+first experiment and nowhere near the "hundreds of units, different plateaus" signature that
+disqualified n150/n250. lassaL@100 sits closer to n80 (which converged in ~51,000 proposals) than
+to n150 (which failed at ~30,000 proposals with 5–10× fewer *effective* proposals per taxon); at
+100,000 total proposals here it converges comfortably, consistent with that reading.
+
+Both cases are usable — no chain-length extension was needed for either.
+
+## Raw results — chain-level (`__CHAIN__` row), per cell
+
+| case | setting | rep | acceptRate | meanJumpGivenAccepted | esjdPerSec_rnni |
+|---|---|---:|---:|---:|---:|
+| infB | constant | 0 | 0.1340 | 4.097 | 15164.3 |
+| infB | constant | 1 | 0.1411 | 3.987 | 16814.0 |
+| infB | constant | 2 | 0.1351 | 4.092 | 16335.4 |
+| infB | constant | 3 | 0.1386 | 4.446 | 19448.4 |
+| infB | parsimony | 0 | 0.1239 | 3.966 | 17708.6 |
+| infB | parsimony | 1 | 0.1252 | 3.969 | 18814.9 |
+| infB | parsimony | 2 | 0.1232 | 3.921 | 17471.1 |
+| infB | parsimony | 3 | 0.1291 | 3.407 | 14370.1 |
+| lassaL@100 | constant | 0 | 0.1755 | 1.838 | 1383.0 |
+| lassaL@100 | constant | 1 | 0.1727 | 1.779 | 1977.9 |
+| lassaL@100 | constant | 2 | 0.1753 | 1.561 | 1163.3 |
+| lassaL@100 | constant | 3 | 0.1771 | 1.465 | 1608.1 |
+| lassaL@100 | parsimony | 0 | 0.1800 | 1.540 | 1157.1 |
+| lassaL@100 | parsimony | 1 | 0.1784 | 1.624 | 951.4 |
+| lassaL@100 | parsimony | 2 | 0.1745 | 1.817 | 1473.6 |
+| lassaL@100 | parsimony | 3 | 0.1804 | 1.644 | 1450.1 |
+
+Full per-operator rows are in each run's `run.opstats.tsv` under
+`runs/eval1/{infb,lassaL/n100}/<setting>/rep<rep>/` (not committed — regenerable from
+`scripts/render_infb_benchmark_xml.py` / `scripts/render_benchmark_xml.py --sizes 100` with the
+parameters in the table above).
+
+## Paired analysis (parsimony − constant), t-based 90% CI, n=4, df=3
+
+| case | mean diff (ESJD/s) | 90% CI | excludes zero? | relative to constant mean |
+|---|---:|---|---|---:|
+| infB full   | +150.7  | (−4006.9, 4308.3) | no | +0.9% |
+| lassaL@100  | −275.0  | (−927.7, 377.6)   | no | −17.9% |
+
+Neither CI excludes zero. infB's point estimate is essentially flat (+0.9%); lassaL@100's point
+estimate is *negative* this time (parsimony ~18% worse than constant on average), the opposite
+sign from lassaL n80's positive-but-nonsignificant point estimate — both are well inside a wide,
+zero-straddling CI at 4 reps, so neither sign should be read as evidence of anything, but the
+flip itself is a useful data point: it shows the between-rep noise at this size/regime is large
+enough to swing the point estimate's sign on its own, reinforcing that 4 reps cannot resolve an
+effect at this magnitude (if one exists) in either dataset tried so far.
+
+## Updated answer — at what size/dataset does targeting show an effect?
+
+Combining this data with the original n40–n250 lassaL sweep: **no dataset or size tried so far —
+lassaL at 40, 80, 100, or 150/250 (unusable), or infB at its full 141 taxa — shows
+`ParsimonyWeights2` beating `ConstantWeights` with a confidence interval excluding zero.** Two
+additional cases converged cleanly here (infB full, lassaL@100), extending the converged, usable
+range from {lassaL n40, n80} to {lassaL n40, n80, n100, infB@141}, and both add null results, not
+positive ones: infB shows an essentially zero effect (+0.9%, tight-looking point estimate but on a
+noisy chain — CI is ±4,157, over 27× the point estimate), and lassaL@100's point estimate flipped
+negative (−17.9%) relative to lassaL n80's positive point estimate, with both point estimates
+comfortably inside their respective CIs of the other's sign. This is now four converged
+(case, size) points — lassaL n40, n80, n100, and infB@141 — none of which reproduces the "targeted
+beats uniform" ranking with statistical support at 4 reps. The most plausible reading is not that
+one dataset or size is special, but that 4 reps is simply underpowered relative to the between-rep
+variance observed everywhere (CV roughly 15–30% at every converged size/dataset tried): either the
+true effect is smaller than 4 reps can resolve at any of these sizes, or `ParsimonyWeights2`
+specifically does not reliably help relative to `ConstantWeights` at ≤150 taxa regardless of data
+regime, and a properly-powered study (more reps, or a variance-reduction technique beyond common
+random numbers) or a different weighting (`PCAWeights2`, `PartialWeights`) is needed before the
+Phase-4 decision rule's 20% threshold can be treated as anything but a placeholder.
