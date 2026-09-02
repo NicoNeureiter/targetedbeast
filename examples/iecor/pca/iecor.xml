@@ -199,20 +199,24 @@
                     </distr>
                 </distribution>
 
-                <!-- BLOCKED (not fixed - needs the user's input, unlike everything else on this page):
-                     almostbeast.math.distributions.AlmostUniform has no BEAST 3 port, no jar/source
-                     anywhere in this workspace, and is not in deprecated_classes.md (an unavailable
-                     third-party class, not a renamed one - the xml-migration converter has no way to
-                     even flag it as a [todo]). It cannot be a literal Uniform(0,10): origin's own
-                     pre-migration bounds were [0.0, 100.0] with initial value 100.0 (right at the old
-                     upper bound, and BEAST3's domain-typed RealScalarParam no longer enforces a literal
-                     numeric bound at all), so a hard Uniform(0,10) prior here is inconsistent with the
-                     model's own stateNode - AlmostUniform must be a soft/non-truncating density, and its
-                     exact form cannot be reconstructed from anything available here. Left AS THE ORIGINAL
-                     BEAST2 CLASS (still not parseable) rather than guessing at a replacement distribution,
-                     which would be a modelling decision, not a syntax migration. See
-                     docs/evaluation/baseline-tests.md. -->
-                <distribution id="almostUniformOrigin" spec="almostbeast.math.distributions.AlmostUniform" param="@origin" lower="0.0" upper="10.0"/>
+                <!-- Third documented deviation (see docs/evaluation/baseline-tests.md): the
+                     original was almostbeast.math.distributions.AlmostUniform(0,10) - a package with
+                     no BEAST 3 port and no source anywhere in this workspace, so its exact density
+                     cannot be recovered. Replaced with a benchmark-only Exponential(mean=15) chosen
+                     for numerical safety, not as a reconstruction of the original: support is (0,inf),
+                     so calculateLogP() never returns -Infinity for any origin >= 0 regardless of the
+                     starting tree height (the property AlmostUniform existed for), and it is compatible
+                     with BDMM-Prime's ProcessLength requirement that origin >= tree height. Location
+                     was sanity-checked against the actual initial RandomTree height, not assumed: with
+                     the committed prior, origin's own initial stateNode value is 100.0, but
+                     SimpleRandomTree draws an initial tree height of only ~22-50 (measured across
+                     seeds 1-4) - the tree height, not 100, is this dataset's plausible scale, matching
+                     the original AlmostUniform's own upper=10.0 "core" region. mean=15 puts ~81% of
+                     the prior's mass below 25 and ~96% below 50, covering that measured range while
+                     keeping origin=100's initial density finite (not zero). -->
+                <distribution id="almostUniformOrigin" spec="beast.base.spec.inference.distribution.Exponential" param="@origin">
+                    <parameter id="originPriorMean" estimate="false" name="mean" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal">15.0</parameter>
+                </distribution>
 
             </distribution>
             <distribution id="likelihood" spec="CompoundDistribution" useThreads="true">

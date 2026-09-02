@@ -187,7 +187,7 @@ vector-typed `Re` it must also satisfy. Reported as BLOCKED with three options; 
 drop `<up idref="reproductiveNumber"/>` from `ScaleAll` (both XMLs, with an explanatory comment at
 the site) and let `reproductiveNumber` become the vector `Re` needs. This is an explicit,
 authorized deviation from "keep the existing operator set" — iecor is in the corpus for its data
-regime (binary cognate characters, 341 partitions, relaxed clock, birth-death prior) to benchmark
+regime (binary cognate characters, 41 taxa, relaxed clock, birth-death prior) to benchmark
 tree-operator mixing, and `ScaleAll` moving one fewer scalar parameter does not affect that
 measurement. The two rejected options: decoupling `Re` from a frozen copy of `reproductiveNumber`
 (the operator would move a value the likelihood never reads — a silent correctness bug), or
@@ -303,8 +303,10 @@ one live partition's substitution/clock blocks and needed fixing exactly once pe
 list**: iecor's live/runnable content is a single-partition analysis, not 171 `TreeLikelihood`s
 over 341 partitions — the throughput and pattern-count numbers below reflect what actually runs.
 
-**A fifth, unrelated defect was found and left BLOCKED — needs your input, not guessed at.**
-`almostUniformOrigin`, live in the prior section (not commented out), is
+**A fifth, unrelated defect was found, reported BLOCKED, and has now been resolved by the
+coordinator's decision — this is the third documented deviation from the published analysis**,
+alongside the `reproductiveNumber` scalar/vector fix and the constant `samplingProportion` above.
+`almostUniformOrigin`, live in the prior section (not commented out), was
 `spec="almostbeast.math.distributions.AlmostUniform"` on the `origin` parameter. `almostbeast` has
 no BEAST 3 port, no jar or source anywhere in this workspace, and — unlike `bdsky` — is not even
 in `deprecated_classes.md`, so the converter has no way to flag it at all (a `[todo]` requires the
@@ -314,21 +316,35 @@ initial value of `100.0`** — right at the *old* upper bound and an order of ma
 `AlmostUniform`'s own `upper="10.0"`. A hard-bounded `Uniform(0,10)` prior is inconsistent with the
 model's own initial state (confirmed empirically: substituting it makes BEAST3 throw
 `IllegalArgumentException: Tensor param is not valid ! origin: 100.0` at `initAndValidate`).
-`AlmostUniform` must therefore be some kind of soft, non-truncating density — flat-ish near
-`[0,10]` but still positive out past `100` — and its exact form cannot be reconstructed from
-anything available here. Deciding what to substitute is a modelling judgement call, not a syntax
-migration, so — per the task's own "never change requirements, STOP and report BLOCKED"
-instruction — **the committed XML still has the original, unresolvable `AlmostUniform` element**,
-now with an explanatory comment, rather than a guessed replacement. This is the one item in this
-pass that is genuinely unresolved.
 
-To get the throughput and pattern-count numbers below despite this, a **disposable, uncommitted**
-scratch copy substitutes `beast.base.spec.inference.distribution.Uniform(param="@origin", upper="1.0E6")`
-for `almostUniformOrigin` — a wide-enough-to-be-harmless placeholder (matching the same
-`Infinity`→`1.0E6` finite-bound convention the converter itself already uses elsewhere in this
-file for `bcov_alpha`'s prior), used only to unblock measurement, exactly as the previous session
-used disposable, uncommitted patches to reach its diagnosis. It is not applied to the committed
-corpus and is not a proposed fix.
+This was reported BLOCKED rather than guessed at, and the coordinator decided: replace it with a
+broad, soft, **proper** prior — non-truncating (never `-Infinity` for any `origin ≥ 0`, the
+property `AlmostUniform` existed for in the first place), compatible with BDMM-Prime's
+`ProcessLength` requirement that `origin ≥` tree height, and centred on this dataset's actual
+plausible root-age scale rather than assumed. **The committed XML now has
+`beast.base.spec.inference.distribution.Exponential(mean=15.0)` on `origin`** — chosen over
+`LogNormal` because `Exponential` is already used unmodified elsewhere in this exact file
+(`becomeUninfectiousRatePrior`), and its support is `(0, ∞)` so it can never truncate. The
+location was **sanity-checked empirically, not assumed**: `origin`'s own committed stateNode
+initial value is `100.0`, but running the committed corpus with `-seed 1..4` and
+`SimpleRandomTree` shows the *actual* initial tree height is only **~22–50** (21.93, 34.88, 49.48,
+43.15 across four seeds) — nowhere near 100, and much closer to `AlmostUniform`'s own declared
+`upper="10.0"` core region than to `origin`'s arbitrary starting value. `Exponential(mean=15)`
+puts ≈81% of its mass below 25 and ≈96% below 50, covering that measured range, while still
+giving `origin=100` a small but strictly positive (not zero, not `-Infinity`) density — so the
+committed stateNode's own starting value stays valid without forcing the prior's centre to match
+an arbitrary initialisation constant. **This is a benchmark-only numerical-safety substitution,
+not a reconstruction of `AlmostUniform`'s actual density**, which cannot be recovered from
+anything available in this workspace, exactly as `samplingProportion`'s skyline was not
+reconstructed above for the analogous reason. iecor is in the corpus to benchmark tree-operator
+mixing on its data regime, not to reproduce the published epidemiological analysis, so this does
+not compromise the evaluation's purpose, but (like the other two deviations) means this XML no
+longer matches the original publication's `origin` prior.
+
+The throughput and pattern-count numbers below are measured from this **committed** prior — no
+disposable placeholder — confirmed by running both `pca` and `vanilla` end-to-end directly from
+the committed XML (only `chainLength` shortened for a quick timing run; everything else, including
+`almostUniformOrigin`, is exactly what is in the repository).
 
 ### Method
 
@@ -337,10 +353,11 @@ Java stub only; native library load falls back to `BeerLikelihoodCore4` in all r
 consistent with normal use). `examples/primates.xml`: chain shortened to 20k in a scratch copy.
 `examples/infb_HA_141/template.xml`: `{chain_length}` → 10k (later re-verified at 2k after the
 AVMVN fix), `{edge_weights}` → `targetedbeast.edgeweights.ConstantWeights`.
-`examples/iecor/{pca,vanilla}/iecor.xml`: `chainLength` shortened to 50k in a scratch copy
-(`-overwrite`), plus the disposable, uncommitted `almostUniformOrigin` substitution described
-above; run via `mvn -o exec:exec -Dbeast.args="-seed 1 -overwrite <scratch xml>"` directly (iecor
-uses no `feast.*` classes, so it needed none of the manual module-path assembly infB/lassaL do).
+`examples/iecor/{pca,vanilla}/iecor.xml`: `chainLength` shortened to 50k in a scratch copy of
+the **committed** XML (`-overwrite`) — no other change, `almostUniformOrigin` is the real,
+committed `Exponential(mean=15)` prior; run via
+`mvn -o exec:exec -Dbeast.args="-seed 1 -overwrite <scratch xml>"` directly (iecor uses no
+`feast.*` classes, so it needed none of the manual module-path assembly infB/lassaL do).
 `lassaL_kli22/template.xml`: `{chain_length}` → 5k, `{edge_weights}` → `ConstantWeights`,
 `{alignment_file}` → the user-supplied `ali_normalized.fasta` (551 taxa) or its seeded
 `ali_normalized.n120.fasta` subsample (120 taxa, via `generate_xmls.py`'s
@@ -361,8 +378,8 @@ literal name) since `mvn exec:exec`'s `%classpath` does not include the repo's r
 | `primates.xml` | 6 | 768 | 69 | 20,000 | 0.217 s | ~92,200 |
 | `infb_HA_141/template.xml` | 141 | 1,856 | 489 | 10,000 | 5.275 s | ~1,900 |
 | `infb_HA_141/template.xml` (re-verified, AVMVN fix, committed XML) | 141 | 1,856 | 489 | 2,000 | 1.063 s | ~1,881 |
-| `iecor/vanilla/iecor.xml` (no edge weights, live `focalsubset` partition only) | 41 | 2,653 | 1,071 | 50,000 | 4.617 s | ~10,831 |
-| `iecor/pca/iecor.xml` (`PCAWeights`, live `focalsubset` partition only) | 41 | 2,653 | 1,071 | 50,000 | 5.853 s | ~8,543 |
+| `iecor/vanilla/iecor.xml` (no edge weights, live `focalsubset` partition only, committed prior) | 41 | 2,653 | 1,071 | 50,000 | 4.795 s | ~10,428 |
+| `iecor/pca/iecor.xml` (`PCAWeights`, live `focalsubset` partition only, committed prior) | 41 | 2,653 | 1,071 | 50,000 | 6.463 s | ~7,736 |
 | `lassaL_kli22` (+ user's `ali_normalized.fasta`, full) | 551 | 7,038 | 6,119 | 5,000 | 100.274 s | ~50 |
 | `lassaL_kli22@120` (seeded subsample, committed XML) | 120 | 7,038 | 4,572 | 5,000 | 17.003 s | ~294 |
 
@@ -377,7 +394,10 @@ patterns) is smaller than infB's, so it is by far the *cheapest* of the three ru
 not the most expensive as the original 341-partition dataset description implied — see the
 "substitution/clock migration defects" note above for why. `vanilla` (no edge-weights operator) is
 used as the tier-arithmetic baseline, matching how `ConstantWeights` is used for infB/lassaL@120;
-`pca`'s ~21% slower throughput is the sensitivity check below.
+`pca`'s ~26% slower throughput is the sensitivity check below. These are the final, committed-prior
+numbers (`Exponential(mean=15)` on `origin`) — they moved a few percent from the earlier
+placeholder-prior measurement (~10,831/~8,543 → ~10,428/~7,736), reflected in the tier arithmetic
+below.
 
 ### The 10-hour rule and the derived tier table
 
@@ -387,9 +407,9 @@ machine-days, not hours, and is dataset-dominated by lassaL:
 - infB: 10,000,000 / 1,900 ≈ **1.5 hours** for one replicate — fine on its own.
 - lassaL (551 taxa): 10,000,000 / 50 ≈ **55.7 hours (≈2.3 days)** for one replicate; at 4 reps ×
   ~6 settings that is **~56 days of sequential compute** — an order of magnitude past "overnight."
-- iecor: now measured (~10,831 states/sec, `vanilla`) — cheap enough that a single 10M-state
-  replicate would take ≈4.2 minutes; the constraint below is fitting 24 reps at a chain length
-  worth running, not fitting within 10h at all.
+- iecor: now measured from the committed prior (~10,428 states/sec, `vanilla`) — cheap enough
+  that a single 10M-state replicate would take ≈4.3 minutes; the constraint below is fitting 24
+  reps at a chain length worth running, not fitting within 10h at all.
 
 **Decision: lassaL's full 551-taxon alignment is not part of the pipeline at all** — not just at
 the `full` tier. Every tier uses the lassaL@120 subsample (or smaller, at `fast`, once Phase 0
@@ -405,32 +425,33 @@ measured, so its cost can be carved out of the *remaining* budget rather than le
 |---|---:|---:|---:|---:|
 | infB (full, 141 taxa) | 1,900 | 1,000,000 | 526 s | ≈3.51 h |
 | lassaL@120 | 294 | 150,000 | 510 s | ≈3.40 h |
-| iecor (`vanilla`, 41 taxa, 1,071 patterns) | 10,831 | 3,000,000 | 277 s | ≈1.85 h |
+| iecor (`vanilla`, 41 taxa, 1,071 patterns, committed prior) | 10,428 | 2,500,000 | 240 s | ≈1.60 h |
 
 - infB + lassaL@120 subtotal: 12,624 s + 12,240 s = 24,864 s ≈ **6.91 h**, unchanged from before.
 - Remaining budget to the 10h ceiling: 36,000 s − 24,864 s = 11,136 s ≈ **3.09 h**.
-- iecor at a 3,000,000-state `full` chain: 3,000,000 / 10,831 ≈ 277.0 s/rep × 24 reps ≈ 6,649 s ≈
-  **1.85 h** — comfortably inside the remaining 3.09 h, with 4,487 s (≈1.25 h, ≈12.5% of the total
+- iecor at a 2,500,000-state `full` chain (chosen slightly below the theoretical maximum to keep a
+  comfortable margin, since throughput moved down ~4–9% once the placeholder prior was replaced
+  with the real, committed `Exponential(mean=15)`): 2,500,000 / 10,428 ≈ 239.75 s/rep × 24 reps ≈
+  5,754 s ≈ **1.60 h** — well inside the remaining 3.09 h, with 5,382 s (≈1.50 h, ≈15% of the total
   10h budget) of margin left over.
-- **Sensitivity check with the slower `pca` throughput** (8,543 states/sec, `PCAWeights` rather
+- **Sensitivity check with the slower `pca` throughput** (7,736 states/sec, `PCAWeights` rather
   than no edge-weights operator — the same margin logic the original arithmetic used for
   `PCAWeights2`/`PartialWeights`/`FelsensteinWeights` being costlier than the `ConstantWeights`
-  baseline): 3,000,000 / 8,543 ≈ 351.2 s/rep × 24 ≈ 8,428 s ≈ 2.34 h. Total across all three
-  datasets at this pessimistic rate: 24,864 + 8,428 = 33,292 s ≈ **9.25 h** — still inside the 10h
-  ceiling, with 2,708 s (≈0.75 h) to spare.
-- **Grand total, all three datasets, 6 settings × 4 reps each: ≈8.75 h (vanilla-rate estimate) to
-  ≈9.25 h (pca-rate, worst-case estimate) — inside the 10-hour ceiling either way.** No reps or
-  settings need to be cut for any of the three datasets; infB and lassaL@120's chain lengths are
-  unchanged (1,000,000 / 150,000, as before) and iecor's `full` chain length is set to **3,000,000
-  states**.
+  baseline): 2,500,000 / 7,736 ≈ 323.2 s/rep × 24 ≈ 7,756 s ≈ 2.15 h. Total across all three
+  datasets at this pessimistic rate: 24,864 + 7,756 = 32,620 s ≈ **9.06 h** — still inside the 10h
+  ceiling, with 3,380 s (≈0.94 h, ≈9.4%) to spare.
+- **Grand total, all three datasets, 6 settings × 4 reps each: ≈8.51 h (vanilla-rate estimate) to
+  ≈9.06 h (pca-rate, worst-case estimate) — inside the 10-hour ceiling either way, with margin.**
+  No reps or settings need to be cut for any of the three datasets; infB and lassaL@120's chain
+  lengths are unchanged (1,000,000 / 150,000, as before) and iecor's `full` chain length is set to
+  **2,500,000 states** (revised down from an earlier placeholder-prior estimate of 3,000,000, to
+  keep the worst-case margin comfortably above 5%).
 - `medium` scales every dataset's `full` chain length down 10× (infB 100,000, lassaL@120 15,000,
-  iecor 300,000): 1,262 s + 1,224 s + 665 s ≈ 3,151 s ≈ **53 minutes** for a complete medium-tier
+  iecor 250,000): 1,262 s + 1,224 s + 575 s ≈ 3,061 s ≈ **51 minutes** for a complete medium-tier
   sweep across all three datasets, six settings, four reps each.
 
 This is the same tier table now recorded in `targetedbeast-evaluation-pipeline.md`'s Phase 3 tier
-table. The one caveat: iecor's throughput was measured with `almostUniformOrigin`'s disposable
-`Uniform(0, 1.0E6)` placeholder (see above), not the original, still-unresolved `AlmostUniform`
-prior — if `AlmostUniform` is eventually restored with a real implementation that is
-computationally heavier than a plain `Uniform` evaluation, iecor's throughput number here would
-need re-measuring, though a single scalar-parameter prior's `calculateLogP()` is very unlikely to
-be the dominant cost against a 1,071-pattern tree likelihood.
+table. iecor's throughput above is measured from the **committed** `Exponential(mean=15)` prior on
+`origin` — no placeholder — so, unlike the previous pass, this number does not need re-measuring
+once anything else about `AlmostUniform` is decided; that question is now closed (see the third
+documented deviation above).
