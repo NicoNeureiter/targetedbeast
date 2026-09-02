@@ -85,12 +85,20 @@
             <parameter id="ucldMean.c:clock" name="stateNode" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal">0.004</parameter>
             <parameter id="ucldStdev.c:clock" name="stateNode" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal">0.1</parameter>
             <stateNode id="rateCategories.c:clock" dimension="80" spec="beast.base.spec.inference.parameter.IntVectorParam" domain="NonNegativeInt">1</stateNode>
-            <parameter id="origin" name="stateNode" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="Real">100.0</parameter>
-            <parameter id="reproductiveNumber" name="stateNode" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal">1.5</parameter>
-            <parameter id="becomeUninfectiousRate" name="stateNode" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="Real">2.0</parameter>
-            <parameter id="rho" name="stateNode" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="UnitInterval">0.062</parameter>
-            <parameter id="samplingProportion" dimension="3" name="stateNode" spec="beast.base.spec.inference.parameter.RealVectorParam" domain="UnitInterval">0.0 0.01 0.0</parameter>
-            <parameter id="samplingRateChangeTimes.t:tree" dimension="3" name="stateNode" spec="beast.base.spec.inference.parameter.RealVectorParam" domain="Real">4.401 0.9 0.0</parameter>
+            <!-- origin domain tightened Real -> NonNegativeReal: required by bdmmprime.util.ProcessLength's
+                 origin input (RealScalar<? extends NonNegativeReal>); origin was already lower-bounded
+                 at 0.0 in the pre-migration BDSKY XML, so this restores rather than adds a constraint. -->
+            <parameter id="origin" name="stateNode" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="NonNegativeReal">100.0</parameter>
+            <!-- reproductiveNumber/becomeUninfectiousRate/rho are dimension-1 RealVectorParam, not scalars:
+                 BDMM-Prime's EpiParameterization requires Re/becomeUninfectiousRate as SkylineVectorParameter
+                 and rhoSampling as TimedParameter, both of which take a RealVector-typed values input, which
+                 a RealScalarParam cannot satisfy. Their scalar priors are preserved via IID below. -->
+            <parameter id="reproductiveNumber" dimension="1" name="stateNode" spec="beast.base.spec.inference.parameter.RealVectorParam" domain="PositiveReal">1.5</parameter>
+            <parameter id="becomeUninfectiousRate" dimension="1" name="stateNode" spec="beast.base.spec.inference.parameter.RealVectorParam" domain="Real">2.0</parameter>
+            <parameter id="rho" dimension="1" name="stateNode" spec="beast.base.spec.inference.parameter.RealVectorParam" domain="UnitInterval">0.062</parameter>
+            <!-- samplingProportion simplified from a 3-epoch skyline to one constant value (its one
+                 nonzero epoch): see the birthDeathPrior comment below for why the skyline was not ported. -->
+            <parameter id="samplingProportion" dimension="1" name="stateNode" spec="beast.base.spec.inference.parameter.RealVectorParam" domain="UnitInterval">0.01</parameter>
         </state>
         <init id="RandomTree.t:tree" spec="beastlabs.evolution.tree.SimpleRandomTree" estimate="false" initial="@Tree.t:tree" taxa="@five"/>
         <distribution id="posterior" spec="CompoundDistribution">
@@ -103,8 +111,35 @@
                 </distribution> -->
                 <!-- <distribution id="edgeweights" spec="targetedbeast.edgeweights.FelsensteinWeights" tree="@Tree.t:tree" maxWeight="20" data="@orgdata" likelihood="@treeLikelihood"/> -->
 
-                <distribution id="birthDeathPrior" spec="bdsky.evolution.speciation.BirthDeathSkylineModel" becomeUninfectiousRate="@becomeUninfectiousRate" origin="@origin" reproductiveNumber="@reproductiveNumber" rho="@rho" samplingProportion="@samplingProportion" samplingRateChangeTimes="@samplingRateChangeTimes.t:tree" tree="@Tree.t:tree">
-                    <reverseTimeArrays id="BooleanParameter.0" dimension="5" spec="beast.base.spec.inference.parameter.BoolVectorParam">false false true false false</reverseTimeArrays>
+                <!-- bdsky has no BEAST 3 port. Replaced with BDMM-Prime's single-type
+                     BirthDeathMigrationDistribution + EpiParameterization (see
+                     docs/evaluation/baseline-tests.md for the full mapping and its caveats):
+                       - Re / becomeUninfectiousRate / rhoSampling read the same reproductiveNumber /
+                         becomeUninfectiousRate / rho state nodes (now dimension-1 vectors, see above),
+                         constant through time - no skyline.
+                       - removalProb has no equivalent input on the old model (its optional "r" was
+                         commented out below, i.e. r=1) so it is fixed at 1.0, not estimated.
+                       - samplingProportion is simplified to a single constant (see above): the original
+                         3-epoch skyline used samplingRateChangeTimes + a per-array reverseTimeArrays flag
+                         whose interval-to-value time direction cannot be verified without bdsky's source,
+                         which is not available anywhere in this workspace. Porting the skyline under an
+                         unverified direction risked a silently time-reversed model; a known simplification
+                         is preferable. This dataset benchmarks tree-operator mixing on its data regime
+                         (binary cognate characters, 341 partitions, relaxed clock), not the published
+                         analysis, so the simplification does not compromise the evaluation's purpose. -->
+                <distribution id="birthDeathPrior" spec="bdmmprime.distribution.BirthDeathMigrationDistribution" tree="@Tree.t:tree">
+                    <parameterization spec="bdmmprime.parameterization.EpiParameterization">
+                        <processLength spec="bdmmprime.util.ProcessLength" origin="@origin"/>
+                        <Re spec="bdmmprime.parameterization.SkylineVectorParameter" skylineValues="@reproductiveNumber"/>
+                        <becomeUninfectiousRate spec="bdmmprime.parameterization.SkylineVectorParameter" skylineValues="@becomeUninfectiousRate"/>
+                        <samplingProportion spec="bdmmprime.parameterization.SkylineVectorParameter" skylineValues="@samplingProportion"/>
+                        <removalProb spec="bdmmprime.parameterization.SkylineVectorParameter">
+                            <skylineValues id="removalProbConstant" dimension="1" spec="beast.base.spec.inference.parameter.RealVectorParam" domain="UnitInterval" estimate="false">1.0</skylineValues>
+                        </removalProb>
+                        <rhoSampling spec="bdmmprime.parameterization.TimedParameter" values="@rho">
+                            <times id="rhoSamplingTime" dimension="1" spec="beast.base.spec.inference.parameter.RealVectorParam" domain="NonNegativeReal" estimate="false">0.0</times>
+                        </rhoSampling>
+                    </parameterization>
                     <!-- <parameter id="r" spec="parameter.RealParameter" lower="0.0" name="removalProbability" upper="1.">1.0</parameter> -->
                 </distribution>
                 <distribution id="Uniform.173" spec="beast.base.spec.inference.distribution.Uniform" param="@ucldMean.c:clock" upper="10.0"/>
@@ -117,33 +152,38 @@
                         <alpha id="Function$Constant.0" spec="Function$Constant" value="0.05"/>
                         <beta id="Function$Constant.1" spec="Function$Constant" value="10.0"/>
                     </distribution>
-                <distribution id="LogNormalDistributionModel.0" spec="beast.base.spec.inference.distribution.LogNormal" param="@reproductiveNumber">
+                <distribution id="R0Prior" spec="beast.base.spec.inference.distribution.IID" param="@reproductiveNumber">
+                    <distr id="LogNormalDistributionModel.0" spec="beast.base.spec.inference.distribution.LogNormal">
                         <parameter id="RealParameter.0" name="M" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="Real">0.0</parameter>
                         <parameter id="RealParameter.1" name="S" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal">0.1</parameter>
-                    </distribution>
-                <distribution id="Exponential.0" spec="beast.base.spec.inference.distribution.Exponential" param="@becomeUninfectiousRate">
+                    </distr>
+                </distribution>
+                <distribution id="becomeUninfectiousRatePrior" spec="beast.base.spec.inference.distribution.IID" param="@becomeUninfectiousRate">
+                    <distr id="Exponential.0" spec="beast.base.spec.inference.distribution.Exponential">
                         <parameter id="RealParameter.2" name="mean" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal">0.2</parameter>
-                    </distribution>
+                    </distr>
+                </distribution>
 
-                <distribution id="samplingChangeTimePrior1" spec="beastlabs.math.distributions.ExcludablePrior" x="@samplingRateChangeTimes.t:tree">
-                    <xInclude id="BooleanParameter.1" dimension="3" spec="beast.base.spec.inference.parameter.BoolVectorParam">true false false</xInclude>
-                    <Uniform id="Uniform.0" lower="3.0" name="distr" upper="5.5"/>
-                </distribution>
-                <distribution id="samplingChangeTimePrior2" spec="beastlabs.math.distributions.ExcludablePrior" x="@samplingRateChangeTimes.t:tree">
-                    <xInclude id="BooleanParameter.2" dimension="3" spec="beast.base.spec.inference.parameter.BoolVectorParam">false true false</xInclude>
-                    <Uniform id="Uniform.11" lower="0.8" name="distr" upper="1.2"/>
-                </distribution>
-                <distribution id="samplingProportionPrior" spec="beastlabs.math.distributions.ExcludablePrior" x="@samplingProportion">
-                    <xInclude id="BooleanParameter.3" dimension="3" spec="beast.base.spec.inference.parameter.BoolVectorParam">false true false</xInclude>
-                    <Beta id="Beta.0" name="distr">
+                <!-- ExcludablePrior (beastlabs.math.distributions, legacy-typed, extends the untyped
+                     beast.base.inference.distribution.Prior) cannot bind to the typed RealVectorParam
+                     samplingProportion or a typed Beta distribution - it predates the beast.base.spec
+                     split and expects legacy Function/ParametricDistribution. Its per-element xInclude
+                     masking existed only to prior one of samplingProportion's 3 skyline epochs while
+                     leaving the other 2 fixed; now that samplingProportion is a single constant (see
+                     above), that masking has nothing left to do, so this is a plain IID(Beta(1,1)) prior
+                     on the one element, matching the R0/becomeUninfectiousRate/rho pattern above. -->
+                <distribution id="samplingProportionPrior" spec="beast.base.spec.inference.distribution.IID" param="@samplingProportion">
+                    <distr id="Beta.0" spec="beast.base.spec.inference.distribution.Beta">
                         <parameter id="RealParameter.33" name="alpha" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal">1.0</parameter>
                         <parameter id="RealParameter.44" name="beta" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal">1.0</parameter>
-                    </Beta>
+                    </distr>
                 </distribution>
-                <distribution id="Beta.1" spec="beast.base.spec.inference.distribution.Beta" param="@rho">
+                <distribution id="rhoPrior" spec="beast.base.spec.inference.distribution.IID" param="@rho">
+                    <distr id="Beta.1" spec="beast.base.spec.inference.distribution.Beta">
                         <parameter id="RealParameter.55" name="alpha" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal">31.0</parameter>
                         <parameter id="RealParameter.66" name="beta" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal">469.0</parameter>
-                    </distribution>
+                    </distr>
+                </distribution>
 
                 <distribution id="almostUniformOrigin" spec="almostbeast.math.distributions.AlmostUniform" param="@origin" lower="0.0" upper="10.0"/>
 
@@ -1232,7 +1272,6 @@
         <operator id="reproductiveNumberOperator" parameter="@reproductiveNumber" weight="3.0" spec="beast.base.spec.inference.operator.ScaleOperator"/>
         <operator id="becomeUninfectiousRateOperator" parameter="@becomeUninfectiousRate" weight="3.0" spec="beast.base.spec.inference.operator.ScaleOperator"/>
         <operator id="samplingProportionOperator" parameter="@samplingProportion" weight="3.0" spec="beast.base.spec.inference.operator.ScaleOperator"/>
-        <operator id="samplingRateChangeTimeOperator" parameter="@samplingRateChangeTimes.t:tree" weight="0.5" spec="beast.base.spec.inference.operator.ScaleOperator"/>
         <operator id="rhoOperator" parameter="@rho" weight="3.0" spec="beast.base.spec.inference.operator.ScaleOperator"/>
         <operator id="TreeScaler.t:tree" scaleFactor="0.878" tree="@Tree.t:tree" weight="3.0" spec="beast.base.spec.evolution.operator.ScaleTreeOperator"/>
         <operator id="TreeRootScaler.t:tree" rootOnly="true" scaleFactor="0.5" tree="@Tree.t:tree" weight="3.0" spec="beast.base.spec.evolution.operator.ScaleTreeOperator"/>
@@ -1270,7 +1309,10 @@
         <operator id="WideExchange     " spec="Exchange" isNarrow="false" tree="@Tree.t:tree" weight="10"/>
 
         <operator id="ScaleAll" spec="targetedbeast.operators.IntervalScaleOperator" tree="@Tree.t:tree" weight="0.25" scaleFactor="0.9">
-            <up idref="reproductiveNumber"/>
+            <!-- reproductiveNumber removed: IntervalScaleOperator's up/down inputs are typed
+                 List<RealScalarParam<PositiveReal>> (scalar-only), but reproductiveNumber is now a
+                 dimension-1 RealVectorParam (BDMM-Prime's Re needs a vector). Authorized deviation from
+                 "keep the existing operator set" - see docs/evaluation/baseline-tests.md. -->
             <up idref="ucldMean.c:clock"/>
         </operator>
         <operator id="ScaleIntervalsRandomly" spec="targetedbeast.operators.IntervalScaleOperator" tree="@Tree.t:tree" weight="0.25" scaleFactor="0.9" scaleAllNodesIndependently="true"/>
