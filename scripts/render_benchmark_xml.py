@@ -20,6 +20,8 @@ EDGE_WEIGHTS_XML = {
     "constant": '<distribution id="edgeweights" spec="targetedbeast.edgeweights.ConstantWeights" tree="@tree"/>',
     "parsimony": '<distribution id="edgeweights" spec="targetedbeast.edgeweights.ParsimonyWeights2" '
                  'tree="@tree" maxWeight="20" data="@alignment"/>',
+    "pca": '<distribution id="edgeweights" spec="targetedbeast.edgeweights.PCAWeights2" '
+           'tree="@tree" maxWeight="20" data="@alignment" dimension="10"/>',
 }
 
 

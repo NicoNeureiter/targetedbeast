@@ -245,3 +245,87 @@ specifically does not reliably help relative to `ConstantWeights` at ≤150 taxa
 regime, and a properly-powered study (more reps, or a variance-reduction technique beyond common
 random numbers) or a different weighting (`PCAWeights2`, `PartialWeights`) is needed before the
 Phase-4 decision rule's 20% threshold can be treated as anything but a placeholder.
+
+---
+
+# Follow-up — `PCAWeights2` on lassaL@80 and infB full (141 taxa)
+
+Extends the two already-converged, clean cases above — lassaL n80 and infB full — to a third
+weighting, `PCAWeights2` (`maxWeight=20`, `dimension=10`, matching `pca_10` in
+`scripts/generate_xmls.py`'s `EDGE_WEIGHTS` dict, alignment-distance/classical-MDS based, unlike
+`ParsimonyWeights2`'s mutation-count signal). 4 reps per case, same seeds (1000+rep) as the
+`constant` reps already collected above, so the comparison is paired against the existing
+`constant` numbers without rerunning them. `scripts/render_benchmark_xml.py` and
+`scripts/render_infb_benchmark_xml.py` each got a `"pca"` entry added to their `EDGE_WEIGHTS_XML`
+dict (`<distribution id="edgeweights" spec="targetedbeast.edgeweights.PCAWeights2" tree="@tree"
+maxWeight="20" data="@alignment|@infB_HA" dimension="10"/>`, alignment idref matching each
+renderer's existing `parsimony` entry). Chain parameters reused exactly as converged before:
+lassaL@80 preBurnin=1,000, chainLength=50,000, jumpInterval=10; infB full preBurnin=20,000,
+chainLength=150,000, jumpInterval=20.
+
+## Convergence check
+
+**lassaL n80: converged.** All 4 `pca` reps land in a tight -111878.05 to -111888.98 band at the
+final sample (50,000), agreeing within 10.9 log-posterior units — inside the ~15-unit tolerance
+that qualified the `constant`/`parsimony` n80 reps above — and every rep's trace is flat over the
+last 250 samples (checked directly in each `run.log` tail).
+
+**infB full: converged.** All 4 `pca` reps land in a -9249.5 to -9267.3 band at the final sample
+(150,000), agreeing within 17.75 log-posterior units — comparable to the ~48-unit band that
+qualified the `constant`/`parsimony` infB reps above — and flat over the last 500 samples in every
+rep. `PCAWeights2` does not destabilize convergence at either size relative to the other two
+weightings.
+
+## Raw results — chain-level (`__CHAIN__` row), per cell
+
+| case | setting | rep | acceptRate | meanJumpGivenAccepted | esjdPerSec_rnni |
+|---|---|---:|---:|---:|---:|
+| lassaL@80 | pca | 0 | 0.2346 | 1.018 | 1055.8 |
+| lassaL@80 | pca | 1 | 0.2383 | 1.011 | 1237.2 |
+| lassaL@80 | pca | 2 | 0.2355 | 1.038 | 947.0 |
+| lassaL@80 | pca | 3 | 0.2284 | 1.171 | 2003.6 |
+| infB | pca | 0 | 0.1500 | 4.033 | 15683.4 |
+| infB | pca | 1 | 0.1489 | 3.979 | 16483.5 |
+| infB | pca | 2 | 0.1519 | 3.980 | 17884.8 |
+| infB | pca | 3 | 0.1500 | 4.024 | 19233.2 |
+
+(`constant` reps at the same seeds are the rows already reported above: lassaL@80 constant =
+1075.1 / 791.7 / 830.5 / 766.1; infB constant = 15164.3 / 16814.0 / 16335.4 / 19448.4.)
+
+Full per-operator rows are in each run's `run.opstats.tsv` under
+`runs/eval2/{lassaL/n80,infb}/pca/rep<rep>/` (not committed — regenerable from
+`scripts/render_benchmark_xml.py --sizes 80 --settings pca` /
+`scripts/render_infb_benchmark_xml.py --settings pca` with the parameters above).
+
+## Paired analysis (pca − constant), t-based 90% CI, n=4, df=3
+
+| case | mean diff (ESJD/s) | 90% CI | excludes zero? | relative to constant mean |
+|---|---:|---|---|---:|
+| lassaL@80 | +445.1 | (−217.5, 1107.7) | no | +51.4% |
+| infB full  | +380.7 | (−637.3, 1398.7) | no | +2.2% |
+
+Neither CI excludes zero, so at 4 reps neither result is statistically significant. But the
+lassaL@80 point estimate is notably larger and more consistently positive than either prior
+weighting's result at this size: 3 of 4 `pca` reps beat their paired `constant` rep (only rep0 is
+slightly negative, −19.3), versus `parsimony`'s roughly 50/50 split at n80 (+184.7 mean, CI
+(−306.9, 676.3)). infB's `pca` point estimate (+2.2%) sits between `parsimony`'s near-zero result
+there (+0.9%) and is, like it, small relative to a wide CI — infB shows no sign that a different
+weighting signal changes its outcome.
+
+## Updated conclusion
+
+Adding `PCAWeights2` to the two cleanly-converged cases does not change the headline finding — no
+weighting tried so far (`ParsimonyWeights2` or `PCAWeights2`) beats `ConstantWeights` with a
+confidence interval excluding zero at 4 reps, on either lassaL@80 or infB@141. It does add a
+useful directional data point: `PCAWeights2`'s alignment-distance signal produces a larger,
+more-consistently-positive point estimate on lassaL@80 (+51.4%, 3/4 reps favorable) than
+`ParsimonyWeights2`'s mutation-count signal did at the same size (+21.3%, roughly even split),
+while on infB both weightings land near zero (+2.2% vs +0.9%). This is consistent with — though
+far from proof of — the hypothesis floated earlier that a different weighting signal might show
+an effect where parsimony didn't: lassaL's alignment-based PCA signal looks more promising than
+its parsimony signal, but the between-rep noise at 4 reps (CV still ~15-30%, same order as before)
+is large enough that this reading could easily be sampling noise, not a real effect. infB shows no
+such hint under either weighting. The next step to distinguish signal from noise remains the same
+one already flagged: more reps (or a variance-reduction technique) targeted specifically at
+lassaL@80 `PCAWeights2` vs `ConstantWeights`, since that is now the single most promising
+(case, weighting) pair in the whole comparison, not a blanket re-run of the full design.
