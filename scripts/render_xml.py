@@ -96,13 +96,32 @@ def _inject_reference_band(xml: str, lower: float | None, upper: float | None) -
     return xml[:index] + insertion + xml[index:]
 
 
+def _inject_checkpoint_out(xml: str, checkpoint_out: str | None) -> str:
+    """Adds a checkpointOut attribute to the rendered BenchmarkMCMC element (Phase 3c, item 1):
+    only the dataset's one reference-checkpoint donor run sets this - see rule
+    render_reference_checkpoint in the Snakefile. Regular thorough/cross-check cells consume the
+    resulting checkpoint file via -resume, not via this attribute."""
+    if checkpoint_out is None:
+        return xml
+    needle = ' statsOut="'
+    index = xml.find(needle)
+    if index == -1:
+        raise SystemExit("rendered XML has no statsOut attribute to anchor checkpointOut on")
+    insertion = f' checkpointOut="{checkpoint_out}"'
+    return xml[:index] + insertion + xml[index:]
+
+
 def render(dataset: str, tier: str, setting: str, rep: int, out_dir: Path,
            registry: dict | None = None, reference_lower_bound: float | None = None,
-           reference_upper_bound: float | None = None) -> Path:
+           reference_upper_bound: float | None = None, checkpoint_out: str | None = None) -> Path:
     """Render one (dataset, tier, setting, rep) cell's run.xml into out_dir. Returns its path.
 
     reference_lower_bound/reference_upper_bound (Phase 3c, burn-in-speed): when both given, wires
     them onto the rendered BenchmarkMCMC element so BurnInSpeedTracker is enabled for this cell.
+
+    checkpoint_out (Phase 3c, shared checkpoint): when given, wires it onto the rendered
+    BenchmarkMCMC element as checkpointOut - used only by the dataset's reference-checkpoint donor
+    run (see Snakefile), never by a regular tier cell.
     """
     registry = registry or load_registry()
     entry = registry[dataset]
@@ -127,6 +146,7 @@ def render(dataset: str, tier: str, setting: str, rep: int, out_dir: Path,
                                      cfg["jump_interval"], cfg["pre_burnin"])
 
     xml = _inject_reference_band(xml, reference_lower_bound, reference_upper_bound)
+    xml = _inject_checkpoint_out(xml, checkpoint_out)
 
     out_path = out_dir / "run.xml"
     out_path.write_text(xml, encoding="utf-8")
@@ -145,6 +165,9 @@ def main() -> None:
                          help="path to a reference_band.json (compute_reference_band.py's output) "
                               "whose lower/upper are wired onto the rendered BenchmarkMCMC element "
                               "as referenceLowerBound/referenceUpperBound (Phase 3c burn-in-speed)")
+    parser.add_argument("--checkpoint-out", type=str, default=None,
+                         help="path to write the shared checkpoint to (Phase 3c, item 1) - only "
+                              "the dataset's reference-checkpoint donor run sets this")
     args = parser.parse_args()
 
     out_dir = args.out_dir or (
@@ -155,7 +178,8 @@ def main() -> None:
         band = json.loads(args.reference_band.read_text(encoding="utf-8"))
         lower, upper = band["lower"], band["upper"]
     path = render(args.dataset, args.tier, args.setting, args.rep, out_dir,
-                   reference_lower_bound=lower, reference_upper_bound=upper)
+                   reference_lower_bound=lower, reference_upper_bound=upper,
+                   checkpoint_out=args.checkpoint_out)
     print(f"Wrote {path}")
 
 

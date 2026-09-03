@@ -112,6 +112,37 @@ final class PrimatesFixture {
                 + " referenceUpperBound=\"" + upper + "\"");
     }
 
+    /** Adds checkpointOut to an already-{@code toBenchmarkVariant}'d XML (Phase 3c, item 1). */
+    static String withCheckpointOut(String xml, Path checkpointPath) {
+        String needle = "spec=\"targetedbeast.benchmark.BenchmarkMCMC\" id=\"mcmc\"";
+        require(xml, needle);
+        return xml.replace(needle, needle
+                + " checkpointOut=\"" + checkpointPath.toAbsolutePath() + "\"");
+    }
+
+    /** Adds preBurnin to an already-{@code toBenchmarkVariant}'d XML. */
+    static String withPreBurnin(String xml, long preBurnin) {
+        String needle = "spec=\"targetedbeast.benchmark.BenchmarkMCMC\" id=\"mcmc\"";
+        require(xml, needle);
+        return xml.replace(needle, needle + " preBurnin=\"" + preBurnin + "\"");
+    }
+
+    /**
+     * Swaps the template's {@code edgeweights} distribution for a different {@link
+     * targetedbeast.edgeweights.EdgeWeights} spec - used by the cross-setting resume test (Phase
+     * 3c, item 1) to prove state restores correctly into an XML whose edge-weights distribution
+     * differs, everything else (tree/clock/substitution-model state nodes) unchanged.
+     */
+    static String withConstantEdgeWeights(String xml) {
+        String needle = "<distribution id=\"edgeweights\" "
+                + "spec=\"targetedbeast.edgeweights.PartialWeights\" tree=\"@tree\" "
+                + "data=\"@alignment\" likelihood=\"@treeLikelihood\"/>";
+        require(xml, needle);
+        return xml.replace(needle,
+                "<distribution id=\"edgeweights\" spec=\"targetedbeast.edgeweights.ConstantWeights\" "
+                + "tree=\"@tree\"/>");
+    }
+
     /**
      * Primes {@code Randomizer}'s per-thread generator so that two later, separate
      * {@code Randomizer.setSeed(SAME_SEED)} calls on this thread produce byte-identical streams.

@@ -39,8 +39,17 @@
 # Explicit target only (`burnin_speed`, mirroring `cross_check`) - never swept into `rule all`,
 # since it needs a completed reference band first (itself a long ESS-gated reference_tier run).
 #
-# Checkpoint/resume (Phase 3c item 1, shared-checkpoint steady-state mixing) is a separate,
-# not-yet-landed piece and is out of scope here - no rule for it exists yet, deliberately.
+# Checkpoint/resume (Phase 3c item 1, shared-checkpoint steady-state mixing) is wired into
+# thorough/cross-check by default: `render_reference_checkpoint`/`run_beast_reference_checkpoint`
+# produce one dataset-level reference chain (the dataset's own reference_tier, baseline setting,
+# seed 1000 - the same chain shape and role reference_band already used, reused rather than
+# duplicated) whose BenchmarkMCMC also writes `checkpoint.state` at the burn-in boundary
+# (checkpointOut, sampleNr==0 - see BenchmarkMCMC javadoc). `run_beast_checkpointed` then copies
+# that checkpoint into each thorough/cross-check cell's own state-file path (never read/write the
+# shared file directly - parallel cells would clobber it, since a cell's own run also writes its
+# final state back to whatever -statefile points at) and runs BEAST with `-resume`, so every
+# setting's reps share the same starting point, paired by seed as usual. fast/smoke are unaffected
+# (rule run_beast, unchanged, still fresh-starts every cell - Phase 3c item 2's burn-in-speed axis).
 
 import re
 from pathlib import Path
@@ -76,6 +85,20 @@ KNOWN_TIERS = sorted({tier for entry in REGISTRY.values() for tier in entry["tie
 TIER_PATTERN = "|".join(re.escape(tier) for tier in KNOWN_TIERS)
 
 BURNIN_SPEED_CELL_DIR = str(RUNS_ROOT / "{dataset}" / "burnin-speed" / "{setting}" / "rep{rep}")
+
+# Shared checkpoint (Phase 3c, item 1): thorough/cross-check cells resume from a per-dataset
+# checkpoint instead of running their own fresh preBurnin (see the module docstring above and rules
+# render_reference_checkpoint/run_beast_reference_checkpoint/run_beast_checkpointed below).
+# fast/smoke keep the old fresh-start rule (run_beast) - burn-in speed is intentionally measured
+# from fresh starts (Phase 3c item 2), and fast/smoke were never ESS-gated anyway. The two tier sets
+# partition KNOWN_TIERS, so their wildcard_constraints are mutually exclusive - required, or
+# Snakemake would see two rules able to produce the same CELL_DIR outputs.
+CHECKPOINT_TIERS = sorted({"thorough", "cross-check"} & set(KNOWN_TIERS))
+CHECKPOINT_TIER_PATTERN = "|".join(re.escape(tier) for tier in CHECKPOINT_TIERS)
+FRESH_TIERS = sorted(set(KNOWN_TIERS) - set(CHECKPOINT_TIERS))
+FRESH_TIER_PATTERN = "|".join(re.escape(tier) for tier in FRESH_TIERS)
+
+REFERENCE_CHECKPOINT_DIR = str(RUNS_ROOT / "{dataset}" / "reference_checkpoint")
 
 
 def tier_cfg(dataset: str, tier: str) -> dict:
@@ -170,7 +193,8 @@ rule run_beast:
         opstats=CELL_DIR + "/run.opstats.tsv",
         runtime=CELL_DIR + "/run.runtime",
     wildcard_constraints:
-        tier=TIER_PATTERN,
+        # fast/smoke only - thorough/cross-check use run_beast_checkpointed below.
+        tier=FRESH_TIER_PATTERN,
     shell:
         # The proven invocation used throughout this project's Phase 0/3a experiments (see
         # docs/evaluation/where-targeting-wins.md); beast.main is already this pom's default but
@@ -185,6 +209,91 @@ rule run_beast:
         'cd "{PROJECT_ROOT}" && SECONDS=0 && '
         "mvn -o exec:exec -Dbeast.main=beast.base.minimal.BeastMain "
         '-Dbeast.args="-overwrite -seed {params.seed} -statefile {output.state} {input.xml}" && '
+        'echo $SECONDS > "{output.runtime}"'
+
+
+# ---------------------------------------------------------------------------------------------
+# Shared checkpoint (Phase 3c, item 1). thorough/cross-check cells resume from one dataset-level
+# reference chain instead of each running its own fresh preBurnin - see module docstring above.
+# ---------------------------------------------------------------------------------------------
+
+
+rule render_reference_checkpoint:
+    input:
+        render_inputs,
+    output:
+        xml=REFERENCE_CHECKPOINT_DIR + "/run.xml",
+    params:
+        tier=lambda wc: reference_tier_of(wc.dataset),
+        setting=lambda wc: settings_for(wc.dataset)[0],
+    shell:
+        # Same chain shape as reference_band always used (the dataset's reference_tier, baseline
+        # setting) - this rule and reference_band now share this one run instead of reference_band
+        # deriving its input from a thorough/cross-check tier cell, which - now that those cells
+        # resume from this checkpoint by default - would otherwise be circular (that cell would
+        # need the checkpoint this run produces).
+        "python3 {SCRIPT_DIR}/render_xml.py --dataset {wildcards.dataset} --tier {params.tier} "
+        "--setting {params.setting} --rep 0 "
+        '--out-dir "$(dirname {output.xml})" '
+        '--checkpoint-out "$(dirname {output.xml})/checkpoint.state"'
+
+
+rule run_beast_reference_checkpoint:
+    input:
+        xml=REFERENCE_CHECKPOINT_DIR + "/run.xml",
+        build=BUILD_MARKER,
+    output:
+        log=REFERENCE_CHECKPOINT_DIR + "/run.log",
+        trees=REFERENCE_CHECKPOINT_DIR + "/run.trees",
+        state=REFERENCE_CHECKPOINT_DIR + "/run.xml.state",
+        checkpoint=REFERENCE_CHECKPOINT_DIR + "/checkpoint.state",
+        opstats=REFERENCE_CHECKPOINT_DIR + "/run.opstats.tsv",
+        runtime=REFERENCE_CHECKPOINT_DIR + "/run.runtime",
+    shell:
+        # Seed 1000, matching seed=1000+rep at rep=0 (beast_seed) - this run stands in for what
+        # used to be the baseline-setting/rep0 thorough/cross-check cell, at the same seed.
+        # checkpoint.state is BenchmarkMCMC's own output (checkpointOut, written at sampleNr==0 -
+        # the burn-in boundary), not something this shell command produces directly.
+        'cd "{PROJECT_ROOT}" && SECONDS=0 && '
+        "mvn -o exec:exec -Dbeast.main=beast.base.minimal.BeastMain "
+        '-Dbeast.args="-overwrite -seed 1000 -statefile {output.state} {input.xml}" && '
+        'echo $SECONDS > "{output.runtime}"'
+
+
+def checkpoint_donor_state(wildcards):
+    return str(RUNS_ROOT / wildcards.dataset / "reference_checkpoint" / "checkpoint.state")
+
+
+rule run_beast_checkpointed:
+    input:
+        xml=CELL_DIR + "/run.xml",
+        build=BUILD_MARKER,
+        donor_checkpoint=checkpoint_donor_state,
+    params:
+        seed=beast_seed,
+    output:
+        log=CELL_DIR + "/run.log",
+        trees=CELL_DIR + "/run.trees",
+        state=CELL_DIR + "/run.xml.state",
+        opstats=CELL_DIR + "/run.opstats.tsv",
+        runtime=CELL_DIR + "/run.runtime",
+    wildcard_constraints:
+        tier=CHECKPOINT_TIER_PATTERN,
+    shell:
+        # Copy first (never resume straight from the shared donor_checkpoint file): this cell's own
+        # run ends by writing its final state back to whatever -statefile points at, so every
+        # setting/rep resuming from the same shared file directly would clobber it for whichever
+        # cell reads it next (confirmed the hard way - see BenchmarkMCMCCrossSettingResumeTest,
+        # which hit exactly this before the copy step was added there too).
+        #
+        # -resume (not -overwrite): restores state from the copied file and forces burnIn=0 in
+        # core MCMC regardless of the rendered XML's own preBurnin value - the cell's rendered XML
+        # is otherwise identical to a fresh-start cell's (same pre_burnin/chain_length/jumpInterval
+        # from datasets.yaml), it just never uses its own preBurnin on resume.
+        'cd "{PROJECT_ROOT}" && SECONDS=0 && '
+        'cp "{input.donor_checkpoint}" "{output.state}" && '
+        "mvn -o exec:exec -Dbeast.main=beast.base.minimal.BeastMain "
+        '-Dbeast.args="-resume -seed {params.seed} -statefile {output.state} {input.xml}" && '
         'echo $SECONDS > "{output.runtime}"'
 
 
@@ -253,11 +362,12 @@ def reference_tier_of(dataset: str) -> str:
 
 
 def reference_cell_log(wildcards):
-    """The already-defined baseline-setting/rep0 cell of the dataset's own reference_tier - reuses
-    the generic render/run_beast rules unmodified, so this never invents a new chain length."""
-    tier = reference_tier_of(wildcards.dataset)
-    setting = settings_for(wildcards.dataset)[0]
-    return str(RUNS_ROOT / wildcards.dataset / tier / setting / "rep0" / "run.log")
+    """The dataset's reference-checkpoint donor run (render_reference_checkpoint /
+    run_beast_reference_checkpoint above) - same chain shape/role the old baseline-setting/rep0
+    thorough/cross-check cell used to serve, but now a dedicated target: since those tier cells
+    resume from this run's checkpoint by default (Phase 3c item 1), deriving the band from one of
+    them would be circular."""
+    return str(RUNS_ROOT / wildcards.dataset / "reference_checkpoint" / "run.log")
 
 
 rule reference_band:

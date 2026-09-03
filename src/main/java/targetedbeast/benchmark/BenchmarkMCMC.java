@@ -54,6 +54,15 @@ import targetedbeast.operators.AdaptableOperatorSampler;
  * row followed by one data row with columns {@code referenceLowerBound}, {@code referenceUpperBound},
  * {@code reached} ({@code true}/{@code false}), {@code proposalsToTarget} ({@code -1} if never
  * reached), {@code totalPostBurninProposals}.
+ *
+ * <p><b>Shared checkpoint (Phase 3c, item 1).</b> When {@code checkpointOut} is set, the state is
+ * serialised (via {@code State.toXML}, independent of the {@code -statefile}/{@code storeToFile}
+ * mechanism's own fixed path) exactly once, at {@code sampleNr == 0} - the first post-burnin
+ * proposal, before it is applied. Core's {@code doLoop} always calls {@code propagateState} for
+ * {@code sampleNr} from {@code -burnIn} to {@code chainLength} inclusive, so this point is the same
+ * whether burn-in came from a fresh {@code preBurnin} or (on {@code -resume}, which forces
+ * {@code burnIn = 0}) is the restored state itself - either way it is the state every setting's
+ * measured segment should start from, before any setting-specific operator has run.
  */
 @Description("MCMC that also writes a '<statsOut>.opstats.tsv' benchmark report: per-operator "
         + "acceptance/timing/tree-jump statistics plus a chain-level headline row. Instrumentation "
@@ -97,12 +106,20 @@ public class BenchmarkMCMC extends MCMC {
             "upper bound (95th percentile) of a reference chain's post-burnin log-posterior band. "
             + "See referenceLowerBound.");
 
+    final public Input<String> checkpointOutInput = new Input<>("checkpointOut",
+            "if set, writes the state to this path exactly once, at the first post-burnin "
+            + "proposal (before it is applied) - the shared checkpoint every setting's thorough/"
+            + "cross-check reps resume from (Phase 3c, item 1). Independent of -statefile/"
+            + "storeToFile, which write at storeEvery/chain-end to a different, fixed path.");
+
     // ---- resolved config ----
     private List<TreeMetric> metrics;
     private int jumpInterval;
     private Double referenceLowerBound;
     private Double referenceUpperBound;
     private boolean burnInSpeedEnabled;
+    private String checkpointOutPath;
+    private boolean checkpointWritten;
 
     // ---- operator bookkeeping (built lazily on first propagateState call, once
     //      operatorSchedule.init()/TargetedOperatorSchedule's operator substitution has run) ----
@@ -130,11 +147,18 @@ public class BenchmarkMCMC extends MCMC {
         burnInSpeedEnabled = referenceLowerBound != null && referenceUpperBound != null;
         burnInSpeedTracker = burnInSpeedEnabled
                 ? new BurnInSpeedTracker(referenceLowerBound, referenceUpperBound) : null;
+        checkpointOutPath = checkpointOutInput.get();
+        checkpointWritten = false;
     }
 
     @Override
     protected Operator propagateState(final long sampleNr) {
         ensureTrackingInitialised();
+
+        if (checkpointOutPath != null && sampleNr == 0 && !checkpointWritten) {
+            writeCheckpoint(sampleNr);
+            checkpointWritten = true;
+        }
 
         final boolean postBurnin = sampleNr >= 0;
         final boolean sampled = postBurnin && !metrics.isEmpty()
@@ -219,6 +243,16 @@ public class BenchmarkMCMC extends MCMC {
         writeBurnInSpeedFile();
         if (jumpTraceWriter != null) {
             jumpTraceWriter.close();
+        }
+    }
+
+    // ---- shared checkpoint (Phase 3c, item 1) ----
+
+    private void writeCheckpoint(final long sampleNr) {
+        try (PrintWriter out = new PrintWriter(new FileWriter(checkpointOutPath))) {
+            out.print(state.toXML(sampleNr));
+        } catch (IOException e) {
+            throw new RuntimeException("Could not write checkpoint to " + checkpointOutPath, e);
         }
     }
 
