@@ -481,24 +481,29 @@ All 4 `constant` reps clear ESS≥100 (163.8–279.7 posterior, 192.0–377.3 tr
 
 | rep | seed | posterior.ESS | acceptRate | meanJumpGivenAccepted | esjdPerSec_rnni |
 |---|---|---:|---:|---:|---:|
-| 0 | 1000 | 77.2  | 0.2798 | 0.321 | 2314.2 |
+| 0 | 1000 | 278.2 | 0.2784 | 0.343 | 2602.4 |
 | 1 | 1001 | 180.9 | 0.2771 | 0.345 | 1724.1 |
 | 2 | 1002 | 225.9 | 0.2786 | 0.352 | 1852.1 |
 | 3 | 1003 | 189.5 | 0.2800 | 0.342 | 1739.6 |
 
-3 of 4 `pca` reps clear ESS≥100; rep0 sits at 77.2, marginally below the threshold. Treated as
-borderline rather than excluded — the aggregate conclusion below is unaffected either way.
+**Correction (2026-09-03): rep0 above was originally from a chain interrupted mid-run** (2,000,001
+of the intended 3,000,001 proposals, giving a spuriously low posterior.ESS=77.2, marginally below
+the ≥100 gate). It has been rerun to completion at the same seed (1000) and settings; the table
+above already reflects the corrected numbers. All 4 `pca` reps now clear ESS≥100 comfortably
+(180.9–278.2), matching the `constant` side — no cell in this comparison is ESS-borderline anymore.
 
 ### Paired analysis (pca − constant), t-based 90% CI, n=4, df=3
 
 | dataset | mean diff (ESJD/s) | 90% CI | relative | excludes zero? |
 |---|---:|---|---:|---|
-| iecor | −285.9 | (−589.1, +17.3) | −13.0% | no |
+| iecor | −213.9 | (−679.9, +252.1) | −9.8% | no |
 
-**Verdict: no effect.** The point estimate favours `constant`, opposite in sign to the infB
-result (`## infB — 5x extended run` above), and the CI includes zero. Given one cell is ESS-borderline this is not a strong negative
-finding either — best read as "no evidence `PCAWeights2` helps on iecor," not "iecor prefers
-uniform weights."
+**Verdict: no effect (unchanged by the rep0 correction).** The point estimate still favours
+`constant`, opposite in sign to the infB result (`## infB — 5x extended run` above), and the CI
+still includes zero. The correction moved the point estimate from −13.0% to −9.8% and widened the
+CI slightly (the old CI's near-miss upper bound of +17.3 is no longer close to zero at +252.1), but
+did not change the sign or the significance verdict — best read, as before, as "no evidence
+`PCAWeights2` helps on iecor," not "iecor prefers uniform weights."
 
 
 ---
@@ -512,9 +517,10 @@ uniform weights."
    clear ESS≥100 once budgeted for it explicitly (5x total proposals for infB; ~11x for iecor
    relative to its first attempt).
 2. **The one confirmed effect (infB, +7.3%, CI excludes zero) is dataset-specific, not a general
-   property of `PCAWeights2`.** It does not replicate on iecor (−13.0%, wrong sign, CI includes
-   zero). Any future weighting comparison needs per-dataset validation, not one verdict
-   generalized across datasets.
+   property of `PCAWeights2`.** It does not replicate on iecor (−9.8%, wrong sign, CI includes
+   zero — this figure reflects the rep0 correction above and was re-verified after that rerun).
+   Any future weighting comparison needs per-dataset validation, not one verdict generalized across
+   datasets.
 3. **lassaL stays set aside.** Its ESS problem is structural to its size/throughput at any chain
    length affordable in this evaluation's time budget, not fixable by the same 5x/11x scaling that
    worked for infB and iecor.
