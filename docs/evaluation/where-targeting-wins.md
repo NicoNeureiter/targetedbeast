@@ -741,3 +741,125 @@ carried. This result should not be read as evidence against the weight-transform
 general — only against this specific combination (infB, `PCAWeights2`, this grid and burn-in) at
 n=4 — but it is a clean, ESS-gated, statistically supported result at this sample size: on this
 dataset, plugging the feature in as configured here is a regression, not an improvement.
+
+---
+
+# Weight-transform feature, re-tested with a grid spanning the operator's own default exponent
+
+**Why this run exists.** The `pca_grid` result above used `GridTuner` exponents `[8, 12, 16, 24]`
+— confirmed after the fact to be an old leftover from unrelated exploration, not a deliberate
+choice — which only ever let the tuner explore exponents pointier than the targeted operators'
+own hardcoded default (`exponent="2.0"`, plain squaring). It could never test flatter-than-default
+or the default itself, so the −13.5% result above cannot distinguish "the transform hurts" from
+"this specific grid never let the tuner find the default/flatter region that would have helped."
+This section reruns the same comparison with `exponents="0.5 1 2 4"` — flatter-than-default (0.5),
+raw/neutral (1), the historical default (2), and moderately pointier (4) — against the same
+already-recorded `pca` cells, so `pca_grid` and this new `pca_grid_low` setting are both judged
+against one shared baseline.
+
+## What was built
+
+`scripts/render_infb_benchmark_xml.py` gained a `"pca_grid_low"` setting: identical
+`PCAWeights2` distribution to `"pca"`/`"pca_grid"`, wired to a second `PowerOffsetTransform`/
+`GridTuner` variant (`"grid_low"`) that is otherwise identical to `"grid"` (`exponent="2.0"
+offset="0.0"`, `explorationProb="0.1"`, `burnin="5000"`, `<reward idref="likelihood"/>` — the
+`burnin=5000` reasoning from the `pca_grid` section above applies unchanged, since it depends only
+on infB's own convergence behaviour post-`preBurnin`, not on which grid is being explored) except:
+
+- `exponents="0.5 1 2 4"` in place of `"8 12 16 24"`.
+- `maxExponent="4.0"` in place of `"24.0"`. `maxExponent` must be ≥ the grid's largest value (4);
+  it is set to exactly 4, matching the grid's own top value, the same pattern the original `grid`
+  setting used (`maxExponent == max(GRID_EXPONENTS)`, i.e. also no headroom above its own grid's
+  ceiling) — kept for consistency rather than introducing an unexamined asymmetry between the two
+  transform variants.
+
+## Smoke check (`fast` tier, infB, `preBurnin=20000/chainLength=150000`, seed 1000)
+
+XML parsed (`xml.etree.ElementTree`) and rendered correctly. Run completed without error in 82.9s
+chain time (1:23 wall including JVM/module boot).
+
+**The tuner explores the new grid.** The trace log's `targetWeightTransform.reward.*` columns
+confirm the four reward trackers are exactly `0.5`, `1.0`, `2.0`, `4.0` (not the old `8/12/16/24`).
+`targetWeightTransform.leadingExponent` starts at `0.5` (the grid's lowest value, the same
+"smallest grid point first" pattern the `pca_grid` smoke check showed with `8.0`), then visits
+`1.0`, back to `0.5`, then `4.0`, back to `0.5`, then `4.0` again — three of the four grid values
+visited within a 150,000-proposal chain, clearly moving among grid points rather than stuck at the
+initial default or at `2.0`.
+
+## Real comparison (`thorough` tier, `preBurnin=100000/chainLength=750000`, 4 reps, seeds 1000-1003)
+
+Rendered via `scripts/render_infb_benchmark_xml.py --settings pca_grid_low --reps 4
+--chain-length 750000 --pre-burnin 100000 --jump-interval 20 --out-root runs/eval5_low/infb`.
+Each rep ran as a blocking `mvn -o exec:exec` invocation, sequential (not parallelized — infB's
+likelihood already uses `useThreads="true"`, so concurrent chains would contend for the same core
+pool), 407.9-435.7s chain time per rep (~6:48-7:17 wall including JVM/module boot), ~28.4 minutes
+chain time total for all 4. Paired against the **already-recorded** `pca` cells from the "infB —
+5x extended run" section above (same seeds 1000-1003, not rerun).
+
+### ESS gate
+
+| rep | seed | posterior.ESS | tree.height.ESS |
+|---:|---:|---:|---:|
+| 0 | 1000 | 211.0 | 384.7 |
+| 1 | 1001 | 311.2 | 349.1 |
+| 2 | 1002 | 363.7 | 425.3 |
+| 3 | 1003 | 223.1 | 407.4 |
+
+All 4 cells clear `posterior.ESS`≥100 (211.0-363.7) and `tree.height.ESS`≥100 (349.1-425.3) — same
+gate, same margin as every other `thorough`-tier result in this document.
+
+### Raw results — chain-level (`__CHAIN__` row), per cell
+
+| setting | rep | seed | acceptRate | meanJumpGivenAccepted | esjdPerSec_rnni |
+|---|---:|---:|---:|---:|---:|
+| pca_grid_low | 0 | 1000 | 0.1626 | 4.186 | 22746.6 |
+| pca_grid_low | 1 | 1001 | 0.1615 | 4.199 | 23186.4 |
+| pca_grid_low | 2 | 1002 | 0.1640 | 4.159 | 21409.6 |
+| pca_grid_low | 3 | 1003 | 0.1611 | 4.151 | 22078.8 |
+
+(`pca` reps at the same seeds are the rows already reported in "infB — 5x extended run" above:
+0.1670/4.068/21870.7, 0.1654/4.282/21560.3, 0.1659/3.935/21649.6, 0.1639/4.234/23067.5.)
+
+The transform's own logged trace (`targetWeightTransform.leadingExponent`, per-rep posterior
+median over the whole post-burnin chain) settled at **4.0 — the grid's ceiling — in all 4 reps**,
+the mirror image of `pca_grid`'s result (which settled at 8.0, its grid's floor, in all 4 reps).
+Per-rep posterior means were 3.46, 3.14, 4.00, and 3.31 — all below the median of 4.0, meaning
+each chain spent real time exploring lower grid points (0.5/1/2) before its reward estimates
+pulled the leader up to 4.0, not that 4.0 was fixed from the start. No rep's leader ever settled at
+the flatter-than-default (0.5) or default (2.0) points that motivated this rerun, nor at the
+grid's raw/neutral midpoint (1.0).
+
+### Paired analysis (pca_grid_low − pca), t-based 90% CI, n=4, df=3
+
+| mean diff (ESJD/s) | 90% CI | excludes zero? | relative to pca mean |
+|---:|---|---|---:|
+| +318.3 | (−1047.4, 1684.0) | no | +1.4% |
+
+## Verdict
+
+**No effect, in either direction.** The 90% CI includes zero — `pca_grid_low` is statistically
+indistinguishable from `PCAWeights2` alone at 4 reps, with a small positive point estimate
+(+1.4%). This is a materially different result from the high-grid `pca_grid` run: that comparison
+had a CI excluding zero on the *negative* side (−13.5%), with `pca_grid`'s per-rep ESJD/s
+(18421-19666) not overlapping `pca`'s (21560-23068) at all. Here, `pca_grid_low`'s per-rep range
+(21410-23186) sits squarely inside/overlapping `pca`'s own range, and the point estimate is barely
+above zero rather than clearly below it.
+
+Read together with `pca_grid`, this replicates the earlier section's own tentative reading: the
+regression previously observed was not an inherent property of "adding an adaptive power
+transform to `PCAWeights2` on infB" — it was specific to a grid that only ever pushed the
+transform pointier than the operators' built-in default. A grid that includes the default (2.0)
+and flatter options (0.5) removes the harm (no more significant negative effect) but does not
+produce a significant improvement either: the tuner, given the option to settle near the default
+or flatten, instead settled at this grid's own ceiling (4.0) — moderately pointier than default,
+but far short of the pointiness (`pca_grid`'s floor of 8.0) that hurt before. This is consistent
+with the discussion in `docs/WeightTransformAdaptation.md` that pointiness beyond some
+dataset-specific optimum stops helping and starts hurting mixing; on infB with `PCAWeights2`, that
+optimum appears to sit somewhere in or near `[2, 4]`, not near `[8, 24]`, and (per this null
+result) does not clearly beat leaving `PCAWeights2` untransformed at all. As with every other null
+result in this document, this does not rule out a smaller true effect that 4 reps cannot resolve;
+it rules out the specific large effect (positive or negative) that would be needed to justify
+recommending the transform, at this grid, on this dataset, right now.
+
+`mvn -o test`: 123 run, 2 failures, 1 skipped, 0 errors — unchanged from baseline, confirmed after
+these runs and before committing.

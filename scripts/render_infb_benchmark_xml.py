@@ -26,6 +26,9 @@ EDGE_WEIGHTS_XML = {
     # the transform improves on PCAWeights2 alone, so the edge weights themselves are identical.
     "pca_grid": '<distribution id="edgeweights" spec="targetedbeast.edgeweights.PCAWeights2" '
                 'tree="@tree" maxWeight="20" data="@infB_HA" dimension="10"/>',
+    # Same PCAWeights2 again, paired with the "grid_low" transform below (see GRID_EXPONENTS_LOW).
+    "pca_grid_low": '<distribution id="edgeweights" spec="targetedbeast.edgeweights.PCAWeights2" '
+                     'tree="@tree" maxWeight="20" data="@infB_HA" dimension="10"/>',
 }
 
 # Grid points and burnin below mirror scripts/generate_xmls.py's _grid_transform (the lassaL
@@ -40,6 +43,18 @@ EDGE_WEIGHTS_XML = {
 # residual noise right after preBurnin ends.
 GRID_EXPONENTS = [8, 12, 16, 24]
 GRID_BURNIN = 5_000
+
+# Follow-up to GRID_EXPONENTS: that grid (8/12/16/24) only ever explored exponents pointier than
+# the operators' own hardcoded default (2.0, plain squaring) - it could never let GridTuner settle
+# back at, or flatter than, the default. This grid spans flatter-than-default (0.5), raw/neutral
+# (1), the historical default (2), and moderately pointier (4), so the tuner can actually choose
+# among "flatten", "leave alone", and "sharpen" rather than only degrees of "sharpen".
+GRID_EXPONENTS_LOW = [0.5, 1, 2, 4]
+# maxExponent must be >= the grid's largest value (4); matching it exactly (rather than adding
+# headroom, as e.g. maxExponent=8 would) mirrors the pattern the original "grid" setting used
+# (maxExponent == max(GRID_EXPONENTS)) and keeps the transform's hard cap tied to the range this
+# grid is actually designed to explore.
+GRID_MAX_EXPONENT_LOW = max(GRID_EXPONENTS_LOW)
 
 WEIGHT_TRANSFORM_XML = {
     "none": ("", "", ""),
@@ -60,6 +75,20 @@ WEIGHT_TRANSFORM_XML = {
         ' targetWeightTransform="@targetWeightTransform"',
         '<log idref="targetWeightTransform"/>',
     ),
+    # Same wiring as "grid", but over GRID_EXPONENTS_LOW instead.
+    "grid_low": (
+        '<targetWeightTransform id="targetWeightTransform"'
+        ' spec="targetedbeast.weighttransform.PowerOffsetTransform"'
+        f' exponent="2.0" offset="0.0" maxExponent="{GRID_MAX_EXPONENT_LOW}.0">\n'
+        '            <tuner spec="targetedbeast.weighttransform.GridTuner"'
+        f' exponents="{" ".join(str(b) for b in GRID_EXPONENTS_LOW)}"'
+        f' explorationProb="0.1" burnin="{GRID_BURNIN}">\n'
+        '                <reward idref="likelihood"/>\n'
+        '            </tuner>\n'
+        '        </targetWeightTransform>',
+        ' targetWeightTransform="@targetWeightTransform"',
+        '<log idref="targetWeightTransform"/>',
+    ),
 }
 
 # Which transform variant each edge-weights setting is rendered with.
@@ -68,6 +97,7 @@ WEIGHT_TRANSFORM_FOR_SETTING = {
     "parsimony": "none",
     "pca": "none",
     "pca_grid": "grid",
+    "pca_grid_low": "grid_low",
 }
 
 
