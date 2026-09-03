@@ -1,12 +1,13 @@
 """Render a BenchmarkMCMC variant of the infB (141-taxon) template for the Phase 0 step 4
-follow-up experiment (infB full / lassaL@100).
+follow-up experiment (infB full / lassaL@100), and the weight-transform baseline that extends it.
 
-infB has no taxon-subsampling and no {target_weight_transform*} slots (checked directly against
-`examples/infb_HA_141/template.xml`) - only {chain_length} and {edge_weights}. It's used at its
-full 141 taxa, always. Mirrors render_benchmark_xml.py's render_run_xml (same <run>/<state>
-rewrite, same RNNIMetric injection pattern) but points the taxonset at infB's own TaxonSet id
-(`TaxonSet.infB_HA`) and the ParsimonyWeights2 `data` at infB's own alignment id (`infB_HA`)
-instead of lassaL's `@taxonSet` / `@alignment`.
+infB has no taxon-subsampling. It's used at its full 141 taxa, always. Mirrors
+render_benchmark_xml.py's render_run_xml (same <run>/<state> rewrite, same RNNIMetric injection
+pattern) but points the taxonset at infB's own TaxonSet id (`TaxonSet.infB_HA`) and the
+ParsimonyWeights2/PCAWeights2 `data` at infB's own alignment id (`infB_HA`) instead of lassaL's
+`@taxonSet` / `@alignment`. `examples/infb_HA_141/template.xml` carries the same
+`{target_weight_transform}` / `{target_weight_transform_ref}` / `{target_weight_transform_log}`
+slots as `examples/lassaL_kli22/template.xml`, added for the "pca_grid" setting below.
 """
 from pathlib import Path
 import argparse
@@ -20,14 +21,66 @@ EDGE_WEIGHTS_XML = {
                  'tree="@tree" maxWeight="20" data="@infB_HA"/>',
     "pca": '<distribution id="edgeweights" spec="targetedbeast.edgeweights.PCAWeights2" '
            'tree="@tree" maxWeight="20" data="@infB_HA" dimension="10"/>',
+    # Same PCAWeights2 as "pca", with a GridTuner-adaptive PowerOffsetTransform layered on top
+    # (see WEIGHT_TRANSFORM_XML below) - the question this setting exists to answer is whether
+    # the transform improves on PCAWeights2 alone, so the edge weights themselves are identical.
+    "pca_grid": '<distribution id="edgeweights" spec="targetedbeast.edgeweights.PCAWeights2" '
+                'tree="@tree" maxWeight="20" data="@infB_HA" dimension="10"/>',
+}
+
+# Grid points and burnin below mirror scripts/generate_xmls.py's _grid_transform (the lassaL
+# renderer), the only other place this pattern is proven, with one deliberate deviation: lassaL
+# has no separate pre-burnin phase, so its GRID_BURNIN=10,000 has to absorb the chain's entire
+# transient by itself. Here, core MCMC's preBurnin (100,000 at the thorough tier) already runs
+# to completion before operator.optimize() is ever called (MCMC.java: optimize() is gated on
+# `sampleNr >= 0`, i.e. strictly post-preBurnin) - and this project's own infB convergence check
+# ("infB - 5x extended run" in docs/evaluation/where-targeting-wins.md) already confirmed the
+# posterior trace is flat within the first few hundred post-preBurnin samples at that budget. So
+# the tuner does not need to relearn to discard a steep transient; a modest safety margin covers
+# residual noise right after preBurnin ends.
+GRID_EXPONENTS = [8, 12, 16, 24]
+GRID_BURNIN = 5_000
+
+WEIGHT_TRANSFORM_XML = {
+    "none": ("", "", ""),
+    # A shared PowerOffsetTransform whose exponent is chosen by GridTuner from GRID_EXPONENTS.
+    # explorationProb=0.1 keeps the choice adaptive rather than a uniform sweep. Reward is the
+    # squared change in likelihood per proposal (ESJD) - acceptance alone drives the exponent
+    # straight to its ceiling, per docs/WeightTransformAdaptation.md.
+    "grid": (
+        '<targetWeightTransform id="targetWeightTransform"'
+        ' spec="targetedbeast.weighttransform.PowerOffsetTransform"'
+        f' exponent="2.0" offset="0.0" maxExponent="{max(GRID_EXPONENTS)}.0">\n'
+        '            <tuner spec="targetedbeast.weighttransform.GridTuner"'
+        f' exponents="{" ".join(str(b) for b in GRID_EXPONENTS)}"'
+        f' explorationProb="0.1" burnin="{GRID_BURNIN}">\n'
+        '                <reward idref="likelihood"/>\n'
+        '            </tuner>\n'
+        '        </targetWeightTransform>',
+        ' targetWeightTransform="@targetWeightTransform"',
+        '<log idref="targetWeightTransform"/>',
+    ),
+}
+
+# Which transform variant each edge-weights setting is rendered with.
+WEIGHT_TRANSFORM_FOR_SETTING = {
+    "constant": "none",
+    "parsimony": "none",
+    "pca": "none",
+    "pca_grid": "grid",
 }
 
 
 def render_run_xml(template_text: str, setting: str, chain_length: int, out_dir: Path,
                     jump_interval: int, pre_burnin: int) -> str:
+    transform_element, transform_ref, transform_log = \
+        WEIGHT_TRANSFORM_XML[WEIGHT_TRANSFORM_FOR_SETTING[setting]]
     xml = template_text.format(
         edge_weights=EDGE_WEIGHTS_XML[setting],
         chain_length=str(chain_length),
+        target_weight_transform=transform_element,
+        target_weight_transform_ref=transform_ref,
+        target_weight_transform_log=transform_log,
     )
 
     run_needle = '<run id="mcmc" spec="MCMC" chainLength='

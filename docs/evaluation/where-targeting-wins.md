@@ -617,3 +617,127 @@ would be needed before treating it as validated.
 
 `mvn -o test`: 113 run, 2 failures, 1 skipped — unchanged from baseline, confirmed after the
 diagnostic runs and before committing.
+
+---
+
+# Weight-transform feature (`GridTuner`-adaptive `PowerOffsetTransform`) vs `PCAWeights2` alone
+
+`PCAWeights2` (+7.3% over `ConstantWeights`, CI excludes zero — "infB — 5x extended run" above)
+is the reference baseline every improvement is measured against. This section asks whether
+layering the weight-transform feature (`targetedbeast.weighttransform.PowerOffsetTransform` +
+`GridTuner`, see `docs/WeightTransformAdaptation.md`) on top of `PCAWeights2` beats
+`PCAWeights2` alone, using the same paired design, seeds, and ESS gate as every result above.
+
+## What was built
+
+`scripts/render_infb_benchmark_xml.py` gained a `"pca_grid"` setting: the identical
+`PCAWeights2` distribution as the existing `"pca"` setting (`maxWeight="20"`, `dimension="10"`),
+with a shared `PowerOffsetTransform` wired into every targeted operator that accepts one
+(`TargetedWide`, `targetedWilsonBalding`, `targetedWilsonBaldingFixedHeight`,
+`targetedRangeSlide`) via `targetWeightTransform`. `examples/infb_HA_141/template.xml` gained the
+same `{target_weight_transform}` / `{target_weight_transform_ref}` / `{target_weight_transform_log}`
+slots `examples/lassaL_kli22/template.xml` already declares, filled the same way (empty strings
+for every other setting, so `constant`/`parsimony`/`pca` render byte-identical to before — checked
+directly by diffing a re-rendered `pca` cell against a fresh one).
+
+**Parameters, and where they deviate from the lassaL defaults in `scripts/generate_xmls.py`'s
+`_grid_transform`:**
+
+- `exponent="2.0" offset="0.0" maxExponent="24.0"` on the transform, `GridTuner` with
+  `exponents="8 12 16 24"`, `explorationProb="0.1"` — identical to lassaL, no reason to deviate.
+- `<reward idref="likelihood"/>` — infB's `likelihood` `CompoundDistribution` id matches lassaL's
+  exactly (checked directly against `examples/infb_HA_141/template.xml`), so no adaptation needed
+  there either.
+- **`burnin="5000"`, not lassaL's `10000`.** lassaL has no separate pre-burnin phase, so its
+  `GRID_BURNIN` has to absorb the chain's entire transient by itself (its own comment: "at 30k
+  steps the chain is still descending thousands of log units per proposal"). infB's `thorough`
+  tier is different: core `MCMC.doLoop` only calls `operator.optimize()` when `sampleNr >= 0`
+  (`MCMC.java:483-485`), i.e. strictly *after* `BenchmarkMCMC`'s `preBurnin` (100,000 proposals)
+  has already run to completion — and the "infB — 5x extended run" section above already
+  established, at this exact `preBurnin`/`chainLength`, that the posterior trace is flat within a
+  few hundred post-preBurnin samples and clears `posterior.ESS`≥100 comfortably. So `GridTuner`'s
+  own burn-in does not need to re-discard a steep transient the way lassaL's does; `5000` is a
+  modest safety margin against residual noise right after `preBurnin` ends, not a burn-in-length
+  estimate from scratch.
+
+## Smoke check (`fast` tier, infB, `preBurnin=20000/chainLength=150000`, seed 1000)
+
+XML parsed and rendered correctly (verified both the raw template — which, like lassaL's, is not
+well-formed standalone XML until `.format()`-filled, confirmed by checking lassaL's template
+fails the same way — and the rendered output, which is). The run completed without error in
+84s chain time (1:26 wall including JVM/module boot).
+
+**The tuner adapts.** `targetWeightTransform.leadingExponent` in the trace log (added via
+`<log idref="targetWeightTransform"/>`, following lassaL's pattern) starts at the initial default
+choice (8.0, before every grid point has cleared `GridTuner`'s own `learnin=200` floor), jumps to
+24.0 around proposal ~11,000 once the burn-in margin clears, cycles down through 16.0, and
+stabilizes at a leading exponent of 12.0 (highest mean reward, ~0.115) for the back half of the
+150,000-proposal chain — clearly away from both the initial `exponent="2.0"` transform default
+and the tuner's own starting grid choice, not stuck.
+
+## Real comparison (`thorough` tier, `preBurnin=100000/chainLength=750000`, 4 reps, seeds 1000-1003)
+
+Rendered via `scripts/render_infb_benchmark_xml.py --settings pca_grid --reps 4
+--chain-length 750000 --pre-burnin 100000 --jump-interval 20 --out-root runs/eval5/infb`. Each
+rep ran as a blocking `mvn -o exec:exec` invocation (never backgrounded), 7:03-7:27 wall time
+per rep, ~29 minutes total for all 4. Paired against the **already-recorded** `pca` cells from
+the "infB — 5x extended run" section above (same seeds 1000-1003, not rerun).
+
+### ESS gate
+
+| rep | seed | posterior.ESS | tree.height.ESS |
+|---:|---:|---:|---:|
+| 0 | 1000 | 158.0 | 438.5 |
+| 1 | 1001 | 248.5 | 450.6 |
+| 2 | 1002 | 158.5 | 398.5 |
+| 3 | 1003 | 205.1 | 231.4 |
+
+All 4 cells clear `posterior.ESS`≥100 (158.0-248.5) and `tree.height.ESS`≥100 (231.4-450.6) —
+same gate, same margin as the `pca`/`constant` cells they are compared against.
+
+### Raw results — chain-level (`__CHAIN__` row), per cell
+
+| setting | rep | seed | acceptRate | meanJumpGivenAccepted | esjdPerSec_rnni |
+|---|---:|---:|---:|---:|---:|
+| pca_grid | 0 | 1000 | 0.1583 | 3.689 | 18421.4 |
+| pca_grid | 1 | 1001 | 0.1638 | 3.810 | 19561.8 |
+| pca_grid | 2 | 1002 | 0.1670 | 3.681 | 18608.8 |
+| pca_grid | 3 | 1003 | 0.1642 | 3.938 | 19665.8 |
+
+(`pca` reps at the same seeds are the rows already reported in "infB — 5x extended run" above:
+0.1670/4.068/21870.7, 0.1654/4.282/21560.3, 0.1659/3.935/21649.6, 0.1639/4.234/23067.5.)
+
+The transform's own logged trace (`targetWeightTransform.leadingExponent`, per-rep posterior
+median over the whole post-burnin chain) settled at **8.0 in all 4 reps** — the low end of the
+grid, not the 12.0 the smoke check happened to settle on at a shorter chain length/different
+seed. Two reps (1 and 3) transiently favoured 12.0 for part of the run (mean 8.2-8.5, median
+8.0) before reward estimates pulled the leader back to 8.0; the other two (0 and 2) sat at 8.0
+essentially throughout. No rep's leader approached the grid's ceiling (24.0).
+
+### Paired analysis (pca_grid − pca), t-based 90% CI, n=4, df=3
+
+| mean diff (ESJD/s) | 90% CI | excludes zero? | relative to pca mean |
+|---:|---|---|---:|
+| −2972.6 | (−3766.2, −2179.0) | **yes** | −13.5% |
+
+## Verdict
+
+**No — at this sample size, layering the `GridTuner`-adaptive `PowerOffsetTransform` on top of
+`PCAWeights2` makes infB's mixing significantly worse, not better.** The 90% CI excludes zero on
+the negative side: `pca_grid` loses ~13.5% chain-level ESJD/second relative to `PCAWeights2`
+alone, in all 4 reps individually (18421-19666 vs 21560-23068), with no overlap between the two
+settings' individual-rep ranges. This is the second CI in this document (after the `pca` vs
+`constant` result above) to exclude zero, and the first negative one: the weight-transform
+feature, at the parameters used here, does not merely fail to help — it actively hurts. The
+tuner did adapt (smoke check) and did not pin at the exponent ceiling the way an
+acceptance-only reward is documented to (`docs/WeightTransformAdaptation.md`), but it also did
+not climb toward higher pointiness on infB the way it did in the smoke-check run; it settled at
+the grid's lowest point in every real-comparison rep. One plausible reading, consistent with
+`docs/WeightTransformAdaptation.md`'s own caveat that "maximizing acceptance is not the same as
+maximizing mixing": `PCAWeights2`'s target weights on infB may already be well-shaped, and
+reshaping them toward the historical squaring default (`exponent=2.0`) or pointier still (the
+grid never explores below 8) discards signal the untransformed `PCAWeights2` distribution
+carried. This result should not be read as evidence against the weight-transform feature in
+general — only against this specific combination (infB, `PCAWeights2`, this grid and burn-in) at
+n=4 — but it is a clean, ESS-gated, statistically supported result at this sample size: on this
+dataset, plugging the feature in as configured here is a regression, not an improvement.
