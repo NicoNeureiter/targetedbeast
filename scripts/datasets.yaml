@@ -1,0 +1,94 @@
+# Dataset registry for the evaluation pipeline (targetedbeast-evaluation-pipeline.md, Phase 3/3a).
+#
+# lassaL is deliberately absent: parked per Phase 3a (no chain length affordable in this
+# pipeline's time budget reaches ESS>=100 on it - see docs/evaluation/where-targeting-wins.md).
+# Its renderer (render_benchmark_xml.py) stays for potential future dedicated/cluster use, but is
+# not wired into render_xml.py or any tier here.
+#
+# states_per_sec / site_patterns are measured, not guessed (docs/evaluation/baseline-tests.md's
+# throughput table and docs/evaluation/where-targeting-wins.md). Per-setting throughput can differ
+# (e.g. iecor's pca is ~26% slower than its vanilla/constant baseline) - states_per_sec is the
+# baseline-setting number tier arithmetic is keyed to; see each dataset's `notes`.
+#
+# Every tier entry maps directly to render_run_xml's chain-shape arguments:
+#   pre_burnin    -> BenchmarkMCMC preBurnin (discarded, not instrumented)
+#   chain_length  -> BenchmarkMCMC chainLength (post-burnin, what statistics are computed over)
+#   jump_interval -> BenchmarkMCMC jumpInterval (tree-copy subsampling for ESJD)
+#   reps          -> number of seeded replicates, seed = 1000 + rep, shared across settings at a
+#                    given rep for paired comparisons (never hash(setting, rep))
+#   parallel      -> whether reps are intended to run concurrently (advisory; Snakemake's own -j
+#                    already parallelizes per-rep rules regardless of this flag)
+#   ess_gate      -> whether the aggregate rule should also run loganalyser/ESS for this tier
+
+primates:
+  renderer: null  # no per-dataset renderer script exists (nor is one needed) - render_xml.py
+                   # handles primates.xml directly; see its render_primates().
+  template: examples/primates.xml
+  states_per_sec: 92200
+  site_patterns: 69
+  taxa: 6
+  settings: [default]  # primates.xml already wires up PartialWeights + targeted operators;
+                        # there is nothing to swap for a crash/sanity check.
+  notes: >
+    smoke-only. No RNNIMetric is injected (no TaxonSet element in the template, and the smoke
+    tier makes no statistical claim) - opstats.tsv still gets per-operator accept/reject/timing
+    rows, just no esjd/meanJump columns.
+  tiers:
+    smoke:
+      pre_burnin: 0
+      chain_length: 20000
+      jump_interval: 10
+      reps: 1
+      parallel: false
+      ess_gate: false
+
+infb:
+  renderer: render_infb_benchmark_xml
+  template: examples/infb_HA_141/template.xml
+  states_per_sec: 1900
+  site_patterns: 489
+  taxa: 141
+  settings: [constant, pca]
+  notes: >
+    Primary fast/thorough dataset (Phase 3a). +7.3% PCAWeights2-vs-ConstantWeights effect (CI
+    excludes zero) confirmed at the thorough chain length; not confirmed at the fast chain
+    length (ESS 13-82 there, explicitly not decision-grade).
+  tiers:
+    fast:
+      pre_burnin: 20000
+      chain_length: 150000
+      jump_interval: 20
+      reps: 2
+      parallel: true
+      ess_gate: false
+    thorough:
+      pre_burnin: 100000
+      chain_length: 750000
+      jump_interval: 20
+      reps: 4
+      parallel: false
+      ess_gate: true
+
+iecor:
+  renderer: render_iecor_benchmark_xml
+  template: examples/iecor/vanilla/iecor.xml
+  states_per_sec: 10428          # vanilla/constant baseline - tier arithmetic is keyed to this
+  states_per_sec_pca: 7736       # pca is ~26% slower; sensitivity-checked in baseline-tests.md,
+                                  # margin still comfortable at the cross-check chain length
+  site_patterns: 1071
+  taxa: 41
+  settings: [constant, pca]
+  notes: >
+    Secondary cross-check dataset (Phase 3a): confirms whether a thorough-tier effect generalizes
+    to a structurally different regime (binary cognate characters, BinaryCovarion, relaxed clock,
+    birth-death prior vs infB's nucleotide/HKY/strict-clock). The one measured comparison so far
+    (PCAWeights2 vs ConstantWeights) did NOT generalize: -9.8%, wrong sign, CI includes zero. Only
+    dataset with a cross-check tier - never triggered automatically alongside thorough.
+  tiers:
+    cross-check:
+      pre_burnin: 300000
+      chain_length: 3000000
+      jump_interval: 20
+      reps: 4
+      parallel: false
+      ess_gate: true

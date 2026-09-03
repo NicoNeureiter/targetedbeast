@@ -1,242 +1,220 @@
-# Snakefile for building the TargetedBeast package, generating BEAST XMLs and
-# running them.
+# Snakefile for the evaluation pipeline (targetedbeast-evaluation-pipeline.md, Phase 5).
 #
-# Pipeline:
-#   1. `ant build` (re)compiles the targetedbeast package and the resulting
-#      dist/TargetedBeast.v*.zip is unpacked into the local BEAST package dir,
-#      so BEAST runs always pick up the latest code. This step reruns whenever
-#      a Java source file changes.
-#   2. `generate_xmls.py` renders run{0..N_REPS-1}.xml into one subdirectory
-#      per entry in EDGE_WEIGHTS (under EXAMPLE_ROOT).
-#   3. BEAST is run on every run?.xml (wrapped in a timer that records the
-#      wall-clock runtime). Subdirectories are processed sequentially (each
-#      waits for the previous one to fully finish); the N_REPS instances within
-#      a subdirectory may run in parallel (subject to the -j/--cores given to
-#      snakemake).
-#   4. Per-replicate statistics are collected: loganalyser computes ESS, the
-#      .state file gives per-operator acceptance rates, and collect_stats.py
-#      combines these with the runtime. Results are aggregated into
-#      EXAMPLE_ROOT/mcmc_stats.tsv (loganalyser stats extended with lowest ESS,
-#      ESS per hour and the TargetedWilsonBalding acceptance rate) and
-#      EXAMPLE_ROOT/operator_acceptance.tsv (all operators, long format).
+# Rewritten from a BEAST-2.7/Ant, single-dataset (lassaL) harness to a Maven/module-path,
+# multi-dataset harness driven by scripts/datasets.yaml. Pipeline, per (dataset, tier, setting,
+# rep) cell:
 #
-# Usage (from this scripts/ directory):
-#   snakemake -j4                 # reps within a subdir run in parallel
-#   snakemake -j1                 # everything strictly sequential
-#   snakemake -j16 --config parallel_subdirs=1   # all settings at once too
-#   snakemake -j16 --config parallel_subdirs=1 beast_threads=2   # 2 cores per chain
-#   snakemake --config beast=/path/to/beast
-#   snakemake --config n_reps=8   # generate/run 8 replicates per subdirectory
+#   1. `mvn -o compile` (re)compiles targetedbeast onto target/classes, which exec:exec's
+#      --module-path %classpath picks up directly - no ant, no unzip-into-install-dir, no
+#      hardcoded BEAST 2.7 path. This step reruns whenever a Java source file changes.
+#   2. `render_xml.py` renders one cell's run.xml from datasets.yaml + the dataset's own renderer
+#      script (render_infb_benchmark_xml.py / render_iecor_benchmark_xml.py) or, for primates,
+#      render_xml.py's own render_primates().
+#   3. BEAST runs the cell through `mvn -o exec:exec` on the module path, producing
+#      run.log/run.trees/run.xml.state/run.opstats.tsv (BenchmarkMCMC's own per-operator +
+#      chain-level statistics report) and a timed run.runtime.
+#   4. `smoke`/`fast` tiers stop at opstats.tsv - no ESS claim is made at those chain lengths
+#      (Phase 3a). `thorough`/`cross-check` also run loganalyser (ESS is exactly what gates
+#      those tiers, per docs/evaluation/where-targeting-wins.md).
+#   5. `collect_stats.py` combines opstats.tsv (+ the ESS table, where present) into one summary
+#      row per cell; `aggregate` concatenates all cells of a (dataset, tier) into
+#      runs/<dataset>/<tier>/summary.tsv.
+#
+# Usage (from this scripts/ directory, or anywhere with -s scripts/Snakefile):
+#   snakemake -j1                          # smoke + fast + thorough, everything except cross-check
+#   snakemake -j4                          # reps/settings/datasets run in parallel up to 4 cores
+#   snakemake -j1 runs/primates/smoke/summary.tsv
+#   snakemake -j2 runs/infb/fast/summary.tsv
+#   snakemake -j4 runs/infb/thorough/summary.tsv
+#   snakemake -j4 cross_check              # iecor cross-check tier - NEVER part of `all`
+#   snakemake --config loganalyser=/path/to/loganalyser burnin=10
+#
+# Burn-in-speed / checkpoint-resume (Phase 3c) is a separate, not-yet-landed axis owned by a
+# parallel task (src/main/java/targetedbeast/benchmark/). It will plug in as an additional rule
+# reading a per-dataset reference checkpoint (not yet produced by anything here) once that lands
+# - no rule for it exists yet, deliberately.
 
-import hashlib
-import sys
 from pathlib import Path
 
-# Make generate_xmls importable so we reuse its configuration verbatim.
+import yaml
+
 SCRIPT_DIR = Path(workflow.basedir).resolve()
-sys.path.insert(0, str(SCRIPT_DIR))
+PROJECT_ROOT = SCRIPT_DIR.parent
+RUNS_ROOT = PROJECT_ROOT / "runs"
 
-from generate_xmls import EXAMPLE_ROOT, SUBDIRS  # noqa: E402
+with open(SCRIPT_DIR / "datasets.yaml", encoding="utf-8") as f:
+    REGISTRY = yaml.safe_load(f)
 
-# `--config quick=1` gives a short comparison suitable for the development loop.
-QUICK = bool(int(config.get("quick", 0)))
+DATASETS = list(REGISTRY)
 
-N_REPS = int(config.get("n_reps", 2 if QUICK else 4))
-CHAIN_LENGTH = int(config.get("chain_length", 200_000 if QUICK else 10_000_000))
-# Subsample the alignment to this many taxa. The full lassaL_kli22 alignment has 551, which
-# is far too slow for a development loop: per-iteration cost grows with the tree size, so
-# this is the main knob for trading accuracy against runtime.
-N_TAXA = config.get("n_taxa", 60 if QUICK else None)
-
-# Path to the BEAST launcher (override with --config beast=...).
-BEAST = config.get("beast", "/Applications/BEAST 2.7.7/bin/beast")
-
-# loganalyser lives next to the beast launcher; allow an explicit override.
-_beast_dir = Path(BEAST).parent
+# loganalyser lives next to the beast3 launchers, not this package - see workspace CLAUDE.md.
 LOGANALYSER = config.get(
     "loganalyser",
-    str(_beast_dir / "loganalyser") if str(_beast_dir) not in (".", "") else "loganalyser",
+    str(PROJECT_ROOT.parent / "beast3" / "bin" / "loganalyser"),
 )
-# Run every setting concurrently instead of one subdirectory at a time; see prev_subdir_done.
-PARALLEL_SUBDIRS = bool(int(config.get("parallel_subdirs", 0)))
-# Cores to reserve per BEAST run. The tree likelihood has useThreads="true", so a chain is not a
-# single-core job, and telling snakemake otherwise oversubscribes the machine.
-BEAST_THREADS = int(config.get("beast_threads", 1))
-# Burn-in percentage discarded by loganalyser when computing ESS.
 BURNIN = int(config.get("burnin", 10))
-# Operator whose acceptance rate is added to the summary statistics.
-OPERATOR = config.get("operator", "targetedWilsonBalding")
 
-# The targetedbeast package root (where build.xml lives) and where `ant build`
-# output should be installed so that BEAST picks up freshly compiled code.
-PACKAGE_ROOT = SCRIPT_DIR.parent
-DIST_ZIP = PACKAGE_ROOT / "dist" / "TargetedBeast.v1.0.0.zip"
-INSTALL_DIR = Path(
-    "/Users/nneureiter/Library/Application Support/BEAST/2.7/TargetedBeast"
-)
-# Marker file produced inside the install dir; used as the build rule's output.
-INSTALL_MARKER = INSTALL_DIR / "version.xml"
-# Java sources whose changes should trigger a rebuild.
-JAVA_SOURCES = [str(p) for p in (PACKAGE_ROOT / "src").rglob("*.java")]
+JAVA_SOURCES = [str(p) for p in (PROJECT_ROOT / "src" / "main" / "java").rglob("*.java")]
+BUILD_MARKER = str(PROJECT_ROOT / "target" / ".compiled.marker")
 
-# Subdirectories (in declaration order) and replicate indices.
-REPS = list(range(N_REPS))
+CELL_DIR = str(RUNS_ROOT / "{dataset}" / "{tier}" / "{setting}" / "rep{rep}")
 
 
-def beast_seed(wildcards):
-    """A distinct, reproducible seed per (setting, replicate).
-
-    BEAST defaults to System.currentTimeMillis(), and since the run?.xml files within a
-    subdirectory are byte-identical the seed is the only thing that separates replicates. Reps
-    launched in parallel can land in the same millisecond and produce identical chains, which has
-    already happened. hashlib rather than hash() because the latter is salted per process.
-    """
-    digest = hashlib.md5(f"{wildcards.subdir}/{wildcards.rep}".encode()).hexdigest()
-    return int(digest[:8], 16)
+def tier_cfg(dataset: str, tier: str) -> dict:
+    return REGISTRY[dataset]["tiers"][tier]
 
 
-def prev_subdir_done(wildcards):
-    """A subdir's BEAST runs depend on the previous subdir being finished,
-    which makes the workflow walk the subdirectories sequentially.
+def settings_for(dataset: str) -> list[str]:
+    return REGISTRY[dataset]["settings"]
 
-    This is the only thing keeping settings from running concurrently, and it is here for the
-    runtime measurement rather than for correctness: ESS per hour is only comparable across
-    settings if they all saw the same machine. With `--config parallel_subdirs=1` the edge is
-    dropped and snakemake schedules every chain against -j at once, which is much faster but
-    makes the runtimes contention-dependent - fine when the comparison is on acceptance or on
-    where the tuner settles, not on speed."""
-    if PARALLEL_SUBDIRS:
-        return []
-    idx = SUBDIRS.index(wildcards.subdir)
-    if idx == 0:
-        return []
-    prev = SUBDIRS[idx - 1]
-    return str(EXAMPLE_ROOT / prev / ".done")
+
+def reps_for(dataset: str, tier: str) -> list[int]:
+    return list(range(tier_cfg(dataset, tier)["reps"]))
+
+
+def ess_gated(dataset: str, tier: str) -> bool:
+    return bool(tier_cfg(dataset, tier).get("ess_gate", False))
+
+
+def beast_seed(wildcards) -> int:
+    """1000 + rep, shared across settings at a given rep for paired comparisons. Never
+    hash(setting, rep) - that was the bug in the pre-rewrite Snakefile (see git history)."""
+    return 1000 + int(wildcards.rep)
+
+
+def tier_targets(include_cross_check: bool) -> list[str]:
+    targets = []
+    for dataset, entry in REGISTRY.items():
+        for tier in entry["tiers"]:
+            if tier == "cross-check" and not include_cross_check:
+                continue
+            targets.append(str(RUNS_ROOT / dataset / tier / "summary.tsv"))
+    return targets
 
 
 rule all:
+    # cross-check is never swept in here - it is user-initiated only (rule cross_check below).
     input:
-        str(EXAMPLE_ROOT / "mcmc_stats.tsv"),
-        str(EXAMPLE_ROOT / "operator_acceptance.tsv"),
+        tier_targets(include_cross_check=False),
 
 
-rule build_package:
+rule cross_check:
+    input:
+        str(RUNS_ROOT / "iecor" / "cross-check" / "summary.tsv"),
+
+
+rule build:
     input:
         JAVA_SOURCES,
-        str(PACKAGE_ROOT / "build.xml"),
-        str(PACKAGE_ROOT / "version.xml"),
+        str(PROJECT_ROOT / "pom.xml"),
     output:
-        str(INSTALL_MARKER),
+        touch(BUILD_MARKER),
     shell:
-        "ant -f {PACKAGE_ROOT}/build.xml build && "
-        'unzip -o "{DIST_ZIP}" -d "{INSTALL_DIR}"'
+        # compile, not package: exec:exec's module path reads target/classes directly, and
+        # package additionally builds the distributable zip / runs the assembly plugin, which
+        # nothing in this pipeline needs (mvn package remains the right command for that,
+        # unrelated to running benchmark cells).
+        'cd "{PROJECT_ROOT}" && mvn -o compile -q'
 
 
-rule generate_xmls:
-    # Both the template and the renderer are inputs, so editing either one invalidates the
-    # XMLs. Without this the rule never re-runs once its outputs exist, and a template change
-    # silently leaves the pipeline running the previous XMLs.
+def render_inputs(wildcards):
+    entry = REGISTRY[wildcards.dataset]
+    inputs = [str(SCRIPT_DIR / "render_xml.py"), str(SCRIPT_DIR / "datasets.yaml"),
+              str(PROJECT_ROOT / entry["template"])]
+    if entry["renderer"]:
+        inputs.append(str(SCRIPT_DIR / f"{entry['renderer']}.py"))
+    return inputs
+
+
+rule render:
     input:
-        str(EXAMPLE_ROOT / "template.xml"),
-        str(SCRIPT_DIR / "generate_xmls.py"),
+        render_inputs,
     output:
-        expand(
-            str(EXAMPLE_ROOT / "{subdir}" / "run{rep}.xml"),
-            subdir=SUBDIRS,
-            rep=REPS,
-        ),
+        xml=CELL_DIR + "/run.xml",
     shell:
-        "python {SCRIPT_DIR}/generate_xmls.py --n-reps {N_REPS} --chain-length {CHAIN_LENGTH}"
-        + (f" --n-taxa {N_TAXA}" if N_TAXA else "")
+        "python3 {SCRIPT_DIR}/render_xml.py --dataset {wildcards.dataset} --tier {wildcards.tier} "
+        "--setting {wildcards.setting} --rep {wildcards.rep} "
+        '--out-dir "$(dirname {output.xml})"'
 
 
 rule run_beast:
     input:
-        xml=str(EXAMPLE_ROOT / "{subdir}" / "run{rep}.xml"),
-        prev=prev_subdir_done,
-        build=str(INSTALL_MARKER),
-    threads: BEAST_THREADS
+        xml=CELL_DIR + "/run.xml",
+        build=BUILD_MARKER,
     params:
         seed=beast_seed,
     output:
-        trees=str(EXAMPLE_ROOT / "{subdir}" / "run{rep}.trees"),
-        log=str(EXAMPLE_ROOT / "{subdir}" / "run{rep}.log"),
-        state=str(EXAMPLE_ROOT / "{subdir}" / "run{rep}.xml.state"),
-        runtime=str(EXAMPLE_ROOT / "{subdir}" / "run{rep}.runtime"),
+        log=CELL_DIR + "/run.log",
+        trees=CELL_DIR + "/run.trees",
+        state=CELL_DIR + "/run.xml.state",
+        opstats=CELL_DIR + "/run.opstats.tsv",
+        runtime=CELL_DIR + "/run.runtime",
     shell:
-        # Time the BEAST run with the bash SECONDS builtin and record the
-        # wall-clock runtime (seconds) only if BEAST succeeds.
-        "SECONDS=0; "
-        '"{BEAST}" -version_file ../version.xml -overwrite -seed {params.seed} '
-        '-working "{input.xml}" && '
+        # The proven invocation used throughout this project's Phase 0/3a experiments (see
+        # docs/evaluation/where-targeting-wins.md); beast.main is already this pom's default but
+        # named explicitly here for clarity.
+        #
+        # -statefile is mandatory here, not cosmetic: State.storeToFile defaults to deriving the
+        # state filename from the input xml's own basename ("run.xml" -> "run.xml.state") written
+        # relative to mvn's cwd (${{project.basedir}}, fixed by the pom, the same for every cell).
+        # Since every rendered run.xml is literally named "run.xml", every cell would otherwise
+        # clobber the same "<project root>/run.xml.state" - confirmed by running one cell without
+        # this flag and finding the state file in the project root, not the cell directory.
+        'cd "{PROJECT_ROOT}" && SECONDS=0 && '
+        "mvn -o exec:exec -Dbeast.main=beast.base.minimal.BeastMain "
+        '-Dbeast.args="-overwrite -seed {params.seed} -statefile {output.state} {input.xml}" && '
         'echo $SECONDS > "{output.runtime}"'
-
-
-rule subdir_done:
-    input:
-        expand(
-            str(EXAMPLE_ROOT / "{{subdir}}" / "run{rep}.trees"),
-            rep=REPS,
-        ),
-    output:
-        touch(str(EXAMPLE_ROOT / "{subdir}" / ".done")),
 
 
 rule loganalyser:
     input:
-        log=str(EXAMPLE_ROOT / "{subdir}" / "run{rep}.log"),
+        log=CELL_DIR + "/run.log",
     output:
-        ess=str(EXAMPLE_ROOT / "{subdir}" / "run{rep}.ess.tsv"),
+        ess=CELL_DIR + "/run.ess.tsv",
     shell:
         '"{LOGANALYSER}" -oneline -b {BURNIN} -quiet "{input.log}" > "{output.ess}"'
 
 
-rule run_stats:
+def collect_ess_input(wildcards):
+    if ess_gated(wildcards.dataset, wildcards.tier):
+        return CELL_DIR.format(**wildcards) + "/run.ess.tsv"
+    return []
+
+
+rule collect_cell:
     input:
-        ess=str(EXAMPLE_ROOT / "{subdir}" / "run{rep}.ess.tsv"),
-        state=str(EXAMPLE_ROOT / "{subdir}" / "run{rep}.xml.state"),
-        runtime=str(EXAMPLE_ROOT / "{subdir}" / "run{rep}.runtime"),
+        opstats=CELL_DIR + "/run.opstats.tsv",
+        runtime=CELL_DIR + "/run.runtime",
+        ess=collect_ess_input,
     output:
-        summary=str(EXAMPLE_ROOT / "{subdir}" / "run{rep}.stats.tsv"),
-        operators=str(EXAMPLE_ROOT / "{subdir}" / "run{rep}.operators.tsv"),
+        summary=CELL_DIR + "/cell.summary.tsv",
+    params:
+        ess_flag=lambda wc, input: f'--ess-table "{input.ess}"' if input.ess else "",
     shell:
-        "python {SCRIPT_DIR}/collect_stats.py "
-        '--ess-table "{input.ess}" --state "{input.state}" --runtime "{input.runtime}" '
-        "--subdir {wildcards.subdir} --rep {wildcards.rep} --operator {OPERATOR} "
-        '--summary-out "{output.summary}" --operators-out "{output.operators}"'
+        "python3 {SCRIPT_DIR}/collect_stats.py "
+        '--opstats "{input.opstats}" --runtime "{input.runtime}" {params.ess_flag} '
+        "--dataset {wildcards.dataset} --tier {wildcards.tier} --setting {wildcards.setting} "
+        '--rep {wildcards.rep} --summary-out "{output.summary}"'
 
 
-def all_summaries(wildcards):
+def cell_summaries(wildcards):
     return expand(
-        str(EXAMPLE_ROOT / "{subdir}" / "run{rep}.stats.tsv"),
-        subdir=SUBDIRS,
-        rep=REPS,
+        CELL_DIR + "/cell.summary.tsv",
+        dataset=wildcards.dataset,
+        tier=wildcards.tier,
+        setting=settings_for(wildcards.dataset),
+        rep=reps_for(wildcards.dataset, wildcards.tier),
     )
 
 
-def all_operator_tables(wildcards):
-    return expand(
-        str(EXAMPLE_ROOT / "{subdir}" / "run{rep}.operators.tsv"),
-        subdir=SUBDIRS,
-        rep=REPS,
-    )
-
-
-rule aggregate_stats:
+rule aggregate:
     input:
-        summaries=all_summaries,
-        operators=all_operator_tables,
+        cell_summaries,
     output:
-        summary=str(EXAMPLE_ROOT / "mcmc_stats.tsv"),
-        operators=str(EXAMPLE_ROOT / "operator_acceptance.tsv"),
+        summary=str(RUNS_ROOT / "{dataset}" / "{tier}" / "summary.tsv"),
     run:
-        def concat(paths, out_path):
-            # Concatenate per-run TSVs, keeping the header from the first only.
-            with open(out_path, "w") as out:
-                for i, path in enumerate(paths):
-                    lines = Path(path).read_text().splitlines()
-                    rows = lines if i == 0 else lines[1:]
-                    out.write("\n".join(rows) + "\n")
-
-        concat(input.summaries, output.summary)
-        concat(input.operators, output.operators)
+        with open(output.summary, "w") as out:
+            for i, path in enumerate(input):
+                lines = Path(path).read_text().splitlines()
+                rows = lines if i == 0 else lines[1:]
+                out.write("\n".join(rows) + "\n")
