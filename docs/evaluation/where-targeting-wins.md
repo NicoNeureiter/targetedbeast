@@ -528,3 +528,92 @@ did not change the sign or the significance verdict — best read, as before, as
    magnitude** — the one confirmed effect is 7.3%, well under the placeholder. Whether a
    consistent 5-10% gain is "worth adopting" is a judgement call the current decision rule doesn't
    make.
+
+---
+
+# iecor operator tuning review — `ucldStdev.c:clock` and one other fix
+
+Prompted by `ucldStdevScaler.c:clock` (the `ScaleOperator` on `ucldStdev.c:clock`) looking like a
+convergence bottleneck in the iecor benchmark runs above: its `run.opstats.tsv` acceptance rate in
+the `constant`/eval3 reps ranged 0.12–0.31 (rep2 at 0.12 is well below the ~0.23–0.44 rule-of-thumb
+band for a `ScaleOperator`), and its own ESS trails `posterior.ESS` in every rep checked
+(174.1 vs. 279.7 in rep0).
+
+## Changes made (both `examples/iecor/vanilla/iecor.xml` and `examples/iecor/pca/iecor.xml`)
+
+1. **`ucldStdevScaler.c:clock` weight 3.0 → 5.0** (as requested). It is a single scalar hyperparameter
+   controlling the whole relaxed-clock rate distribution's spread — high-influence, low-dimensional
+   — and was previously weighted the same as low-influence single-scalar epi params
+   (`becomeUninfectiousRateOperator`, `rhoOperator`, etc.), despite governing a distribution that
+   feeds every one of the 80 per-branch rate categories.
+
+2. **`SubtreeSlide.t:tree` weight 2.0 → 5.0, `vanilla/iecor.xml` only.** `pca/iecor.xml` already
+   carried this exact fix from earlier tuning work (see the "iecor — constant vs PCAWeights2"
+   section above: "`pca/iecor.xml`'s own independent tuning changes (`SubtreeSlide` weight
+   2.0→5.0 ...) were deliberately not copied"). A weight of 2.0 for a combined topology+
+   branch-length move, on a 41-taxon tree, versus 30.0 for the pure node-height `Uniform` operator
+   and 20.0/10.0 for the two global topology rearrangement moves (`WilsonBalding`/`WideExchange`),
+   looked like a leftover that was never revisited in `vanilla` after being fixed in `pca`.
+   Bringing `vanilla` up to `pca`'s value both fixes the apparent underweighting and restores
+   parity between the two files for any future `vanilla`-vs-`pca` comparison that isn't about
+   this operator.
+
+No other operator in the block looked like an obvious mismatch on inspection:
+- `WilsonBalding`=20, `WideExchange`=10, `Narrow`=2 (an inverted-from-usual-template ordering that
+  favours global over local topology moves) is unchanged from the pre-migration upstream XML
+  (`targetedbeast/examples/iecor/vanilla/iecor.xml`, checked directly) and matches the pca file's
+  targeted-operator weights (5+15=20 for the two `TargetedWilsonBalding*` variants, 10 for
+  `TargetedWide`) almost exactly — this is deliberate parallel design for the vanilla-vs-targeted
+  comparison, not an unadjusted default, so it was left alone per "targeted fixes only."
+- The five single-scalar epidemiological parameters (`origin`, `reproductiveNumber`,
+  `becomeUninfectiousRate`, `samplingProportion`, `rho`) all carry weight 1.0–3.0, proportionate to
+  being scalar, non-skyline parameters (confirmed `dimension="1"` on each in the `<state>` block).
+- `scaleFactor` values throughout (0.5, 0.878, 0.837, 0.9) are all non-extreme and, since none of
+  these operators set `autoOptimize="false"`, BEAST's adaptive tuning already adjusts them during
+  the 300,000-sample preBurnin regardless of the seed value — not a plausible source of a
+  systematic mismatch.
+- `ClockRateScaler.c:focalsubset`'s `AdaptableOperatorSampler` (weight 0.5) and its
+  `AdaptableVarianceMultivariateNormalOperator` child's `burnin=400`/`initial=800` are template
+  defaults but not obviously wrong — they don't have an inherent tuning target the way a
+  `ScaleOperator`'s acceptance rate does.
+
+## Diagnostic run — one cell per file, `constant`/`pca` setting, rep0, seed 1000
+
+Rendered via `scripts/render_iecor_benchmark_xml.py --settings constant pca --reps 1
+--chain-length 3000000 --pre-burnin 300000 --jump-interval 20 --out-root runs/eval4/iecor_tuned`
+(same parameters as the `runs/eval3/iecor` cells being compared against). XML well-formedness
+confirmed with `xml.etree.ElementTree.parse` before running; both runs completed in ~6:50–6:54
+wall time (`mvn -o exec:exec`), matching the eval3 baseline's throughput.
+
+| variant | | ucldStdev acceptRate | ucldStdev ESS | posterior.ESS | Tree.height.ESS |
+|---|---|---:|---:|---:|---:|
+| constant | before (eval3, weight 3.0) | 0.3087 | 174.1 | 279.7 | 377.3 |
+| constant | after (eval4, weight 5.0)  | 0.3542 | 88.4  | 138.4 | 272.1 |
+| pca      | before (eval3, weight 3.0) | 0.3217 | 188.5 | 278.2 | 507.9 |
+| pca      | after (eval4, weight 5.0)  | 0.2835 | 131.5 | 300.5 | 326.1 |
+
+**Result: mixed, and not the hoped-for clean win — flagging this rather than presenting it as a
+success.** `ucldStdevScaler`'s own acceptance rate moved in opposite directions on the two files
+(+0.045 on `constant`, −0.038 on `pca`), and its own ESS *dropped* in both (174.1→88.4 on
+`constant`, 188.5→131.5 on `pca`) despite the operator now receiving proportionally more proposals
+(69,455–69,470 → 111,237–111,460 out of ~3.3M total). `posterior.ESS` dropped sharply on
+`constant` (279.7→138.4, −50%) but rose on `pca` (278.2→300.5, +8%). `Tree.height.ESS` dropped on
+both.
+
+This is a single seed per variant, and this document has already established (the n40/n80/n100/
+infB reps above) that single-rep ESS at this chain length varies by roughly 2× on identical
+settings purely from seed noise — e.g. the existing `constant` table itself shows rep0's
+`posterior.ESS`=279.7 against rep2's 163.8 with *no* operator change at all. A weight change also
+reshuffles which pseudo-random draws land on which operator at every step, so "same seed, changed
+weights" is not a controlled comparison of the same trajectory — it is effectively a second,
+independent draw. **One seed cannot distinguish "the weight bump helped/hurt" from "this is normal
+between-run noise,"** and the result here (up on one file, down on the other, ESS down on both for
+the operator itself) is exactly what that noise floor would produce for a change with a small or
+null true effect. The weight bump is applied per the task's explicit instruction and is a
+defensible prioritization on first principles (single scalar governing a whole rate distribution,
+previously weighted the same as low-influence params) — but this diagnostic does not confirm it
+delivers a mixing improvement, and a properly powered follow-up (multiple reps, both settings)
+would be needed before treating it as validated.
+
+`mvn -o test`: 113 run, 2 failures, 1 skipped — unchanged from baseline, confirmed after the
+diagnostic runs and before committing.

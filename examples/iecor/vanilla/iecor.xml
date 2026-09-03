@@ -1313,7 +1313,7 @@
         <operator id="TreeScaler.t:tree" scaleFactor="0.878" tree="@Tree.t:tree" weight="3.0" spec="beast.base.spec.evolution.operator.ScaleTreeOperator"/>
         <operator id="TreeRootScaler.t:tree" rootOnly="true" scaleFactor="0.5" tree="@Tree.t:tree" weight="3.0" spec="beast.base.spec.evolution.operator.ScaleTreeOperator"/>
         <operator id="UniformOperator.t:tree" tree="@Tree.t:tree" weight="30.0" spec="beast.base.evolution.operator.Uniform"/>
-        <operator id="SubtreeSlide.t:tree" spec="beast.base.evolution.operator.kernel.BactrianSubtreeSlide" tree="@Tree.t:tree" weight="2.0"/>
+        <operator id="SubtreeSlide.t:tree" spec="beast.base.evolution.operator.kernel.BactrianSubtreeSlide" tree="@Tree.t:tree" weight="5.0"/>
         <operator id="Narrow.t:tree" spec="Exchange" tree="@Tree.t:tree" weight="2.0"/>
         
         <operator id="bcovAlphaScaler.s:five" parameter="@bcov_alpha.s:five" weight="0.3" spec="beast.base.spec.inference.operator.ScaleOperator"/>
@@ -1333,7 +1333,7 @@
             <weightvector id="weightparameter" spec="parameter.IntegerParameter" dimension="2" estimate="false" lower="0" upper="0">37 265</weightvector>
         </operator> -->
         <operator id="ucldMeanScaler.c:clock" parameter="@ucldMean.c:clock" scaleFactor="0.5" weight="3.0" spec="beast.base.spec.inference.operator.ScaleOperator"/>
-        <operator id="ucldStdevScaler.c:clock" parameter="@ucldStdev.c:clock" scaleFactor="0.5" weight="3.0" spec="beast.base.spec.inference.operator.ScaleOperator"/>
+        <operator id="ucldStdevScaler.c:clock" parameter="@ucldStdev.c:clock" scaleFactor="0.5" weight="5.0" spec="beast.base.spec.inference.operator.ScaleOperator"/>
         <operator id="CategoriesRandomWalk.c:clock" spec="beast.base.spec.inference.operator.IntRandomWalkOperator" parameter="@rateCategories.c:clock" weight="10.0" windowSize="1"/>
         <operator id="CategoriesSwapOperator.c:clock" spec="beast.base.spec.inference.operator.SwapOperator" intparameter="@rateCategories.c:clock" weight="10.0"/>
         <operator id="CategoriesUniform.c:clock" spec="beast.base.spec.inference.operator.uniform.IntUniformOperator" parameter="@rateCategories.c:clock" weight="10.0"/>
