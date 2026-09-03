@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import json
 import sys
 from pathlib import Path
 
@@ -75,9 +76,34 @@ def render_primates(template_text: str, chain_length: int, out_dir: Path, jump_i
     return xml
 
 
+def _inject_reference_band(xml: str, lower: float | None, upper: float | None) -> str:
+    """Adds referenceLowerBound/referenceUpperBound attributes to the rendered <run
+    spec="targetedbeast.benchmark.BenchmarkMCMC" ...> element, for the burn-in-speed metric
+    (Phase 3c). A single injection point here - rather than touching every per-dataset renderer
+    script - because every renderer already emits a statsOut attribute on that element (anchor for
+    the insertion) and the two are otherwise independent of any dataset-specific XML surgery.
+    """
+    if lower is None and upper is None:
+        return xml
+    if lower is None or upper is None:
+        raise SystemExit("reference_lower_bound and reference_upper_bound must be given together")
+    needle = ' statsOut="'
+    index = xml.find(needle)
+    if index == -1:
+        raise SystemExit("rendered XML has no statsOut attribute to anchor "
+                          "referenceLowerBound/referenceUpperBound on")
+    insertion = f' referenceLowerBound="{lower}" referenceUpperBound="{upper}"'
+    return xml[:index] + insertion + xml[index:]
+
+
 def render(dataset: str, tier: str, setting: str, rep: int, out_dir: Path,
-           registry: dict | None = None) -> Path:
-    """Render one (dataset, tier, setting, rep) cell's run.xml into out_dir. Returns its path."""
+           registry: dict | None = None, reference_lower_bound: float | None = None,
+           reference_upper_bound: float | None = None) -> Path:
+    """Render one (dataset, tier, setting, rep) cell's run.xml into out_dir. Returns its path.
+
+    reference_lower_bound/reference_upper_bound (Phase 3c, burn-in-speed): when both given, wires
+    them onto the rendered BenchmarkMCMC element so BurnInSpeedTracker is enabled for this cell.
+    """
     registry = registry or load_registry()
     entry = registry[dataset]
     if setting not in entry["settings"]:
@@ -100,6 +126,8 @@ def render(dataset: str, tier: str, setting: str, rep: int, out_dir: Path,
         xml = module.render_run_xml(template_text, setting, cfg["chain_length"], out_dir,
                                      cfg["jump_interval"], cfg["pre_burnin"])
 
+    xml = _inject_reference_band(xml, reference_lower_bound, reference_upper_bound)
+
     out_path = out_dir / "run.xml"
     out_path.write_text(xml, encoding="utf-8")
     return out_path
@@ -113,12 +141,21 @@ def main() -> None:
     parser.add_argument("--rep", type=int, required=True)
     parser.add_argument("--out-dir", type=Path,
                          help="defaults to runs/<dataset>/<tier>/<setting>/rep<rep>/")
+    parser.add_argument("--reference-band", type=Path, default=None,
+                         help="path to a reference_band.json (compute_reference_band.py's output) "
+                              "whose lower/upper are wired onto the rendered BenchmarkMCMC element "
+                              "as referenceLowerBound/referenceUpperBound (Phase 3c burn-in-speed)")
     args = parser.parse_args()
 
     out_dir = args.out_dir or (
         PROJECT_ROOT / "runs" / args.dataset / args.tier / args.setting / f"rep{args.rep}"
     )
-    path = render(args.dataset, args.tier, args.setting, args.rep, out_dir)
+    lower = upper = None
+    if args.reference_band is not None:
+        band = json.loads(args.reference_band.read_text(encoding="utf-8"))
+        lower, upper = band["lower"], band["upper"]
+    path = render(args.dataset, args.tier, args.setting, args.rep, out_dir,
+                   reference_lower_bound=lower, reference_upper_bound=upper)
     print(f"Wrote {path}")
 
 

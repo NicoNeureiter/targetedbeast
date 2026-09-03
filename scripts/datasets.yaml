@@ -19,6 +19,13 @@
 #   parallel      -> whether reps are intended to run concurrently (advisory; Snakemake's own -j
 #                    already parallelizes per-rep rules regardless of this flag)
 #   ess_gate      -> whether the aggregate rule should also run loganalyser/ESS for this tier
+#
+# reference_tier (Phase 3c) -> which of this dataset's own tiers to reuse, unmodified, as the
+# reference/checkpoint-band chain shape and as the burn-in-speed cells' own chain shape. Always
+# the dataset's ESS-gated tier where one exists (already proven to reach the stationary regime),
+# so no new chain length is invented for this. primates has no ESS-gated tier - its smoke tier is
+# the only one it has, used here only to prove the wiring end-to-end at seconds-scale, not as a
+# convergence claim.
 
 primates:
   renderer: null  # no per-dataset renderer script exists (nor is one needed) - render_xml.py
@@ -29,6 +36,7 @@ primates:
   taxa: 6
   settings: [default]  # primates.xml already wires up PartialWeights + targeted operators;
                         # there is nothing to swap for a crash/sanity check.
+  reference_tier: smoke
   notes: >
     smoke-only. No RNNIMetric is injected (no TaxonSet element in the template, and the smoke
     tier makes no statistical claim) - opstats.tsv still gets per-operator accept/reject/timing
@@ -49,6 +57,7 @@ infb:
   site_patterns: 489
   taxa: 141
   settings: [constant, pca]
+  reference_tier: thorough
   notes: >
     Primary fast/thorough dataset (Phase 3a). +7.3% PCAWeights2-vs-ConstantWeights effect (CI
     excludes zero) confirmed at the thorough chain length; not confirmed at the fast chain
@@ -78,6 +87,7 @@ iecor:
   site_patterns: 1071
   taxa: 41
   settings: [constant, pca]
+  reference_tier: cross-check
   notes: >
     Secondary cross-check dataset (Phase 3a): confirms whether a thorough-tier effect generalizes
     to a structurally different regime (binary cognate characters, BinaryCovarion, relaxed clock,

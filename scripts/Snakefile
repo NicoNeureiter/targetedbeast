@@ -27,13 +27,22 @@
 #   snakemake -j2 runs/infb/fast/summary.tsv
 #   snakemake -j4 runs/infb/thorough/summary.tsv
 #   snakemake -j4 cross_check              # iecor cross-check tier - NEVER part of `all`
+#   snakemake -j4 runs/infb/burnin_speed_summary.tsv   # burn-in speed - NEVER part of `all`
 #   snakemake --config loganalyser=/path/to/loganalyser burnin=10
 #
-# Burn-in-speed / checkpoint-resume (Phase 3c) is a separate, not-yet-landed axis owned by a
-# parallel task (src/main/java/targetedbeast/benchmark/). It will plug in as an additional rule
-# reading a per-dataset reference checkpoint (not yet produced by anything here) once that lands
-# - no rule for it exists yet, deliberately.
+# Burn-in-speed (Phase 3c, item 2 - fresh naive random starts, paired by seed) is wired in below:
+# `reference_band` computes each dataset's 5th-95th percentile log-posterior band from its own
+# reference_tier's already-run baseline-setting/rep0 cell (datasets.yaml's reference_tier - never
+# a new chain length); `render_burnin_speed`/`run_beast_burnin_speed` render and run a fresh cell
+# per (dataset, setting, rep) with that band wired in as referenceLowerBound/referenceUpperBound;
+# `burnin_speed_summary` collects the resulting `run.burnin.tsv` files into one table per dataset.
+# Explicit target only (`burnin_speed`, mirroring `cross_check`) - never swept into `rule all`,
+# since it needs a completed reference band first (itself a long ESS-gated reference_tier run).
+#
+# Checkpoint/resume (Phase 3c item 1, shared-checkpoint steady-state mixing) is a separate,
+# not-yet-landed piece and is out of scope here - no rule for it exists yet, deliberately.
 
+import re
 from pathlib import Path
 
 import yaml
@@ -58,6 +67,15 @@ JAVA_SOURCES = [str(p) for p in (PROJECT_ROOT / "src" / "main" / "java").rglob("
 BUILD_MARKER = str(PROJECT_ROOT / "target" / ".compiled.marker")
 
 CELL_DIR = str(RUNS_ROOT / "{dataset}" / "{tier}" / "{setting}" / "rep{rep}")
+
+# Constrains the generic render/run_beast rules' {tier} wildcard to real datasets.yaml tiers, so
+# it cannot also match the burn-in-speed cells' "burnin-speed" path segment below (which is a
+# fixed string there, not a wildcard) - without this, Snakemake would see two rules able to
+# produce the same file and raise AmbiguousRuleException.
+KNOWN_TIERS = sorted({tier for entry in REGISTRY.values() for tier in entry["tiers"]})
+TIER_PATTERN = "|".join(re.escape(tier) for tier in KNOWN_TIERS)
+
+BURNIN_SPEED_CELL_DIR = str(RUNS_ROOT / "{dataset}" / "burnin-speed" / "{setting}" / "rep{rep}")
 
 
 def tier_cfg(dataset: str, tier: str) -> dict:
@@ -131,6 +149,8 @@ rule render:
         render_inputs,
     output:
         xml=CELL_DIR + "/run.xml",
+    wildcard_constraints:
+        tier=TIER_PATTERN,
     shell:
         "python3 {SCRIPT_DIR}/render_xml.py --dataset {wildcards.dataset} --tier {wildcards.tier} "
         "--setting {wildcards.setting} --rep {wildcards.rep} "
@@ -149,6 +169,8 @@ rule run_beast:
         state=CELL_DIR + "/run.xml.state",
         opstats=CELL_DIR + "/run.opstats.tsv",
         runtime=CELL_DIR + "/run.runtime",
+    wildcard_constraints:
+        tier=TIER_PATTERN,
     shell:
         # The proven invocation used throughout this project's Phase 0/3a experiments (see
         # docs/evaluation/where-targeting-wins.md); beast.main is already this pom's default but
@@ -212,6 +234,111 @@ rule aggregate:
         cell_summaries,
     output:
         summary=str(RUNS_ROOT / "{dataset}" / "{tier}" / "summary.tsv"),
+    run:
+        with open(output.summary, "w") as out:
+            for i, path in enumerate(input):
+                lines = Path(path).read_text().splitlines()
+                rows = lines if i == 0 else lines[1:]
+                out.write("\n".join(rows) + "\n")
+
+
+# ---------------------------------------------------------------------------------------------
+# Burn-in speed (Phase 3c, item 2). Explicit target only - `snakemake burnin_speed_<dataset>`,
+# never part of `rule all` (see the module docstring above for why).
+# ---------------------------------------------------------------------------------------------
+
+
+def reference_tier_of(dataset: str) -> str:
+    return REGISTRY[dataset]["reference_tier"]
+
+
+def reference_cell_log(wildcards):
+    """The already-defined baseline-setting/rep0 cell of the dataset's own reference_tier - reuses
+    the generic render/run_beast rules unmodified, so this never invents a new chain length."""
+    tier = reference_tier_of(wildcards.dataset)
+    setting = settings_for(wildcards.dataset)[0]
+    return str(RUNS_ROOT / wildcards.dataset / tier / setting / "rep0" / "run.log")
+
+
+rule reference_band:
+    input:
+        log=reference_cell_log,
+        script=str(SCRIPT_DIR / "compute_reference_band.py"),
+    output:
+        band=str(RUNS_ROOT / "{dataset}" / "reference_band.json"),
+    shell:
+        "python3 {SCRIPT_DIR}/compute_reference_band.py --log {input.log} --burnin {BURNIN} "
+        '--out "{output.band}"'
+
+
+rule render_burnin_speed:
+    input:
+        band=str(RUNS_ROOT / "{dataset}" / "reference_band.json"),
+        extra=render_inputs,
+    output:
+        xml=BURNIN_SPEED_CELL_DIR + "/run.xml",
+    params:
+        tier=lambda wc: reference_tier_of(wc.dataset),
+    shell:
+        # Same chain shape (pre_burnin/chain_length/jump_interval) as the dataset's reference_tier
+        # cell above - a fresh naive random start at that shape, not a resumed checkpoint (Phase
+        # 3c item 1 is separate, out of scope here) - with the reference band wired in.
+        "python3 {SCRIPT_DIR}/render_xml.py --dataset {wildcards.dataset} --tier {params.tier} "
+        "--setting {wildcards.setting} --rep {wildcards.rep} "
+        '--out-dir "$(dirname {output.xml})" --reference-band "{input.band}"'
+
+
+rule run_beast_burnin_speed:
+    input:
+        xml=BURNIN_SPEED_CELL_DIR + "/run.xml",
+        build=BUILD_MARKER,
+    params:
+        seed=beast_seed,
+    output:
+        log=BURNIN_SPEED_CELL_DIR + "/run.log",
+        trees=BURNIN_SPEED_CELL_DIR + "/run.trees",
+        state=BURNIN_SPEED_CELL_DIR + "/run.xml.state",
+        opstats=BURNIN_SPEED_CELL_DIR + "/run.opstats.tsv",
+        burnin=BURNIN_SPEED_CELL_DIR + "/run.burnin.tsv",
+        runtime=BURNIN_SPEED_CELL_DIR + "/run.runtime",
+    shell:
+        # Identical invocation to rule run_beast; run.burnin.tsv is BenchmarkMCMC's own extra
+        # output, written on close() because referenceLowerBound/referenceUpperBound are set on
+        # this cell's XML (see BenchmarkMCMC.writeBurnInSpeedFile).
+        'cd "{PROJECT_ROOT}" && SECONDS=0 && '
+        "mvn -o exec:exec -Dbeast.main=beast.base.minimal.BeastMain "
+        '-Dbeast.args="-overwrite -seed {params.seed} -statefile {output.state} {input.xml}" && '
+        'echo $SECONDS > "{output.runtime}"'
+
+
+rule collect_burnin_speed_cell:
+    input:
+        burnin=BURNIN_SPEED_CELL_DIR + "/run.burnin.tsv",
+    output:
+        summary=BURNIN_SPEED_CELL_DIR + "/cell.burnin_summary.tsv",
+    shell:
+        "python3 {SCRIPT_DIR}/collect_burnin_speed.py --burnin {input.burnin} "
+        "--dataset {wildcards.dataset} --setting {wildcards.setting} --rep {wildcards.rep} "
+        '--summary-out "{output.summary}"'
+
+
+def burnin_speed_cell_summaries(wildcards):
+    return expand(
+        BURNIN_SPEED_CELL_DIR + "/cell.burnin_summary.tsv",
+        dataset=wildcards.dataset,
+        setting=settings_for(wildcards.dataset),
+        rep=reps_for(wildcards.dataset, reference_tier_of(wildcards.dataset)),
+    )
+
+
+# No `all`-swept target: request runs/<dataset>/burnin_speed_summary.tsv directly (it is never
+# in tier_targets(), so `snakemake -j4` alone will not build it), e.g.:
+#   snakemake -j4 runs/infb/burnin_speed_summary.tsv
+rule burnin_speed_summary:
+    input:
+        burnin_speed_cell_summaries,
+    output:
+        summary=str(RUNS_ROOT / "{dataset}" / "burnin_speed_summary.tsv"),
     run:
         with open(output.summary, "w") as out:
             for i, path in enumerate(input):
