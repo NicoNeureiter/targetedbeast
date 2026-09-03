@@ -29,6 +29,14 @@ EDGE_WEIGHTS_XML = {
     # Same PCAWeights2 again, paired with the "grid_low" transform below (see GRID_EXPONENTS_LOW).
     "pca_grid_low": '<distribution id="edgeweights" spec="targetedbeast.edgeweights.PCAWeights2" '
                      'tree="@tree" maxWeight="20" data="@infB_HA" dimension="10"/>',
+    # Same PCAWeights2 again, paired with the "grid_mid" transform below (see GRID_EXPONENTS_MID).
+    "pca_grid_mid": '<distribution id="edgeweights" spec="targetedbeast.edgeweights.PCAWeights2" '
+                     'tree="@tree" maxWeight="20" data="@infB_HA" dimension="10"/>',
+    # Reference point: PCAWeights2 wired to a PowerOffsetTransform pinned at exponent=2/offset=0
+    # (the operators' own hardcoded default) with optimise="false" - must be statistically
+    # indistinguishable from plain "pca" if the transform/rendering pipeline is correct.
+    "pca_fixed2": '<distribution id="edgeweights" spec="targetedbeast.edgeweights.PCAWeights2" '
+                  'tree="@tree" maxWeight="20" data="@infB_HA" dimension="10"/>',
 }
 
 # Grid points and burnin below mirror scripts/generate_xmls.py's _grid_transform (the lassaL
@@ -55,6 +63,14 @@ GRID_EXPONENTS_LOW = [0.5, 1, 2, 4]
 # (maxExponent == max(GRID_EXPONENTS)) and keeps the transform's hard cap tied to the range this
 # grid is actually designed to explore.
 GRID_MAX_EXPONENT_LOW = max(GRID_EXPONENTS_LOW)
+
+# pca_grid settled at its floor (8.0) in all 4 reps; pca_grid_low settled at its ceiling (4.0) in
+# all 4 reps - a boundary solution on both sides of the gap between the two grids. This grid
+# spans that gap directly, including the historical default (2) and the pca_grid_low ceiling (4)
+# as internal points plus one step past it (6), so a leader at 4 or 6 (not pinned to either edge)
+# would confirm the true optimum sits inside [2, 6] rather than being pushed there by grid geometry.
+GRID_EXPONENTS_MID = [2, 3, 4, 6]
+GRID_MAX_EXPONENT_MID = max(GRID_EXPONENTS_MID)
 
 WEIGHT_TRANSFORM_XML = {
     "none": ("", "", ""),
@@ -89,6 +105,30 @@ WEIGHT_TRANSFORM_XML = {
         ' targetWeightTransform="@targetWeightTransform"',
         '<log idref="targetWeightTransform"/>',
     ),
+    # Same wiring again, over GRID_EXPONENTS_MID.
+    "grid_mid": (
+        '<targetWeightTransform id="targetWeightTransform"'
+        ' spec="targetedbeast.weighttransform.PowerOffsetTransform"'
+        f' exponent="2.0" offset="0.0" maxExponent="{GRID_MAX_EXPONENT_MID}.0">\n'
+        '            <tuner spec="targetedbeast.weighttransform.GridTuner"'
+        f' exponents="{" ".join(str(b) for b in GRID_EXPONENTS_MID)}"'
+        f' explorationProb="0.1" burnin="{GRID_BURNIN}">\n'
+        '                <reward idref="likelihood"/>\n'
+        '            </tuner>\n'
+        '        </targetWeightTransform>',
+        ' targetWeightTransform="@targetWeightTransform"',
+        '<log idref="targetWeightTransform"/>',
+    ),
+    # Reference point (see "pca_fixed2" above): no tuner, pinned at the operators' own hardcoded
+    # default. optimise="false" means startProposal()/optimize() are no-ops - the transform is
+    # mathematically w^2 with zero offset on every proposal, identical to the no-transform path.
+    "fixed2": (
+        '<targetWeightTransform id="targetWeightTransform"'
+        ' spec="targetedbeast.weighttransform.PowerOffsetTransform"'
+        ' exponent="2.0" offset="0.0" optimise="false"/>',
+        ' targetWeightTransform="@targetWeightTransform"',
+        '<log idref="targetWeightTransform"/>',
+    ),
 }
 
 # Which transform variant each edge-weights setting is rendered with.
@@ -98,6 +138,8 @@ WEIGHT_TRANSFORM_FOR_SETTING = {
     "pca": "none",
     "pca_grid": "grid",
     "pca_grid_low": "grid_low",
+    "pca_grid_mid": "grid_mid",
+    "pca_fixed2": "fixed2",
 }
 
 

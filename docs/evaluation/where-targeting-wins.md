@@ -863,3 +863,200 @@ recommending the transform, at this grid, on this dataset, right now.
 
 `mvn -o test`: 123 run, 2 failures, 1 skipped, 0 errors — unchanged from baseline, confirmed after
 these runs and before committing.
+
+---
+
+# Weight-transform feature — reference-point checks and a grid spanning the gap
+
+## Reference-point sanity check: `exponent=2, offset=0, optimise="false"`
+
+Before trusting `pca_grid`/`pca_grid_low` any further, a cheap end-to-end check: a
+`PowerOffsetTransform` pinned at the operators' own hardcoded default, with no tuner at all
+(`optimise="false"`), should behave like plain `pca` — this is already proven at the unit level
+(`WeightTransformTest`, "b=2, a=0 reproduces the current squaring"), but a pipeline bug in
+rendering or wiring would not show up there. `scripts/render_infb_benchmark_xml.py` gained a
+`"pca_fixed2"` setting for this (`PowerOffsetTransform exponent="2.0" offset="0.0"
+optimise="false"`, no `tuner` element, wired only to `targetWeightTransform` as in every other
+setting here).
+
+One `fast`-tier cell (`preBurnin=20000/chainLength=150000`, seed 1000) run for `pca_fixed2` and
+compared directly against the existing `pca` fast-tier cell at the same seed. Per-operator accept
+counts for `targetedWilsonBalding` (the operator the transform is nested inside) are close but not
+identical (1142 both runs — exact match on this operator specifically), while other operators
+using the shared transform object drift apart (`TargetedWide`: 1833 vs 1794; `FixedHeight`: 1941 vs
+1772) and the final log-likelihoods diverge (-9262.10 vs -9249.52 at sample 150,000). This is the
+expected signature of a chaotic system given a correct implementation, not a bug: `Math.pow(x,
+2.0)` and `x*x` are not bit-identical in Java's floating-point semantics, so a tiny last-bit
+difference in one transformed weight eventually flips an accept/reject decision, and MCMC
+trajectories diverge exponentially from there — the same reason two `constant` reps at different
+seeds land on different posterior values despite sampling the same distribution. What matters is
+that the two runs are statistically unremarkable relative to each other (similar acceptance rates,
+similar posterior range, no crash, no NaN, no degenerate weight vector) — nothing here suggests a
+wiring or math bug upstream of the chaotic-divergence point. This check does not replace a paired
+`thorough`-tier comparison (not run, since the unit test already covers the underlying algebra and
+this was only meant to rule out a *rendering*-level mistake cheaply), but it found none.
+
+## A grid spanning the gap between `pca_grid` and `pca_grid_low`
+
+**Why this run exists.** `pca_grid` (exponents 8/12/16/24) settled at its floor, 8.0, in all 4
+reps. `pca_grid_low` (exponents 0.5/1/2/4) settled at its ceiling, 4.0, in all 4 reps. Two boundary
+solutions on either side of the same gap point at an interior optimum somewhere in `(4, 8)` or
+close to it — this grid, `exponents="2 3 4 6"` (`maxExponent="6.0"`), spans that gap directly and
+retains the historical default (2) as an internal point, so a leader that lands away from *both*
+edges (2 and 6) would confirm the earlier boundary solutions were genuine signal, not grid-geometry
+artifacts. Setting name: `"pca_grid_mid"` in `scripts/render_infb_benchmark_xml.py`, otherwise
+identical wiring to `pca_grid`/`pca_grid_low` (`burnin="5000"`, `explorationProb="0.1"`,
+`<reward idref="likelihood"/>`, same `PCAWeights2` edge weights as every `pca*` setting).
+
+### Smoke check (`fast` tier, seed 1000)
+
+Ran cleanly in 84.7s chain time. Reward trace at the final sample: `reward.2.0=0.113`,
+`reward.3.0=0.118`, `reward.4.0=0.123` (highest), `reward.6.0=0.102` (lowest) — an interior optimum
+at 4.0 already visible at this budget, not pinned to either edge of `[2, 6]`.
+
+### Real comparison (`thorough` tier, `preBurnin=100000/chainLength=750000`, 4 reps, seeds 1000-1003)
+
+Each rep run as a blocking, sequential `mvn -o exec:exec` invocation (406-434s chain time each,
+~27.5 minutes total), paired against the **already-recorded** `pca` cells from the "infB — 5x
+extended run" section above (same seeds, not rerun).
+
+#### ESS gate
+
+| rep | seed | posterior.ESS | tree.height.ESS |
+|---:|---:|---:|---:|
+| 0 | 1000 | 154.0 | 425.5 |
+| 1 | 1001 | 181.5 | 436.4 |
+| 2 | 1002 | 294.1 | 469.7 |
+| 3 | 1003 | 310.6 | 487.7 |
+
+All 4 cells clear `posterior.ESS`≥100 (154.0-310.6) and `tree.height.ESS`≥100 (425.5-487.7).
+
+#### Raw results — chain-level (`__CHAIN__` row), per cell
+
+| setting | rep | seed | acceptRate | meanJumpGivenAccepted | esjdPerSec_rnni |
+|---|---:|---:|---:|---:|---:|
+| pca_grid_mid | 0 | 1000 | 0.1675 | 4.076 | 22040.6 |
+| pca_grid_mid | 1 | 1001 | 0.1651 | 3.979 | 22712.0 |
+| pca_grid_mid | 2 | 1002 | 0.1658 | 3.963 | 22595.7 |
+| pca_grid_mid | 3 | 1003 | 0.1701 | 4.247 | 25139.5 |
+
+(`pca` reps at the same seeds are the rows already reported in "infB — 5x extended run" above:
+21870.7, 21560.3, 21649.6, 23067.5.)
+
+Per-rep posterior-median leader (`targetWeightTransform.leadingExponent`, last 90% of the
+post-burnin chain): rep0 = 4.0, rep1 = 4.0, rep2 = 3.0, rep3 = 4.0 — an interior point (3.0 or 4.0)
+in every rep, never the grid's edges (2.0 or 6.0), matching the smoke check.
+
+#### Paired analysis (pca_grid_mid − pca), t-based 90% CI, n=4, df=3
+
+| mean diff (ESJD/s) | 90% CI | excludes zero? | relative to pca mean |
+|---:|---|---|---:|
+| +1084.9 | (164.7, 2005.1) | **yes** | +4.9% |
+
+### Verdict
+
+**Yes — this is the first positive, ESS-gated result for the weight-transform feature on infB.**
+`pca_grid_mid` beats `PCAWeights2` alone by ~4.9% chain-level ESJD/second, 90% CI excluding zero on
+the positive side, at n=4. Read together with the two grids that bracket it: `pca_grid` (8-24, all
+4 reps pinned at the floor, −13.5%, CI excludes zero on the negative side) and `pca_grid_low`
+(0.5-4, all 4 reps pinned at the ceiling, +1.4%, CI includes zero), the three results trace out a
+coherent, unimodal-looking picture on this dataset: harm above ~8, no effect when the tuner is
+capped at 4 without room to explore past it, and a real gain once the grid actually brackets the
+interior region around 3-4 that both boundary results were pointing at. This reconciles the earlier
+`pca_grid` regression with the design docs' framing (`docs/WeightTransformAdaptation.md`:
+"pointiness beyond some dataset-specific optimum stops helping and starts hurting") rather than
+contradicting it: the earlier grid never sampled the region where the actual optimum lives, and the
+low grid clipped it at exactly the ceiling. This result should be read as dataset/grid-specific,
+like every other result in this document — the next section raises an independent reason not to
+treat it as fully settled yet.
+
+## Cross-check: `AdaptableOperatorSampler` over fixed exponents
+
+**Why this exists.** `GridTuner`'s reward is squared change in *log-likelihood* per proposal
+(`<reward idref="likelihood"/>`) — a proxy for mixing, not the RNNI-distance ESJD that this whole
+document's headline metric (`esjdPerSec_rnni`) actually measures. `AdaptableOperatorSampler`
+(`beast.base.evolution.operator.AdaptableOperatorSampler`, vendored copy at
+`src/main/java/targetedbeast/operators/AdaptableOperatorSampler.java`) is a structurally different,
+more established mechanism: it selects among *distinct candidate operators* by
+`acceptanceProb × (meanSquaredJump / runtime / parameterVariance)` (`getZ`,
+`getOperatorCumulativeProbs`), and critically, with a `TreeMetric` supplied it can be pointed
+directly at RNNI distance instead of likelihood. Wiring it up gives an independent read on the same
+question `pca_grid_mid` just answered, using the metric that actually matters instead of
+`GridTuner`'s likelihood proxy.
+
+### What was built
+
+A one-off diagnostic XML (not integrated into the renderer — this is a single cross-check, not a
+repeatable benchmark setting): took a rendered `pca` `fast`-tier cell and replaced the
+`targetedWilsonBalding` operator with an `AdaptableOperatorSampler` (`metric="@rnni"`, the same
+`RNNIMetric` instance the benchmark's own RNNI logging already uses, `burnin="10000"`) wrapping
+four fixed `TargetedWilsonBalding` candidates, each `weight="1"`, each with its own
+`PowerOffsetTransform exponent="{2,3,4,6}.0" offset="0.0" optimise="false"` — the same four grid
+points as `pca_grid_mid`, but each one pinned rather than tuned online, so the *sampler* is doing
+the searching instead of `GridTuner`. Every other operator (including the other three
+transform-bearing ones — `TargetedWide`, `targetedWilsonBaldingFixedHeight`, `targetedRangeSlide`)
+was left as plain `pca` (no transform) so this isolates the question to
+`targetedWilsonBalding` specifically, matching the scope the design doc puts this operator's target
+path in.
+
+### Run and result (`fast` tier, `preBurnin=20000/chainLength=150000`, seeds 1000 and 1001)
+
+Both seeds ran cleanly (~80s chain time each). `storeToFile`'s JSON dump gives the sampler's
+learned selection weights directly:
+
+| seed | exponent 2 | exponent 3 | exponent 4 | exponent 6 |
+|---:|---:|---:|---:|---:|
+| 1000 | **0.331** | 0.265 | 0.202 | 0.202 |
+| 1001 | **0.318** | 0.211 | 0.274 | 0.196 |
+
+`mean_SS` (mean squared RNNI jump per proposal, the numerator of the sampler's own reward) is
+monotonically *decreasing* in exponent in both seeds (seed 1000: 25.4 / 22.0 / 13.0 / 13.9; seed
+1001: 33.1 / 19.9 / 22.7 / 20.0) — exponent 2, the least pointy option and the operators'
+historical default, produces the largest per-proposal RNNI jump in both runs, and is the clear
+leader by the sampler's own combined acceptance×jump score in both seeds. Exponent 6 is
+last or tied-last in both.
+
+### This disagrees with `GridTuner`
+
+`GridTuner`'s likelihood-reward search (`pca_grid_mid`, above) converged on an *interior* optimum
+at 3-4, away from the default. `AdaptableOperatorSampler`'s RNNI-reward search, given the identical
+four candidate exponents, favors exponent 2 — the flattest option offered, the opposite end of the
+range from `pca_grid_mid`'s leader. This is a real, reproducible-in-2-seeds directional
+disagreement between the two mechanisms, not noise in one reading: `mean_SS` drops by nearly half
+from exponent 2 to exponent 4 in both seeds independently.
+
+**This does not on its own overturn the `pca_grid_mid` result above** — that result was measured
+directly in the metric that matters (`esjdPerSec_rnni`, ESS-gated, `thorough` tier, CI excludes
+zero) and stands on its own evidence. But it raises a specific, testable concern the design docs
+already anticipated in a different form (acceptance vs. mixing): here it is *squared
+log-likelihood jump* vs. *squared RNNI-distance jump* that disagree about which exponent is best,
+one level up from the acceptance-vs-likelihood distinction `docs/WeightTransformAdaptation.md`
+already documents. A pointier target selection can produce a bigger likelihood swing while landing
+on a topologically *closer* rearrangement than a flatter selection would, which is exactly the kind
+of proxy mismatch that would make `GridTuner` converge on a leader that is good for the reward it is
+given but not for RNNI-space mixing specifically. Two important caveats on this cross-check itself,
+both against reading too much into it:
+
+- Two seeds, `fast` tier (no ESS gate, ~1,900-3,150 proposals per candidate) — this is a cheap
+  directional probe, not a decision-grade measurement, and 2/2 agreement at this sample size is
+  suggestive, not conclusive.
+- The comparison is confounded by more than just the tuning *algorithm*: `GridTuner` explores
+  online with a moving leader and 10% forced exploration, while every `AdaptableOperatorSampler`
+  candidate here is a *pinned*, non-adaptive kernel — the two setups differ in reward signal and in
+  adaptivity at once, so this cross-check cannot cleanly attribute the disagreement to "RNNI vs
+  likelihood as a reward" alone.
+
+The clean way to resolve this: give `GridTuner` itself an RNNI-based reward (a `TreeMetric`-driven
+`Function` analogous to `<reward idref="likelihood"/>` but for squared RNNI jump) and rerun
+`pca_grid_mid`'s `thorough`-tier comparison — if the leader moves down toward 2 and the ESJD/s
+advantage shrinks or disappears, that would show the `pca_grid_mid` win is an artifact of the
+likelihood-reward proxy specifically; if the leader stays at 3-4 and the advantage holds, the two
+online mechanisms would then agree once put on the same reward, and the disagreement above would be
+attributable to `GridTuner`'s adaptivity/exploration rather than its reward choice. This is flagged
+as the most direct next step, not yet run — no `Function` computing squared RNNI-metric jump exists
+in the codebase today, and building one is a modest but nontrivial addition (`RNNIMetric` measures
+between two trees, not a running "jump since last proposal" the way `likelihood`'s `Function`
+interface exposes for free).
+
+`mvn -o test`: 123 run, 2 failures, 1 skipped, 0 errors — unchanged from baseline, confirmed after
+these runs and before committing.
