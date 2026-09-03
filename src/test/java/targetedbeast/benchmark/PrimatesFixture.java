@@ -6,6 +6,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import beast.base.util.Randomizer;
+
 /**
  * Builds BenchmarkMCMC/MCMC test XMLs from {@code primates-template.xml} - a copy of
  * {@code examples/primates.xml} (6 taxa, ~92,200 states/sec) with a shortened chain length so
@@ -99,6 +101,40 @@ final class PrimatesFixture {
                 + "            <operator id=\"wide\" spec=\"Exchange\" tree=\"@tree\" isNarrow=\"false\" weight=\"1\"/>\n"
                 + "        </operator>";
         return xml.replace(needle, replacement);
+    }
+
+    /** Adds referenceLowerBound/referenceUpperBound to an already-{@code toBenchmarkVariant}'d XML. */
+    static String withReferenceBand(String xml, double lower, double upper) {
+        String needle = "spec=\"targetedbeast.benchmark.BenchmarkMCMC\" id=\"mcmc\"";
+        require(xml, needle);
+        return xml.replace(needle, needle
+                + " referenceLowerBound=\"" + lower + "\""
+                + " referenceUpperBound=\"" + upper + "\"");
+    }
+
+    /**
+     * Primes {@code Randomizer}'s per-thread generator so that two later, separate
+     * {@code Randomizer.setSeed(SAME_SEED)} calls on this thread produce byte-identical streams.
+     *
+     * <p>{@code Randomizer.random()} lazily creates a per-thread {@code MersenneTwisterFast} on
+     * its first call, seeded {@code Randomizer.getSeed() + randomMap.size()} - which, the very
+     * first time this happens in a JVM (empty map), is {@code seed - 1}, not {@code seed}.
+     * {@code Randomizer.setSeed()} itself only reseeds generators already present in the map, via
+     * {@code seed + i}. So calling {@code setSeed(S)} twice in a row, with an actual draw only
+     * after the first call, reseeds to two different effective values ({@code S-1} then {@code S})
+     * - the second call finds the map non-empty and takes the {@code seed + 0} branch instead.
+     * Any test that needs multiple independent runs to see the identical RNG stream from the same
+     * nominal seed must call this once, before the first real {@code setSeed}, to populate the map
+     * ahead of time.
+     */
+    static void primeRandomizerThreadEntry() {
+        // Not 0/1: Randomizer.setSeed derives the underlying MersenneTwisterFast seed as (this
+        // value - 1) plus the current size of its internal thread map, and MersenneTwisterFast
+        // rejects an actual seed of exactly 0 ("Non zero random seed required") - a small/edge
+        // value here could hit that by coincidence depending on how many other tests already ran
+        // in this JVM fork. A large arbitrary constant keeps well clear of that.
+        Randomizer.setSeed(987654321L);
+        Randomizer.nextDouble();
     }
 
     static void write(String xml, Path path) throws IOException {

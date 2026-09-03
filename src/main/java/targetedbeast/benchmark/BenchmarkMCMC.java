@@ -41,6 +41,19 @@ import targetedbeast.operators.AdaptableOperatorSampler;
  * over total operator+likelihood time; per-operator rows are diagnostics;</li>
  * <li>the {@link Randomizer} seed is recorded, and no metric may call {@link Randomizer}.</li>
  * </ul>
+ *
+ * <p><b>Burn-in speed (Phase 3c).</b> When both {@code referenceLowerBound} and
+ * {@code referenceUpperBound} are set, this class also tracks proposals-to-target: the (1-based)
+ * post-burnin proposal count at which the chain's log-posterior ({@code oldLogLikelihood} after
+ * the accept/reject decision - despite the field name, {@code posteriorInput} is what {@code MCMC}
+ * actually assigns to it) first enters {@code [referenceLowerBound, referenceUpperBound]} and
+ * stays there for 5 consecutive proposals. The reported index is that of the <em>first</em>
+ * proposal of that run of 5, not the fifth. This reuses the per-proposal posterior value already
+ * computed by core - no extra likelihood evaluation - so it costs one comparison and a counter per
+ * proposal. On {@link #close()}, the result is written to {@code <statsOut>.burnin.tsv}: a header
+ * row followed by one data row with columns {@code referenceLowerBound}, {@code referenceUpperBound},
+ * {@code reached} ({@code true}/{@code false}), {@code proposalsToTarget} ({@code -1} if never
+ * reached), {@code totalPostBurninProposals}.
  */
 @Description("MCMC that also writes a '<statsOut>.opstats.tsv' benchmark report: per-operator "
         + "acceptance/timing/tree-jump statistics plus a chain-level headline row. Instrumentation "
@@ -74,9 +87,22 @@ public class BenchmarkMCMC extends MCMC {
             "optional per-proposal trace file: sampleNr, operator, accepted, then one jump column "
             + "per metric (only written on sampled proposals).");
 
+    final public Input<Double> referenceLowerBoundInput = new Input<>("referenceLowerBound",
+            "lower bound (5th percentile) of a reference chain's post-burnin log-posterior band, "
+            + "for the burn-in-speed metric (Phase 3c). Computed externally, not by this class. "
+            + "Must be set together with referenceUpperBound to enable tracking; if either is "
+            + "unset, burn-in speed is not tracked and no '<statsOut>.burnin.tsv' is written.");
+
+    final public Input<Double> referenceUpperBoundInput = new Input<>("referenceUpperBound",
+            "upper bound (95th percentile) of a reference chain's post-burnin log-posterior band. "
+            + "See referenceLowerBound.");
+
     // ---- resolved config ----
     private List<TreeMetric> metrics;
     private int jumpInterval;
+    private Double referenceLowerBound;
+    private Double referenceUpperBound;
+    private boolean burnInSpeedEnabled;
 
     // ---- operator bookkeeping (built lazily on first propagateState call, once
     //      operatorSchedule.init()/TargetedOperatorSchedule's operator substitution has run) ----
@@ -91,11 +117,19 @@ public class BenchmarkMCMC extends MCMC {
     private long recordedSeed = Long.MIN_VALUE;
     private PrintWriter jumpTraceWriter;
 
+    // ---- burn-in speed (Phase 3c) ----
+    private BurnInSpeedTracker burnInSpeedTracker;
+
     @Override
     public void initAndValidate() {
         super.initAndValidate();
         metrics = metricInput.get();
         jumpInterval = Math.max(1, jumpIntervalInput.get());
+        referenceLowerBound = referenceLowerBoundInput.get();
+        referenceUpperBound = referenceUpperBoundInput.get();
+        burnInSpeedEnabled = referenceLowerBound != null && referenceUpperBound != null;
+        burnInSpeedTracker = burnInSpeedEnabled
+                ? new BurnInSpeedTracker(referenceLowerBound, referenceUpperBound) : null;
     }
 
     @Override
@@ -143,6 +177,10 @@ public class BenchmarkMCMC extends MCMC {
                 o -> new OperatorStats(o.getName(), metrics.size()));
         stats.recordProposal((t1 - t0) / 1e6, accepted);
 
+        if (burnInSpeedTracker != null) {
+            burnInSpeedTracker.update(oldLogLikelihood);
+        }
+
         // Diagnostic only (GridTuner already optimises this internally - see class javadoc of
         // targetedbeast.weighttransform.GridTuner - so it must not be used to rank weightings).
         // logAlpha == NEGATIVE_INFINITY marks MCMC's "direct reject" branch (MCMC.java:567-582),
@@ -178,9 +216,41 @@ public class BenchmarkMCMC extends MCMC {
     public void close() {
         super.close();
         writeStatsFile();
+        writeBurnInSpeedFile();
         if (jumpTraceWriter != null) {
             jumpTraceWriter.close();
         }
+    }
+
+    // ---- burn-in speed (Phase 3c) ----
+
+    private void writeBurnInSpeedFile() {
+        if (burnInSpeedTracker == null) {
+            return;
+        }
+        final String prefix = statsOutInput.get();
+        if (prefix == null) {
+            return;
+        }
+        final String path = prefix + ".burnin.tsv";
+        try (PrintWriter out = new PrintWriter(new FileWriter(path))) {
+            out.println("referenceLowerBound\treferenceUpperBound\treached\tproposalsToTarget"
+                    + "\ttotalPostBurninProposals");
+            out.println(referenceLowerBound + "\t" + referenceUpperBound + "\t"
+                    + burnInSpeedTracker.isReached() + "\t" + burnInSpeedTracker.getTarget() + "\t"
+                    + burnInSpeedTracker.getProposalsSeen());
+        } catch (IOException e) {
+            throw new RuntimeException("Could not write burn-in-speed statistics to " + path, e);
+        }
+    }
+
+    /** Test-only access to the burn-in-speed result: -1 if the target was never reached. */
+    long getBurnInSpeedTargetForTesting() {
+        return burnInSpeedTracker == null ? -1 : burnInSpeedTracker.getTarget();
+    }
+
+    boolean isBurnInSpeedEnabledForTesting() {
+        return burnInSpeedTracker != null;
     }
 
     // ---- operator-tree bookkeeping ----
