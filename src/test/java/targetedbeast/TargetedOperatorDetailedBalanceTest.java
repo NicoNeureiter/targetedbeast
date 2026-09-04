@@ -478,6 +478,47 @@ public class TargetedOperatorDetailedBalanceTest extends DetailedBalanceTest<Tre
     }
 
     /**
+     * A {@link targetedbeast.weighttransform.RatioGridTuner} on targetWeightTransform, coupled to
+     * a {@link targetedbeast.weighttransform.GridTuner} on edgeWeightTransform: this is what
+     * checks {@link targetedbeast.operators.TargetedWeightOperator#startTransformProposal()}'s
+     * edge-before-target reorder is still detailed-balance-correct. Both tuners use
+     * explorationProb="1.0", so the mixture over grid points is a fixed kernel, exactly as in
+     * {@link #testTargWilsonBaldingGridTransform}.
+     */
+    @Test
+    public void testTargWilsonBaldingRatioGridTransform() throws Exception {
+        testDetailedBalance(new TreeTrial(tree -> {
+            targetedbeast.weighttransform.GridTuner edgeTuner =
+                    new targetedbeast.weighttransform.GridTuner();
+            edgeTuner.initByName("exponents", "1 3.7 12", "explorationProb", 1.0);
+
+            targetedbeast.weighttransform.PowerOffsetTransform edgeTransform =
+                    new targetedbeast.weighttransform.PowerOffsetTransform();
+            edgeTransform.initByName("exponent", 3.7, "offset", 0.3, "tuner", edgeTuner);
+
+            targetedbeast.weighttransform.RatioGridTuner targetTuner =
+                    new targetedbeast.weighttransform.RatioGridTuner();
+            targetTuner.initByName("ratios", "0.7 1.0 1.4", "reference", edgeTransform,
+                    "explorationProb", 1.0);
+
+            targetedbeast.weighttransform.PowerOffsetTransform targetTransform =
+                    new targetedbeast.weighttransform.PowerOffsetTransform();
+            targetTransform.initByName("exponent", 3.7, "offset", 0.3, "tuner", targetTuner,
+                    "maxExponent", 20.0);
+
+            TreeOperator operator = new TargetedWilsonBalding();
+            operator.initByName(
+                    "tree", tree,
+                    "weight", 1.0,
+                    "edgeWeights", getPCAWeights(tree),
+                    "useEdgeLength", false,
+                    "targetWeightTransform", targetTransform,
+                    "edgeWeightTransform", edgeTransform);
+            return operator;
+        }));
+    }
+
+    /**
      * The same, with an offset large enough that the proposal is close to uniform over the
      * candidate set. Catches normalization errors that a small offset would mask.
      */

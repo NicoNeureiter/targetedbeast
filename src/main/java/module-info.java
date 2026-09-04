@@ -66,6 +66,7 @@ open module targetedbeast {
         targetedbeast.weighttransform.ExpOffsetTransform,
         targetedbeast.weighttransform.GridTuner,
         targetedbeast.weighttransform.PowerOffsetTransform,
+        targetedbeast.weighttransform.RatioGridTuner,
         targetedbeast.weighttransform.SpsaTuner,
         targetedbeast.weighttransform.TreeJumpFunction;
 }
