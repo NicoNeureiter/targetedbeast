@@ -41,6 +41,11 @@ EDGE_WEIGHTS_XML = {
     # jump (TreeJumpFunction) instead of squared likelihood jump - see "grid_mid_rnni" below.
     "pca_grid_mid_rnni": '<distribution id="edgeweights" spec="targetedbeast.edgeweights.PCAWeights2" '
                           'tree="@tree" maxWeight="20" data="@infB_HA" dimension="10"/>',
+    # Same PCAWeights2 as "pca_grid_mid", but with a 0.1-uniform-mixture offset floor on both
+    # transforms and edgeWeightTransform independently adapted from targetWeightTransform instead
+    # of left untransformed - see "grid_mid_dual" below.
+    "pca_grid_mid_dual": '<distribution id="edgeweights" spec="targetedbeast.edgeweights.PCAWeights2" '
+                          'tree="@tree" maxWeight="20" data="@infB_HA" dimension="10"/>',
 }
 
 # Grid points and burnin below mirror scripts/generate_xmls.py's _grid_transform (the lassaL
@@ -75,6 +80,14 @@ GRID_MAX_EXPONENT_LOW = max(GRID_EXPONENTS_LOW)
 # would confirm the true optimum sits inside [2, 6] rather than being pushed there by grid geometry.
 GRID_EXPONENTS_MID = [2, 3, 4, 6]
 GRID_MAX_EXPONENT_MID = max(GRID_EXPONENTS_MID)
+
+# WeightTransform.apply() mixes in a uniform distribution with weight a/(1+a), a being the
+# `offset` coefficient (see WeightTransform's Input doc) - solving a/(1+a) = 0.1 for a. Applied as
+# a fixed, non-gridded floor (GridTuner only ever tunes the exponent - see its class doc) so every
+# edge/candidate always keeps a nonzero share of proposal mass, without tuning a second
+# coefficient: getting clean signal out of one gridded exponent was hard enough at this chain
+# length, so the offset is fixed rather than added as a second grid dimension.
+OFFSET_MIXTURE_0_1 = 1.0 / 9.0
 
 WEIGHT_TRANSFORM_XML = {
     "none": ("", "", ""),
@@ -142,6 +155,23 @@ WEIGHT_TRANSFORM_XML = {
         ' targetWeightTransform="@targetWeightTransform"',
         '<log idref="targetWeightTransform"/>',
     ),
+    # Same grid/burnin/explorationProb/reward as "grid_mid", but with the OFFSET_MIXTURE_0_1 floor
+    # instead of offset="0.0" - pairs with EDGE_WEIGHT_TRANSFORM_XML's "grid_mid" entry below,
+    # which gives edgeWeightTransform its own independently-adapted exponent instead of leaving
+    # source-edge weights untransformed.
+    "grid_mid_dual": (
+        '<targetWeightTransform id="targetWeightTransform"'
+        ' spec="targetedbeast.weighttransform.PowerOffsetTransform"'
+        f' exponent="2.0" offset="{OFFSET_MIXTURE_0_1}" maxExponent="{GRID_MAX_EXPONENT_MID}.0">\n'
+        '            <tuner spec="targetedbeast.weighttransform.GridTuner"'
+        f' exponents="{" ".join(str(b) for b in GRID_EXPONENTS_MID)}"'
+        f' explorationProb="0.1" burnin="{GRID_BURNIN}">\n'
+        '                <reward idref="likelihood"/>\n'
+        '            </tuner>\n'
+        '        </targetWeightTransform>',
+        ' targetWeightTransform="@targetWeightTransform"',
+        '<log idref="targetWeightTransform"/>',
+    ),
     # Reference point (see "pca_fixed2" above): no tuner, pinned at the operators' own hardcoded
     # default. optimise="false" means startProposal()/optimize() are no-ops - the transform is
     # mathematically w^2 with zero offset on every proposal, identical to the no-transform path.
@@ -164,6 +194,37 @@ WEIGHT_TRANSFORM_FOR_SETTING = {
     "pca_grid_mid": "grid_mid",
     "pca_fixed2": "fixed2",
     "pca_grid_mid_rnni": "grid_mid_rnni",
+    "pca_grid_mid_dual": "grid_mid_dual",
+}
+
+# edgeWeightTransform (source-edge weights, see targetedbeast.operators.TargetedWeightOperator) is
+# a separate WeightTransform Input from targetWeightTransform on every operator that carries one -
+# left unwired ("none") in every setting above, so source-edge selection has always used raw,
+# untransformed weights. This "grid_mid" entry gives it its own PowerOffsetTransform/GridTuner,
+# independent of (not shared with) targetWeightTransform's - same grid and reward as
+# WEIGHT_TRANSFORM_XML's "grid_mid_dual" target transform, but its own id, so the two adapt
+# separately and TargetedWeightOperator.optimize()/startTransformProposal() drive each once.
+EDGE_WEIGHT_TRANSFORM_XML = {
+    "none": ("", "", ""),
+    "grid_mid": (
+        '<edgeWeightTransform id="edgeWeightTransform"'
+        ' spec="targetedbeast.weighttransform.PowerOffsetTransform"'
+        f' exponent="2.0" offset="{OFFSET_MIXTURE_0_1}" maxExponent="{GRID_MAX_EXPONENT_MID}.0">\n'
+        '            <tuner spec="targetedbeast.weighttransform.GridTuner"'
+        f' exponents="{" ".join(str(b) for b in GRID_EXPONENTS_MID)}"'
+        f' explorationProb="0.1" burnin="{GRID_BURNIN}">\n'
+        '                <reward idref="likelihood"/>\n'
+        '            </tuner>\n'
+        '        </edgeWeightTransform>',
+        ' edgeWeightTransform="@edgeWeightTransform"',
+        '<log idref="edgeWeightTransform"/>',
+    ),
+}
+
+# Which edge-transform variant each edge-weights setting is rendered with. Defaults to "none"
+# (source-edge weights untransformed) unless overridden below.
+EDGE_WEIGHT_TRANSFORM_FOR_SETTING = {
+    "pca_grid_mid_dual": "grid_mid",
 }
 
 
@@ -171,12 +232,17 @@ def render_run_xml(template_text: str, setting: str, chain_length: int, out_dir:
                     jump_interval: int, pre_burnin: int) -> str:
     transform_element, transform_ref, transform_log = \
         WEIGHT_TRANSFORM_XML[WEIGHT_TRANSFORM_FOR_SETTING[setting]]
+    edge_transform_element, edge_transform_ref, edge_transform_log = \
+        EDGE_WEIGHT_TRANSFORM_XML[EDGE_WEIGHT_TRANSFORM_FOR_SETTING.get(setting, "none")]
     xml = template_text.format(
         edge_weights=EDGE_WEIGHTS_XML[setting],
         chain_length=str(chain_length),
         target_weight_transform=transform_element,
         target_weight_transform_ref=transform_ref,
         target_weight_transform_log=transform_log,
+        edge_weight_transform=edge_transform_element,
+        edge_weight_transform_ref=edge_transform_ref,
+        edge_weight_transform_log=edge_transform_log,
     )
 
     run_needle = '<run id="mcmc" spec="MCMC" chainLength='
