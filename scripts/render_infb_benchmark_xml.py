@@ -46,6 +46,33 @@ EDGE_WEIGHTS_XML = {
     # of left untransformed - see "grid_mid_dual" below.
     "pca_grid_mid_dual": '<distribution id="edgeweights" spec="targetedbeast.edgeweights.PCAWeights2" '
                           'tree="@tree" maxWeight="20" data="@infB_HA" dimension="10"/>',
+    # Uses the actual Felsenstein tree-likelihood partials (via treeLikelihood's BeerLikelihoodCore)
+    # to score candidate target edges - expensive per proposal, expected to behave close to a Gibbs
+    # move (acceptance close to 1). Requires a non-threaded TreeLikelihood exposing
+    # BeerLikelihoodCore via getLikelihoodCore() - see LIKELIHOOD_SPEC_FOR_SETTING below.
+    "felsenstein": '<distribution id="edgeweights" spec="targetedbeast.edgeweights.FelsensteinWeights" '
+                    'tree="@tree" maxWeight="20" data="@infB_HA" likelihood="@treeLikelihood"/>',
+    # Approximates FelsensteinWeights using only the cached inside-partials of the moved clade and
+    # each candidate target clade (no full likelihood evaluation) - cheaper per proposal, expected
+    # lower acceptance than "felsenstein". Also needs the non-threaded TreeLikelihood (see below).
+    "partial": '<distribution id="edgeweights" spec="targetedbeast.edgeweights.PartialWeights" '
+               'tree="@tree" maxWeight="20" data="@infB_HA" likelihood="@treeLikelihood"/>',
+}
+
+# treeLikelihood's spec class, keyed by setting. Every existing setting keeps the historical
+# ThreadedTreeLikelihood (published results in docs/evaluation/where-targeting-wins.md must stay
+# reproducible). "felsenstein"/"partial" need a plain (non-threaded) TreeLikelihood instead:
+# both weightings call treeLikelihood.getLikelihoodCore(), which only TreeLikelihood exposes -
+# ThreadedTreeLikelihood extends GenericTreeLikelihood directly (a sibling of TreeLikelihood, not
+# a subclass) and declares no such method. Left with no `implementation` attribute, a plain
+# TreeLikelihood on infB's 4-state nucleotide data creates a BeerLikelihoodCore4 (extends
+# BeerLikelihoodCore) via its default createLikelihoodCore(stateCount) dispatch, which is exactly
+# what FelsensteinWeights requires (PartialWeights only needs the generic LikelihoodCore).
+DEFAULT_LIKELIHOOD_SPEC = "beast.base.spec.evolution.likelihood.ThreadedTreeLikelihood"
+NON_THREADED_LIKELIHOOD_SPEC = "beast.base.spec.evolution.likelihood.TreeLikelihood"
+LIKELIHOOD_SPEC_FOR_SETTING = {
+    "felsenstein": NON_THREADED_LIKELIHOOD_SPEC,
+    "partial": NON_THREADED_LIKELIHOOD_SPEC,
 }
 
 # Grid points and burnin below mirror scripts/generate_xmls.py's _grid_transform (the lassaL
@@ -195,6 +222,8 @@ WEIGHT_TRANSFORM_FOR_SETTING = {
     "pca_fixed2": "fixed2",
     "pca_grid_mid_rnni": "grid_mid_rnni",
     "pca_grid_mid_dual": "grid_mid_dual",
+    "felsenstein": "none",
+    "partial": "none",
 }
 
 # edgeWeightTransform (source-edge weights, see targetedbeast.operators.TargetedWeightOperator) is
@@ -236,6 +265,7 @@ def render_run_xml(template_text: str, setting: str, chain_length: int, out_dir:
         EDGE_WEIGHT_TRANSFORM_XML[EDGE_WEIGHT_TRANSFORM_FOR_SETTING.get(setting, "none")]
     xml = template_text.format(
         edge_weights=EDGE_WEIGHTS_XML[setting],
+        likelihood_spec=LIKELIHOOD_SPEC_FOR_SETTING.get(setting, DEFAULT_LIKELIHOOD_SPEC),
         chain_length=str(chain_length),
         target_weight_transform=transform_element,
         target_weight_transform_ref=transform_ref,
