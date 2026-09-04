@@ -257,8 +257,8 @@
         <!-- <operator id="UnTargetedWide" spec="targetedbeast.operators.WeightedWideOperator" tree="@tree" weight="5"/> -->
         <operator id="TargetedWide" spec="targetedbeast.operators.WeightedWideOperator" tree="@tree" weight="5" edgeWeights="@edgeweights"{target_weight_transform_ref}{edge_weight_transform_ref}/>
         <operator id="targetedWilsonBalding" spec="targetedbeast.operators.TargetedWilsonBalding" tree="@tree" weight="5" edgeWeights="@edgeweights" maxHeightRatio="1.2">
-            {target_weight_transform}
             {edge_weight_transform}
+            {target_weight_transform}
         </operator>
         <operator id="targetedWilsonBaldingFixedHeight" spec="targetedbeast.operators.TargetedWilsonBaldingFixedHeight" tree="@tree" weight="5" edgeWeights="@edgeweights"{target_weight_transform_ref}{edge_weight_transform_ref}/>
         <!-- <operator id="targetedWilsonBaldingDelta1" spec="targetedbeast.operators.TargetedWilsonBaldingHeightDelta" tree="@tree" weight="5"

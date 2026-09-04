@@ -46,6 +46,11 @@ EDGE_WEIGHTS_XML = {
     # of left untransformed - see "grid_mid_dual" below.
     "pca_grid_mid_dual": '<distribution id="edgeweights" spec="targetedbeast.edgeweights.PCAWeights2" '
                           'tree="@tree" maxWeight="20" data="@infB_HA" dimension="10"/>',
+    # Same PCAWeights2 as "pca_grid_mid", but targetWeightTransform is a RatioGridTuner coupled to
+    # edgeWeightTransform's live exponent instead of an independent GridTuner, and the offset floor
+    # is lowered to OFFSET_MIXTURE_0_05 - see "grid_mid_ratio" below.
+    "pca_grid_mid_ratio": '<distribution id="edgeweights" spec="targetedbeast.edgeweights.PCAWeights2" '
+                           'tree="@tree" maxWeight="20" data="@infB_HA" dimension="10"/>',
 }
 
 # Grid points and burnin below mirror scripts/generate_xmls.py's _grid_transform (the lassaL
@@ -88,6 +93,11 @@ GRID_MAX_EXPONENT_MID = max(GRID_EXPONENTS_MID)
 # coefficient: getting clean signal out of one gridded exponent was hard enough at this chain
 # length, so the offset is fixed rather than added as a second grid dimension.
 OFFSET_MIXTURE_0_1 = 1.0 / 9.0
+
+# Same mixture-weight solve as OFFSET_MIXTURE_0_1, but for a 0.05 floor instead of 0.1: solving
+# a/(1+a) = 0.05 for a. Used by "grid_mid_ratio" below; does not replace OFFSET_MIXTURE_0_1, which
+# stays wired to the already-published "grid_mid_dual" setting.
+OFFSET_MIXTURE_0_05 = 1.0 / 19.0
 
 WEIGHT_TRANSFORM_XML = {
     "none": ("", "", ""),
@@ -172,6 +182,26 @@ WEIGHT_TRANSFORM_XML = {
         ' targetWeightTransform="@targetWeightTransform"',
         '<log idref="targetWeightTransform"/>',
     ),
+    # Regularized coupling: targetWeightTransform's exponent is a bounded ratio (0.7/1.0/1.4) on
+    # edgeWeightTransform's own live, per-proposal exponent (RatioGridTuner), instead of an
+    # independent GridTuner over its own absolute grid (see "grid_mid_dual" above). maxExponent=9.0
+    # covers the worst case: edge's grid max (6.0) x ratio grid max (1.4) = 8.4. Pairs with
+    # EDGE_WEIGHT_TRANSFORM_XML's "grid_mid_ratio" entry below, which the reference="@edgeWeight
+    # Transform" idref requires to be declared first in document order - see template.xml's
+    # {edge_weight_transform}/{target_weight_transform} slot order inside targetedWilsonBalding.
+    "grid_mid_ratio": (
+        '<targetWeightTransform id="targetWeightTransform"'
+        ' spec="targetedbeast.weighttransform.PowerOffsetTransform"'
+        f' exponent="2.0" offset="{OFFSET_MIXTURE_0_05}" maxExponent="9.0">\n'
+        '            <tuner spec="targetedbeast.weighttransform.RatioGridTuner"'
+        ' reference="@edgeWeightTransform" ratios="0.7 1.0 1.4"'
+        f' explorationProb="0.1" burnin="{GRID_BURNIN}">\n'
+        '                <reward idref="likelihood"/>\n'
+        '            </tuner>\n'
+        '        </targetWeightTransform>',
+        ' targetWeightTransform="@targetWeightTransform"',
+        '<log idref="targetWeightTransform"/>',
+    ),
     # Reference point (see "pca_fixed2" above): no tuner, pinned at the operators' own hardcoded
     # default. optimise="false" means startProposal()/optimize() are no-ops - the transform is
     # mathematically w^2 with zero offset on every proposal, identical to the no-transform path.
@@ -195,6 +225,7 @@ WEIGHT_TRANSFORM_FOR_SETTING = {
     "pca_fixed2": "fixed2",
     "pca_grid_mid_rnni": "grid_mid_rnni",
     "pca_grid_mid_dual": "grid_mid_dual",
+    "pca_grid_mid_ratio": "grid_mid_ratio",
 }
 
 # edgeWeightTransform (source-edge weights, see targetedbeast.operators.TargetedWeightOperator) is
@@ -219,12 +250,29 @@ EDGE_WEIGHT_TRANSFORM_XML = {
         ' edgeWeightTransform="@edgeWeightTransform"',
         '<log idref="edgeWeightTransform"/>',
     ),
+    # Same as "grid_mid" above except for the offset value (OFFSET_MIXTURE_0_05, not _0_1) - pairs
+    # with WEIGHT_TRANSFORM_XML's "grid_mid_ratio" target transform, whose RatioGridTuner reads
+    # this transform's live exponent every proposal.
+    "grid_mid_ratio": (
+        '<edgeWeightTransform id="edgeWeightTransform"'
+        ' spec="targetedbeast.weighttransform.PowerOffsetTransform"'
+        f' exponent="2.0" offset="{OFFSET_MIXTURE_0_05}" maxExponent="{GRID_MAX_EXPONENT_MID}.0">\n'
+        '            <tuner spec="targetedbeast.weighttransform.GridTuner"'
+        f' exponents="{" ".join(str(b) for b in GRID_EXPONENTS_MID)}"'
+        f' explorationProb="0.1" burnin="{GRID_BURNIN}">\n'
+        '                <reward idref="likelihood"/>\n'
+        '            </tuner>\n'
+        '        </edgeWeightTransform>',
+        ' edgeWeightTransform="@edgeWeightTransform"',
+        '<log idref="edgeWeightTransform"/>',
+    ),
 }
 
 # Which edge-transform variant each edge-weights setting is rendered with. Defaults to "none"
 # (source-edge weights untransformed) unless overridden below.
 EDGE_WEIGHT_TRANSFORM_FOR_SETTING = {
     "pca_grid_mid_dual": "grid_mid",
+    "pca_grid_mid_ratio": "grid_mid_ratio",
 }
 
 

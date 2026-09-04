@@ -112,11 +112,15 @@ public abstract class TargetedWeightOperator extends TreeOperator {
 	 * consistent, so the Hastings ratio stays exact.
 	 */
 	protected void startTransformProposal() {
-		if (targetWeightTransform != null) {
-			targetWeightTransform.startProposal();
-		}
-		if (edgeWeightTransform != null && edgeWeightTransform != targetWeightTransform) {
+		// Edge before target: a target transform's tuner may read the edge transform's live
+		// per-proposal exponent (see RatioGridTuner), which must already be current for this
+		// proposal by the time target reads it. Harmless for every other combination, since
+		// independent transforms don't read each other's state.
+		if (edgeWeightTransform != null) {
 			edgeWeightTransform.startProposal();
+		}
+		if (targetWeightTransform != null && targetWeightTransform != edgeWeightTransform) {
+			targetWeightTransform.startProposal();
 		}
 	}
 
