@@ -1222,3 +1222,82 @@ undetectable at 4 reps rather than assume more reps will necessarily resolve it.
 
 `mvn -o test`: 126 run, 2 failures, 0 errors, 1 skipped — unchanged from baseline, confirmed after
 these runs and before committing.
+
+### Regularized edge/target coupling via a ratio grid, and a smaller offset floor (pca_grid_mid_ratio)
+
+**What was built.** `pca_grid_mid_dual` above gave `edgeWeightTransform` its own fully independent
+`GridTuner` and found no detectable benefit over `pca_grid_mid` alone. `pca_grid_mid_ratio` is a
+regularized alternative: `edgeWeightTransform`'s exponent still tunes independently via its own
+`GridTuner`, but `targetWeightTransform`'s exponent is no longer tuned independently — instead a
+new `CoefficientTuner` (`RatioGridTuner`) ties it to `edgeWeightTransform`'s live, per-proposal
+exponent through a small ratio grid (`0.7 1.0 1.4`), so `targetWeightTransform`'s exponent always
+equals `edgeWeightTransform`'s current exponent times whichever ratio is currently selected. This
+also drops the offset floor from `pca_grid_mid_dual`'s 0.1-uniform-mixture (`offset=1/9`) to a
+smaller 0.05-uniform-mixture (`OFFSET_MIXTURE_0_05 = 1/19`) on both transforms. The `RatioGridTuner`
+class, the `TargetedWeightOperator` reorder it needed, its unit tests, and detailed-balance
+verification are already committed (this section is about the result, not the design).
+
+Rendered via `scripts/render_infb_benchmark_xml.py --settings pca_grid_mid_ratio --reps 4
+--chain-length 750000 --pre-burnin 100000 --jump-interval 20 --out-root runs/eval8_ratio/infb`,
+`thorough` tier, 4 reps, seeds 1000-1003, paired against `pca_grid_mid`'s already-recorded
+`runs/eval7_dual/infb/pca_grid_mid/rep{0..3}/summary.tsv` (same seeds, reused rather than rerun,
+per the task). Each of the 4 `pca_grid_mid_ratio` cells ran as its own blocking, sequential
+`mvn -o exec:exec` invocation, 432-511s chain time, ~33 minutes total.
+
+#### ESS gate
+
+| setting | rep | posterior.ESS | tree.height.ESS |
+|---|---:|---:|---:|
+| pca_grid_mid_ratio | 0 | 226.6 | 788.6 |
+| pca_grid_mid_ratio | 1 | 221.4 | 707.9 |
+| pca_grid_mid_ratio | 2 | 245.1 | 734.1 |
+| pca_grid_mid_ratio | 3 | 184.7 | 703.2 |
+| pca_grid_mid | 0 | 123.3 | 367.9 |
+| pca_grid_mid | 1 | 283.1 | 462.6 |
+| pca_grid_mid | 2 | 290.2 | 546.2 |
+| pca_grid_mid | 3 | 309.4 | 506.2 |
+
+All 8 cells clear `posterior.ESS`≥100 (123.3-309.4) and `tree.height.ESS`≥100 (367.9-788.6).
+
+#### Raw results — chain-level (`__CHAIN__` row), per cell
+
+| setting | rep | seed | esjdPerSec_rnni | targetWeightTransform.leadingRatio (median) | edgeWeightTransform.leadingExponent (median) |
+|---|---:|---:|---:|---:|---:|
+| pca_grid_mid_ratio | 0 | 1000 | 19112.5 | 1.0 | 3.0 |
+| pca_grid_mid_ratio | 1 | 1001 | 18605.3 | 0.7 | 2.0 |
+| pca_grid_mid_ratio | 2 | 1002 | 20455.5 | 1.4 | 3.0 |
+| pca_grid_mid_ratio | 3 | 1003 | 15800.1 | 1.4 | 3.0 |
+| pca_grid_mid | 0 | 1000 | 21409.8 | — | — |
+| pca_grid_mid | 1 | 1001 | 23480.0 | — | — |
+| pca_grid_mid | 2 | 1002 | 23915.4 | — | — |
+| pca_grid_mid | 3 | 1003 | 20587.6 | — | — |
+
+`targetWeightTransform.leadingRatio` lands on a different grid point in 3 of 4 reps (1.0, 0.7,
+1.4, 1.4) rather than converging consistently — with `edgeWeightTransform.leadingExponent` itself
+settling at 2.0 or 3.0 depending on the rep, the effective target exponent (ratio × edge exponent)
+varies from rep to rep (2.0, 1.4, 4.2, 4.2) rather than tracking a single stable value.
+
+#### Paired analysis (pca_grid_mid_ratio − pca_grid_mid), t-based 90% CI, n=4, df=3
+
+| mean diff (ESJD/s) | 90% CI | excludes zero? | relative to pca_grid_mid mean |
+|---:|---|---|---:|
+| −3854.9 | (−5294.5, −2415.3) | yes | −17.2% |
+
+#### Verdict
+
+**Worse, and detectably so.** Unlike `pca_grid_mid_dual`'s null result, this CI excludes zero on
+the losing side: `pca_grid_mid_ratio` loses to its paired `pca_grid_mid` rep in all 4 reps (−2297.3,
+−4874.7, −3459.9, −4787.6), a consistent rather than mixed pattern. The regularization this section
+set out to test — tying `targetWeightTransform` to `edgeWeightTransform` via a ratio grid instead of
+giving it a fully independent grid — does not recover `pca_grid_mid_dual`'s null result, let alone
+improve on it; it costs measurable ESJD/second instead. Combined with the per-rep ratio not settling
+on a consistent grid point (0.7, 1.0, 1.4, 1.4), the coupling does not appear to be finding a stable
+regime, unlike `pca_grid_mid_dual`'s independent tuner, whose `edgeWeightTransform.leadingExponent`
+converged predictably one grid step below `targetWeightTransform`'s in every rep. As with
+`pca_grid_mid_dual`, this result bundles two simultaneous changes (the ratio-grid coupling and the
+smaller 0.05-mixture offset floor) and cannot on its own attribute the loss to either one
+individually — but given the clean, one-sided, CI-excludes-zero result, there is no ambiguity about
+whether this specific combination is worth keeping: it is not.
+
+`mvn -o test`: 134 run, 2 failures, 0 errors, 1 skipped — unchanged from baseline, confirmed after
+these runs and before committing.
