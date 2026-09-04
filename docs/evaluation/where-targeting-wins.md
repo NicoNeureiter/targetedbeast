@@ -1130,3 +1130,159 @@ matters.
 
 `mvn -o test`: 126 run, 2 failures, 1 skipped, 0 errors (123 baseline + 3 new `TreeJumpFunctionTest`
 cases, all passing) — unchanged known-failure set, confirmed before committing.
+
+---
+
+# `FelsensteinWeights` / `PartialWeights` — merge, bug fix, and a first infB read
+
+**Merge.** `beast2.8-feature-trunk` (the branch this whole document lives on) merged into
+`beast2.8-felsenstein-weights`, bringing the two edge-weight distributions under evaluation here —
+`FelsensteinWeights` (recomputes the full pruning likelihood per candidate edge, expected close to
+a Gibbs move, very expensive) and `PartialWeights` (a cheaper approximation reusing cached
+inside-partials only) — onto the same benchmark harness this document uses everywhere else.
+
+**Bug fix.** `RangeSlide` interacting with `FelsensteinWeights` had three real bugs, all fixed in
+one pass: a stale weight cache left over after a topology change (candidates scored against the
+pre-move tree), an assertion that was too strict and rejected a legitimate root candidate, and a
+double-counting bug in the "no topology change" candidate's proposal density. `testRangeSlideFelsenstein`
+(`TargetedOperatorDetailedBalanceTest`) is the correctness gate for this fix and passes.
+
+**Wiring.** `scripts/render_infb_benchmark_xml.py` gained `"felsenstein"`/`"partial"`
+`EDGE_WEIGHTS_XML` settings. Both need a plain `TreeLikelihood` rather than the `ThreadedTreeLikelihood`
+every other setting in this document uses — `FelsensteinWeights`/`PartialWeights` reach into
+`BeerLikelihoodCore`'s internals per candidate edge, and the threaded wrapper doesn't expose the
+same core instance the main likelihood evaluation used. `examples/infb_HA_141/template.xml` gained
+a `{likelihood_spec}` slot so this substitution is scoped to just these two settings without
+touching any existing, already-published setting's XML.
+
+## `partial` — thorough-tier comparison against `pca` (raw ESJD/ESS only, timing out of scope)
+
+**Scope of this round.** This comparison reports raw, per-chain mixing quantities —
+`acceptRate`, raw `esjd_rnni` (total squared RNNI jump accumulated over the whole chain, *not*
+divided by wall-clock time), and the ESS gate — against `pca`'s already-published `thorough`-tier
+numbers (`infB — 5x extended run` above, same seeds 1000-1003). **Timing, `esjdPerSec_rnni`, and
+any cost-multiplier are deliberately left out of this round**: `partial`'s wall-clock/`run.runtime`
+bookkeeping for this batch is not on solid enough footing to publish a per-second comparison (rep0
+in particular was re-run once after a contaminated first attempt, and the four reps' wall-clock
+figures were not captured with a single consistent method) — a timing round can be done as a
+follow-up once that's cleaned up. Raw ESJD and acceptance rate need none of that bookkeeping: they
+come straight from `run.opstats.tsv`'s `__CHAIN__` row.
+
+Rendered via `scripts/render_infb_benchmark_xml.py --settings partial --reps 4 --chain-length
+750000 --pre-burnin 100000 --jump-interval 20 --out-root runs/eval_fw/infb`. Each rep ran as a
+blocking, sequential `mvn -o exec:exec` invocation.
+
+### ESS gate
+
+| rep | seed | posterior.ESS | tree.height.ESS | pca posterior.ESS | pca tree.height.ESS |
+|---:|---:|---:|---:|---:|---:|
+| 0 | 1000 | 179.8 | 515.2 | 322.9 | 341.5 |
+| 1 | 1001 | 125.5 | 599.7 | 241.8 | 458.8 |
+| 2 | 1002 | 257.3 | 801.6 | 332.1 | 535.8 |
+| 3 | 1003 | 156.5 | 653.5 | 264.9 | 541.4 |
+
+All 4 `partial` cells clear `posterior.ESS`≥100 (125.5-257.3) and `tree.height.ESS`≥100
+(515.2-801.6) — same gate as every other `thorough`-tier cell in this document. `partial`'s
+`tree.height.ESS` is comfortably *higher* than `pca`'s at every seed; `posterior.ESS` is lower at
+every seed (closer to, and in rep1's case below, the ≥100 floor — still a pass, but with less
+margin than `pca`).
+
+### Raw results — chain-level (`__CHAIN__` row), per cell
+
+| setting | rep | seed | acceptRate | meanJumpGivenAccepted | esjd_rnni (raw) |
+|---|---:|---:|---:|---:|---:|
+| partial | 0 | 1000 | 0.1712 | 3.819 | 10.797 |
+| partial | 1 | 1001 | 0.1654 | 3.722 | 10.654 |
+| partial | 2 | 1002 | 0.1694 | 3.775 | 10.173 |
+| partial | 3 | 1003 | 0.1707 | 3.971 | 11.475 |
+| pca | 0 | 1000 | 0.1670 | 4.068 | not published (raw) |
+| pca | 1 | 1001 | 0.1654 | 4.282 | not published (raw) |
+| pca | 2 | 1002 | 0.1659 | 3.935 | not published (raw) |
+| pca | 3 | 1003 | 0.1639 | 4.234 | not published (raw) |
+
+`pca`'s raw `esjd_rnni` was never published (only `esjdPerSec_rnni`, and the underlying
+`run.opstats.tsv` files for those cells no longer exist on disk), so no raw-ESJD ratio or paired CI
+against `pca` can be computed this round — reporting `partial`'s own raw numbers and the two
+settings' `acceptRate`/`meanJumpGivenAccepted` side by side is as far as this data goes.
+`acceptRate` is close between the two settings at every seed (0.1654-0.1712 for `partial` vs.
+0.1639-0.1670 for `pca`); `meanJumpGivenAccepted` is slightly lower for `partial` in 3 of 4 reps
+(3.722-3.971 vs. 3.935-4.282, rep3 being the exception at 3.971 vs. 4.234). Per-operator, the
+targeted operators' observed acceptance rates in `partial` rep0 were: `targetedWilsonBalding`
+5.7%, `TargetedWide` 11.7%, `targetedWilsonBaldingFixedHeight` 11.8%, `targetedRangeSlide` 3.9%.
+
+### What this round does and doesn't show
+
+Raw ESJD and acceptance rate alone say `partial` is in the same ballpark as `pca` per proposal —
+comparable acceptance, comparable jump size, comparable raw ESJD — with `partial`'s
+`tree.height.ESS` actually higher. **This is not the metric this document otherwise gates
+decisions on** (`docs/evaluation/where-targeting-wins.md`'s headline comparisons all use
+`esjdPerSec_rnni`, precisely because raw ESJD says nothing about cost per proposal, and
+`PartialWeights` is understood to be more expensive per proposal than `PCAWeights2`). Whether
+`partial` is actually worth adopting depends on that cost, which this round explicitly does not
+report — a follow-up pass should redo the timing bookkeeping cleanly (one consistent method for
+all 4 reps' wall-clock/`run.runtime`) and publish the paired `esjdPerSec_rnni` comparison this
+document's decision rule actually needs.
+
+## `felsenstein` — partial/incomplete calibration read only
+
+**Not a comparison — calibration only, and this calibration itself did not finish.** Per this
+document's own stated caution (`FelsensteinWeights` costs roughly an order of magnitude more per
+proposal than `pca`-style settings), a single prepared calibration cell
+(`runs/eval_fw_cal/infb/felsenstein/rep0/run.xml`, `preBurnin=65000 chainLength=500000`, seed 1000)
+was launched to check acceptance rate and feasibility before committing to any full comparison. It
+was interrupted partway (reached sample 129,500/500,000 in `run.log`) and never reached
+`BenchmarkMCMC`'s `close()`, so **no `run.opstats.tsv` exists for this cell and no acceptance rate
+can be read from it** (`BenchmarkMCMC` only writes its stats file at chain completion — see
+`writeStatsFile()`/`close()` in `src/main/java/targetedbeast/benchmark/BenchmarkMCMC.java`).
+
+A second, much shorter `felsenstein` cell was rendered and run to completion instead
+(`runs/eval_fw_cal2/infb/felsenstein/rep0/run.xml`, `preBurnin=2000 chainLength=8000`, seed 1000)
+specifically so at least one real, finished `run.opstats.tsv` would exist. This is far below any
+ESS-gated tier — it exists only to read off acceptance rates, not to say anything about mixing
+quality or convergence.
+
+### Observed acceptance rates (`preBurnin=2000/chainLength=8000`, seed 1000 — 8,000 proposals only)
+
+| operator | proposals | accepts | acceptRate |
+|---|---:|---:|---:|
+| `targetedWilsonBalding` | 885 | 223 | 0.252 |
+| `targetedWilsonBaldingFixedHeight` | 924 | 289 | 0.313 |
+| `TargetedWide` | 897 | 243 | 0.271 |
+| `targetedRangeSlide` (RangeSlide) | 916 | 36 | 0.039 |
+| `__CHAIN__` (all operators) | 8001 | 1355 | 0.169 |
+
+These acceptance rates for the `Felsenstein`-weighted operators (25-31%, `targetedRangeSlide`
+aside — that operator's low acceptance rate looks like a `RangeSlide`-specific tuning issue rather
+than an edge-weighting effect, since it was also the lowest-acceptance targeted operator under
+`partial` above at 3.9%) are noticeably higher than `partial`'s equivalent operators at the same
+dataset (`targetedWilsonBalding` 5.7%, `TargetedWide` 11.7%, `targetedWilsonBaldingFixedHeight`
+11.8% — see above), consistent with the "closer to a Gibbs move" expectation for `FelsensteinWeights`,
+though this read comes from only 8,000 proposals at a burnt-in-but-otherwise-uncontrolled seed, not
+an ESS-gated chain, and should be treated as directional only.
+
+**Timing is explicitly out of scope this round** (per this round's brief) — no cost multiplier or
+wall-clock estimate is reported here. The interrupted 500,000-sample cell's `run.log` trace (129,500
+post-burn-in samples reached) is retained on disk and could support a timing readout in a follow-up
+pass; it is not used for one here.
+
+**What's still needed before any full comparison.** Neither `felsenstein` cell run here reached an
+ESS-gated `thorough`-tier chain length, and no cost-per-proposal figure was computed this round. A
+full 4-rep `felsenstein` comparison remains a real compute commitment that has not been scoped or
+approved — the next step, if wanted, is a clean, single-method timing readout on top of what's
+already on disk (the interrupted 500k-sample trace) before deciding whether to invest in a full run.
+
+## Practical takeaway (this round)
+
+Neither `partial` nor `felsenstein` has a decision-grade result yet. `partial` clears the ESS gate
+on raw mixing quantities and looks comparable to `pca` on acceptance/jump size/raw ESJD, but the
+document's actual decision metric (`esjdPerSec_rnni`) is out of scope this round, so there is no
+basis yet to say whether its cost per proposal is low enough to be worth adopting. `felsenstein`'s
+one completed (short, non-gated) calibration cell shows higher acceptance rates than `partial` on
+the same operators, consistent with the "near-Gibbs" expectation, but with no completed
+ESS-gated cell and no timing data this round, its cost/benefit remains unresolved. A follow-up pass
+with a single, consistent timing method for both settings is needed before either weighting can be
+recommended or ruled out.
+
+`mvn -o test`: 146 run, 3 failures, 1 skipped, 0 errors (`testTargWilsonBaldingMaxHeightRatio`,
+`FelsensteinWeightsTest.testMultipleRateCategories`, `Alignment2PCATest.distanceBasedEmbeddingUsesClassicalMdsGeometry`
+— unchanged known-failure set), confirmed before committing.
