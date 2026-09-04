@@ -1130,3 +1130,95 @@ matters.
 
 `mvn -o test`: 126 run, 2 failures, 1 skipped, 0 errors (123 baseline + 3 new `TreeJumpFunctionTest`
 cases, all passing) — unchanged known-failure set, confirmed before committing.
+
+---
+
+### Offset floor and an independently-tuned edgeWeightTransform (pca_grid_mid_dual)
+
+**What was built.** `pca_grid_mid_dual` extends `pca_grid_mid` (the `exponents="2 3 4 6"`,
+likelihood-reward `GridTuner` result above, +4.9%, CI excludes zero) two ways at once: (a)
+`targetWeightTransform`'s `PowerOffsetTransform` gets `offset="0.1111111111111111"` (≈1/9) instead
+of `0.0` — a fixed, non-tuned floor that mixes in 10% uniform proposal mass via
+`WeightTransform.apply()`'s `a/(1+a)` mixture (`a=1/9` → 0.1); and (b) a second, independently
+tuned `PowerOffsetTransform`+`GridTuner` (same grid, same `burnin="5000"`,
+`explorationProb="0.1"`, `<reward idref="likelihood"/>`, own id `edgeWeightTransform`, same
+`0.1111111111111111` offset) is wired onto `edgeWeightTransform`, previously always left unset
+(source-edge weights untransformed). `pca_grid_mid` itself is unchanged and is the baseline this
+section compares against, rerun at the same seeds rather than reusing old numbers, per the task's
+paired design. This section is about the result, not the design — the XMLs already existed
+(commit 16f432f) — so no smoke check is repeated here.
+
+Rendered via `scripts/render_infb_benchmark_xml.py --settings pca_grid_mid_dual pca_grid_mid
+--reps 4 --chain-length 750000 --pre-burnin 100000 --jump-interval 20 --out-root
+runs/eval7_dual/infb`, `thorough` tier, 4 reps, seeds 1000-1003 shared between the two settings at
+a given rep (paired). Each of the 8 cells ran as a blocking, sequential `mvn -o exec:exec`
+invocation, 400-441s chain time for 7 of 8 cells and one outlier at 641s (`pca_grid_mid_dual`
+rep3, evidently slowed by transient system contention rather than anything about the run itself —
+its own posterior/likelihood trajectory and final ESS look unremarkable next to the other three
+reps), ~59 minutes chain time total for all 8.
+
+#### ESS gate
+
+| setting | rep | posterior.ESS | tree.height.ESS |
+|---|---:|---:|---:|
+| pca_grid_mid_dual | 0 | 225.4 | 751.4 |
+| pca_grid_mid_dual | 1 | 245.4 | 626.8 |
+| pca_grid_mid_dual | 2 | 281.3 | 749.9 |
+| pca_grid_mid_dual | 3 | 236.4 | 618.0 |
+| pca_grid_mid | 0 | 123.3 | 367.9 |
+| pca_grid_mid | 1 | 283.1 | 462.6 |
+| pca_grid_mid | 2 | 290.2 | 546.2 |
+| pca_grid_mid | 3 | 309.4 | 506.2 |
+
+All 8 cells clear `posterior.ESS`≥100 (123.3-309.4) and `tree.height.ESS`≥100 (367.9-751.4).
+
+#### Raw results — chain-level (`__CHAIN__` row), per cell
+
+| setting | rep | seed | esjdPerSec_rnni | targetWeightTransform.leadingExponent (median) | edgeWeightTransform.leadingExponent (median) |
+|---|---:|---:|---:|---:|---:|
+| pca_grid_mid_dual | 0 | 1000 | 21867.9 | 4.0 | 3.0 |
+| pca_grid_mid_dual | 1 | 1001 | 20016.1 | 4.0 | 3.0 |
+| pca_grid_mid_dual | 2 | 1002 | 20041.1 | 3.0 | 2.0 |
+| pca_grid_mid_dual | 3 | 1003 | 21817.8 | 4.0 | 3.0 |
+| pca_grid_mid | 0 | 1000 | 21409.8 | — | — |
+| pca_grid_mid | 1 | 1001 | 23480.0 | — | — |
+| pca_grid_mid | 2 | 1002 | 23915.4 | — | — |
+| pca_grid_mid | 3 | 1003 | 20587.6 | — | — |
+
+`targetWeightTransform.leadingExponent`'s per-rep leaders (4.0, 4.0, 3.0, 4.0) exactly match
+`pca_grid_mid`'s own already-recorded leaders from the RNNI-reward section above (rep0=4.0,
+rep1=4.0, rep2=3.0, rep3=4.0) — the offset floor and the added `edgeWeightTransform` did not move
+what the target transform converges to. `edgeWeightTransform.leadingExponent` settles one grid
+step flatter in every rep (3.0, 3.0, 2.0, 3.0), i.e. its own tuner independently prefers a less
+pointy exponent for source-edge weighting than `targetWeightTransform` prefers for target-edge
+weighting on the same dataset.
+
+#### Paired analysis (pca_grid_mid_dual − pca_grid_mid), t-based 90% CI, n=4, df=3
+
+| mean diff (ESJD/s) | 90% CI | excludes zero? | relative to pca_grid_mid mean |
+|---:|---|---|---:|
+| −1412.5 | (−4506.7, 1681.7) | no | −6.3% |
+
+#### Verdict
+
+**No detectable difference.** The 90% CI includes zero, and the per-rep picture is genuinely
+mixed rather than a weak-but-consistent trend: `pca_grid_mid_dual` beats its paired
+`pca_grid_mid` rep in 2 of 4 reps (rep0: +458.1, rep3: +1230.2) and loses in the other 2 (rep1:
+−3463.9, rep2: −3874.3), with the losses noticeably larger in magnitude than the gains — hence the
+negative point estimate (−6.3%) despite an even win/loss split. This adds neither support nor a
+clear caveat to `pca_grid_mid`'s own standalone result (+4.9% over plain `PCAWeights2`, CI
+excludes zero): nothing here contradicts that result, since `pca_grid_mid` was rerun fresh at the
+same seeds and landed close to its previously-recorded numbers (21409.8-23915.4 here vs.
+22040.6-25139.5 previously — same ballpark, ordinary seed-to-seed variation).
+
+The obvious caveat applies and is worth stating plainly: `pca_grid_mid_dual` bundles two changes
+at once (the fixed 0.1-mixture offset floor, and the independently-tuned `edgeWeightTransform`),
+and this result cannot on its own attribute the (null) effect to either one individually — it only
+says that *together*, at n=4, they do not measurably help or hurt relative to `pca_grid_mid`
+alone. A follow-up isolating each change (offset floor alone, `edgeWeightTransform` alone) would
+be needed to say anything about either piece specifically, and given how close this result already
+sits to a coin flip, such a follow-up would need to budget for an effect this small being genuinely
+undetectable at 4 reps rather than assume more reps will necessarily resolve it.
+
+`mvn -o test`: 126 run, 2 failures, 0 errors, 1 skipped — unchanged from baseline, confirmed after
+these runs and before committing.
