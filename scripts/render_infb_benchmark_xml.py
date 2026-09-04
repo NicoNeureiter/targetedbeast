@@ -119,6 +119,20 @@ GRID_MAX_EXPONENT_LOW = max(GRID_EXPONENTS_LOW)
 GRID_EXPONENTS_MID = [2, 3, 4, 6]
 GRID_MAX_EXPONENT_MID = max(GRID_EXPONENTS_MID)
 
+# PartialWeights.getTargetWeightsInteger returns softmax(log-likelihoods), already clipped so the
+# top two candidates' log-gap is at most 2.0 (clipMaxToSecondMaxDiff) - unlike PCAWeights2's raw,
+# fairly flat distance-based weights, this is *already* highly peaked at the operators' hardcoded
+# default exponent of 2.0. So unlike PCAWeights2's grids, which only ever explored *sharpening*
+# beyond the default, this needs to explore *flattening* below it. A first calibration pass at
+# [0.25, 0.5, 1, 2] pinned at the floor (0.25) with reward strictly decreasing across all four
+# points (0.151, 0.147, 0.120, 0.095). WeightTransform's own hardcoded LOWER_BOUND for the exponent
+# coefficient is 0.1 (WeightTransform.LOWER_BOUND[EXPONENT]), so this grid is shifted down as far
+# as that hard floor allows, spanning [0.1, 0.25] to bracket an interior optimum below the first
+# pass's floor - if this still pins at 0.1, that's the transform's own hard limit, not a grid that
+# needs to be wider. See docs/evaluation/where-targeting-wins.md for the calibration this came from.
+GRID_EXPONENTS_PARTIAL = [0.1, 0.15, 0.2, 0.25]
+GRID_MAX_EXPONENT_PARTIAL = max(GRID_EXPONENTS_PARTIAL)
+
 # WeightTransform.apply() mixes in a uniform distribution with weight a/(1+a), a being the
 # `offset` coefficient (see WeightTransform's Input doc) - solving a/(1+a) = 0.1 for a. Applied as
 # a fixed, non-gridded floor (GridTuner only ever tunes the exponent - see its class doc) so every
@@ -242,6 +256,23 @@ WEIGHT_TRANSFORM_XML = {
         '<targetWeightTransform id="targetWeightTransform"'
         ' spec="targetedbeast.weighttransform.PowerOffsetTransform"'
         ' exponent="2.0" offset="0.0" optimise="false"/>',
+        ' targetWeightTransform="@targetWeightTransform"',
+        '<log idref="targetWeightTransform"/>',
+    ),
+    # PartialWeights version of "grid_mid": same simple single-GridTuner structure (one
+    # PowerOffsetTransform on targetWeightTransform only, offset="0.0", edgeWeightTransform left
+    # unset), but over GRID_EXPONENTS_PARTIAL instead - see that constant's comment for why this
+    # grid explores flattening rather than sharpening.
+    "partial_grid": (
+        '<targetWeightTransform id="targetWeightTransform"'
+        ' spec="targetedbeast.weighttransform.PowerOffsetTransform"'
+        f' exponent="{GRID_MAX_EXPONENT_PARTIAL}" offset="0.0" maxExponent="{GRID_MAX_EXPONENT_PARTIAL}">\n'
+        '            <tuner spec="targetedbeast.weighttransform.GridTuner"'
+        f' exponents="{" ".join(str(b) for b in GRID_EXPONENTS_PARTIAL)}"'
+        f' explorationProb="0.1" burnin="{GRID_BURNIN}">\n'
+        '                <reward idref="likelihood"/>\n'
+        '            </tuner>\n'
+        '        </targetWeightTransform>',
         ' targetWeightTransform="@targetWeightTransform"',
         '<log idref="targetWeightTransform"/>',
     ),

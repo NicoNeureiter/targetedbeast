@@ -1457,3 +1457,111 @@ whether this specific combination is worth keeping: it is not.
 
 `mvn -o test`: 134 run, 2 failures, 0 errors, 1 skipped — unchanged from baseline, confirmed after
 these runs and before committing.
+
+### A flattening grid for `PartialWeights` (`partial_grid`), CPU-time methodology
+
+**The merge.** `beast2.8-feature-trunk`'s weight-transform work (`RatioGridTuner`, the offset-floor
+feature used by `pca_grid_mid_dual`/`pca_grid_mid_ratio` above) was merged into this branch at
+commit `7264989`; `mvn -o test` confirmed the same 154-run/3-known-failure/0-error/1-skipped
+baseline immediately after.
+
+**Grid selection.** Every `pca_grid_mid*` grid above (`[2, 3, 4, 6]`) explores *sharpening* a
+comparatively flat, raw-distance-based target-weight distribution. `PartialWeights` is a different
+starting point: `getTargetWeightsInteger` already returns a softmax over log-likelihoods, clipped
+so the top two candidates' log-gap is at most 2.0 (`clipMaxToSecondMaxDiff`) — i.e. already sharply
+peaked, at the operators' hardcoded default exponent of 2.0. A grid needs to explore *flattening*
+here, not sharpening. A first calibration pass at `[0.25, 0.5, 1, 2]` pinned at the floor (0.25),
+with reward strictly decreasing across all four points (0.151, 0.147, 0.120, 0.095) — the true
+optimum, if any, sits below 0.25. `WeightTransform`'s own hardcoded lower bound on the exponent
+coefficient is 0.1 (`WeightTransform.LOWER_BOUND[EXPONENT]`), so the grid was shifted down as far as
+that hard floor allows: `GRID_EXPONENTS_PARTIAL = [0.1, 0.15, 0.2, 0.25]`. This second pass
+bracketed a clean interior leader at 0.2, not edge-pinned — the working grid used below.
+`partial_grid` follows `pca_grid_mid`'s exact simple structure: a single `PowerOffsetTransform` +
+`GridTuner` on `targetWeightTransform` only (`offset="0.0"`), `edgeWeightTransform` left unset —
+not the dual/ratio-coupled designs above, which didn't help on `PCAWeights2` either.
+
+**CPU-time methodology (this section only).** Every earlier `thorough`-tier comparison in this
+document timed cells by wall-clock (`SECONDS=0 ... echo $SECONDS`, per the Snakefile). This section
+instead measures **CPU time (user+sys)** via `/usr/bin/time -l mvn -o exec:exec ...`, summing the
+`user` and `sys` fields from its trailer into each `run.runtime`. This is a deliberate, one-off
+deviation: wall-clock timing in this project's `thorough`-tier runs (25-70 minutes each) has been
+contaminated more than once by the host being paused or asleep mid-run, and CPU time is immune to
+that. This is safe to compare like-for-like *only* because `partial`/`partial_grid` both use a
+single, non-threaded `TreeLikelihood` (via the `{likelihood_spec}` template slot) — with nothing
+else contending for the core, CPU time ≈ wall-clock time here. This does **not** generalize to the
+`pca`-family sections above, which use `ThreadedTreeLikelihood`; their timings are wall-clock and
+not on a comparable basis to this section's numbers.
+
+Rendered via `scripts/render_infb_benchmark_xml.py --settings partial partial_grid --reps 4
+--chain-length 750000 --pre-burnin 100000 --jump-interval 20 --out-root
+runs/eval_pw_grid/infb`, `thorough` tier, 4 reps, seeds 1000-1003 (paired, shared per rep between
+the two settings). All 8 cells were freshly re-run this round (no reuse of `partial`'s earlier raw
+numbers from the calibration section above) as blocking, sequential `mvn -o exec:exec` invocations,
+1219-1380s CPU time each (~20-23 minutes), ~2h47m CPU time total for all 8.
+
+#### ESS gate
+
+| setting | rep | posterior.ESS | tree.height.ESS |
+|---|---:|---:|---:|
+| partial | 0 | 253.1 | 830.1 |
+| partial | 1 | 163.9 | 466.8 |
+| partial | 2 | 145.4 | 644.6 |
+| partial | 3 | 207.7 | 493.4 |
+| partial_grid | 0 | 211.1 | 663.6 |
+| partial_grid | 1 | 170.7 | 929.1 |
+| partial_grid | 2 | 246.6 | 813.6 |
+| partial_grid | 3 | 138.0 | 665.6 |
+
+All 8 cells clear `posterior.ESS`≥100 (138.0-253.1) and `tree.height.ESS`≥100 (466.8-929.1).
+
+#### Raw results — chain-level (`__CHAIN__` row), per cell
+
+| setting | rep | seed | runtime (CPU s) | esjdPerSec_rnni | targetWeightTransform.leadingExponent (median) |
+|---|---:|---:|---:|---:|---:|
+| partial | 0 | 1000 | 1379.57 | 6771.1 | — |
+| partial | 1 | 1001 | 1242.50 | 6757.6 | — |
+| partial | 2 | 1002 | 1276.65 | 6278.4 | — |
+| partial | 3 | 1003 | 1242.62 | 6521.2 | — |
+| partial_grid | 0 | 1000 | 1332.13 | 6679.9 | 0.2 |
+| partial_grid | 1 | 1001 | 1232.46 | 7461.3 | 0.25 |
+| partial_grid | 2 | 1002 | 1219.39 | 7690.6 | 0.15 |
+| partial_grid | 3 | 1003 | 1251.69 | 7534.9 | 0.2 |
+
+`targetWeightTransform.leadingExponent`'s per-rep medians (0.2, 0.25, 0.15, 0.2) land at or next to
+the calibration's 0.2 leader in every rep rather than pinning at either grid edge (0.1 or 0.25) —
+consistent with, though not identical to, the single-point calibration result. Per-grid-point
+reward means (`targetWeightTransform.reward.<exponent>.mean`) confirm this reading is not an
+artifact of a poorly-mixed tuner: each rep's own argmax over its four grid points matches its
+reported median exponent.
+
+#### Paired analysis (partial_grid − partial), t-based 90% CI, n=4, df=3
+
+| mean diff (ESJD/s) | 90% CI | excludes zero? | relative to partial mean |
+|---:|---|---|---:|
+| +759.6 | (+10.2, +1509.0) | yes (barely) | +11.5% |
+
+#### Verdict
+
+**A real but marginal win.** The 90% CI excludes zero, but only just — its lower bound (+10.2) sits
+close enough to zero that a slightly different set of seeds could plausibly have put it on the other
+side. The per-rep picture is a clear majority rather than a clean sweep: `partial_grid` beats its
+paired `partial` rep in 3 of 4 reps (rep1: +703.7, rep2: +1412.2, rep3: +1013.7) and loses narrowly
+in the fourth (rep0: −91.2). Unlike `pca_grid_mid_ratio`'s clean, one-sided loss above, or
+`pca_grid_mid_dual`'s genuinely mixed null result, this sits in between: a real majority of reps
+improve, by amounts (+700 to +1400 ESJD/s, roughly 10-22% of `partial`'s own per-rep value) that
+are not trivial, and the one loss is small by comparison (−91.2, about 1.3%) — so the point estimate
+(+11.5%) is not being driven by one outlier rep.
+
+The honest caveat: at n=4 this is a thin basis for a CI whose lower bound is +10.2 out of a mean of
++759.6 — a small perturbation to any one rep's number would move the interval's edge across zero.
+This reads as directional evidence that flattening `PartialWeights`' already-sharp softmax toward
+its calibrated ~0.2 exponent helps mixing efficiency on infB, at essentially the same wall-clock
+cost per proposal (no dual/ratio machinery, no threading changes, no `edgeWeightTransform`) — a
+lower-risk, lower-complexity change than the `pca`-side experiments above, and the sign and
+magnitude are consistent enough across reps to be worth adopting provisionally, while treating the
+exact effect size as uncertain pending more reps if a tighter estimate is ever needed.
+
+`mvn -o test`: 154 run, 3 failures, 0 errors, 1 skipped — unchanged from the merge commit's own
+baseline (`testTargWilsonBaldingMaxHeightRatio`, `FelsensteinWeightsTest.testMultipleRateCategories`,
+`Alignment2PCATest.distanceBasedEmbeddingUsesClassicalMdsGeometry`), confirmed after these runs and
+before committing.
