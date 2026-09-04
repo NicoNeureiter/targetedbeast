@@ -1060,3 +1060,73 @@ interface exposes for free).
 
 `mvn -o test`: 123 run, 2 failures, 1 skipped, 0 errors — unchanged from baseline, confirmed after
 these runs and before committing.
+
+### Resolving the disagreement: `GridTuner` on an RNNI reward (`pca_grid_mid_rnni`)
+
+Built `targetedbeast.weighttransform.TreeJumpFunction`, the `Function` the previous section called
+for: wraps a `Tree` and a `TreeMetric`, snapshotting the tree (`.copy()`) on the first call of each
+before/after pair and returning the metric distance from that snapshot on the second. Wired as
+`GridTuner`'s `<reward>` in place of `<reward idref="likelihood"/>`, this makes `GridTuner`'s
+existing before/after squared-difference reward mechanism compute squared RNNI-distance jump
+instead of squared likelihood jump, with zero changes to `GridTuner` itself. `pca_grid_mid_rnni`
+reruns `pca_grid_mid`'s exact grid (`exponents="2 3 4 6"`, `explorationProb="0.1"`, same burnin) with
+only the reward swapped, `@rnni` pointed at the same `RNNIMetric` instance the benchmark's own
+logging already uses.
+
+`thorough` tier, 4 reps, seeds 1000-1003 (paired with `pca_grid_mid`'s reps). ESS gate:
+
+| rep | seed | posterior.ESS | tree.height.ESS |
+|---:|---:|---:|---:|
+| 0 | 1000 | 305.6 | 367.8 |
+| 1 | 1001 | 215.5 | 522.6 |
+| 2 | 1002 | 204.8 | 464.4 |
+| 3 | 1003 | 218.6 | 313.2 |
+
+All 4 reps clear both gates.
+
+| rep | seed | leadingExponent (RNNI reward) | leadingExponent (likelihood reward, `pca_grid_mid`) | esjdPerSec_rnni (RNNI reward) | esjdPerSec_rnni (likelihood reward) |
+|---:|---:|---:|---:|---:|---:|
+| 0 | 1000 | 2.0 | 4.0 | 19753.1 | 22040.6 |
+| 1 | 1001 | 4.0 | 4.0 | 21506.6 | 22712.0 |
+| 2 | 1002 | 4.0 | 3.0 | 19351.6 | 22595.7 |
+| 3 | 1003 | 4.0 | 4.0 | 20047.1 | 25139.5 |
+
+Paired difference (RNNI-reward minus likelihood-reward), t-based 90% CI (n=4, df=3, t≈2.353):
+mean −2957.3, CI (−4897.5, −1017.1) — **excludes zero, in the negative direction**. The
+likelihood-reward `GridTuner` wins on the actual `esjdPerSec_rnni` benchmark metric in all 4 of 4
+reps.
+
+### This answers the open question, and not the way either candidate mechanism predicted
+
+Two things were live going in: would an RNNI-based reward pull `GridTuner`'s leader down toward
+exponent 2 (matching `AdaptableOperatorSampler`'s sampler-weight leader), and would it change
+whether `GridTuner`'s chosen exponent actually performs better on `esjdPerSec_rnni`. Neither
+happened the way the reward-proxy hypothesis predicted:
+
+- **The leader barely moved.** 3 of 4 reps still land on exponent 4 under the RNNI reward — the
+  same leader `pca_grid_mid`'s likelihood reward picked in 3 of 4 reps. Making the reward match the
+  metric we actually care about did not push `GridTuner` toward `AdaptableOperatorSampler`'s
+  exponent-2 answer.
+- **Performance got worse, not better or unchanged.** Reward-proxy mismatch would predict the
+  likelihood-reward leader looks good on its own reward but mediocre on RNNI-space mixing — instead
+  the likelihood-reward run *beats* the RNNI-reward run on `esjdPerSec_rnni` itself, in every rep,
+  with a CI that excludes zero.
+
+So the earlier cross-check's disagreement is not explained by "wrong reward signal." The likelier
+explanation is the second confound that section flagged: `GridTuner` explores online with a moving
+leader and forced exploration, while the `AdaptableOperatorSampler` cross-check used four *pinned*
+non-adaptive candidates — the disagreement traces to the tuning mechanism/exploration dynamics, not
+to which jump measure the reward is built from. A plausible mechanical reason performance dropped
+under the RNNI reward specifically: RNNI distance is a coarser, more discrete signal per proposal
+than a continuous likelihood delta (many proposals move the tree by the same small number of NNI
+steps), so the reward `GridTuner` optimizes against is noisier per-observation even though it is
+computed from the metric that ultimately matters — online tuning against a noisier reward can
+converge less efficiently, independent of where the "true" optimum sits.
+
+**Practical takeaway**: keep `GridTuner` on the likelihood reward. It is both cheaper (no
+per-proposal tree copy or `TreeMetric` call) and, on this evidence, at least as good — here strictly
+better — at finding an exponent that performs well on the RNNI-space benchmark metric that actually
+matters.
+
+`mvn -o test`: 126 run, 2 failures, 1 skipped, 0 errors (123 baseline + 3 new `TreeJumpFunctionTest`
+cases, all passing) — unchanged known-failure set, confirmed before committing.

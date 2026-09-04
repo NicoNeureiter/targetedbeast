@@ -29,6 +29,7 @@
         <provider classname="targetedbeast.weighttransform.GridTuner"/>
         <provider classname="targetedbeast.weighttransform.PowerOffsetTransform"/>
         <provider classname="targetedbeast.weighttransform.ExpOffsetTransform"/>
+        <provider classname="targetedbeast.weighttransform.TreeJumpFunction"/>
 
         <provider classname="targetedbeast.init.ensureNoZeroEdgeLength"/>
 

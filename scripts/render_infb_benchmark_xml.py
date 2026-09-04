@@ -37,6 +37,10 @@ EDGE_WEIGHTS_XML = {
     # indistinguishable from plain "pca" if the transform/rendering pipeline is correct.
     "pca_fixed2": '<distribution id="edgeweights" spec="targetedbeast.edgeweights.PCAWeights2" '
                   'tree="@tree" maxWeight="20" data="@infB_HA" dimension="10"/>',
+    # Same PCAWeights2/grid as "pca_grid_mid", but GridTuner's reward is squared RNNI-distance
+    # jump (TreeJumpFunction) instead of squared likelihood jump - see "grid_mid_rnni" below.
+    "pca_grid_mid_rnni": '<distribution id="edgeweights" spec="targetedbeast.edgeweights.PCAWeights2" '
+                          'tree="@tree" maxWeight="20" data="@infB_HA" dimension="10"/>',
 }
 
 # Grid points and burnin below mirror scripts/generate_xmls.py's _grid_transform (the lassaL
@@ -119,6 +123,25 @@ WEIGHT_TRANSFORM_XML = {
         ' targetWeightTransform="@targetWeightTransform"',
         '<log idref="targetWeightTransform"/>',
     ),
+    # Same grid/burnin/explorationProb as "grid_mid", but the reward is squared RNNI-distance jump
+    # (TreeJumpFunction, targetedbeast.weighttransform) rather than squared likelihood jump. Reuses
+    # the "rnni" RNNIMetric instance render_run_xml() already declares before <state> for jump
+    # logging - render_run_xml() inserts that <metric id="rnni".../> ahead of this element in
+    # document order, so the idref resolves.
+    "grid_mid_rnni": (
+        '<targetWeightTransform id="targetWeightTransform"'
+        ' spec="targetedbeast.weighttransform.PowerOffsetTransform"'
+        f' exponent="2.0" offset="0.0" maxExponent="{GRID_MAX_EXPONENT_MID}.0">\n'
+        '            <tuner spec="targetedbeast.weighttransform.GridTuner"'
+        f' exponents="{" ".join(str(b) for b in GRID_EXPONENTS_MID)}"'
+        f' explorationProb="0.1" burnin="{GRID_BURNIN}">\n'
+        '                <reward spec="targetedbeast.weighttransform.TreeJumpFunction"'
+        ' tree="@tree" treeMetric="@rnni"/>\n'
+        '            </tuner>\n'
+        '        </targetWeightTransform>',
+        ' targetWeightTransform="@targetWeightTransform"',
+        '<log idref="targetWeightTransform"/>',
+    ),
     # Reference point (see "pca_fixed2" above): no tuner, pinned at the operators' own hardcoded
     # default. optimise="false" means startProposal()/optimize() are no-ops - the transform is
     # mathematically w^2 with zero offset on every proposal, identical to the no-transform path.
@@ -140,6 +163,7 @@ WEIGHT_TRANSFORM_FOR_SETTING = {
     "pca_grid_low": "grid_low",
     "pca_grid_mid": "grid_mid",
     "pca_fixed2": "fixed2",
+    "pca_grid_mid_rnni": "grid_mid_rnni",
 }
 
 

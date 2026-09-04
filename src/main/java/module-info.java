@@ -3,6 +3,7 @@ open module targetedbeast {
     requires beast.base;
     // targetedbeast.annotator.CladeAnnotator, targetedbeast.alignment.ConsensusAlignment
     requires beast.fx;
+    requires beast.labs;                 // RNNIMetric in TreeJumpFunctionTest
 
     requires java.desktop;               // JOptionPane in targetedbeast.annotator
     requires colt;                       // SVD in targetedbeast.util.Alignment2PCA
@@ -65,5 +66,6 @@ open module targetedbeast {
         targetedbeast.weighttransform.ExpOffsetTransform,
         targetedbeast.weighttransform.GridTuner,
         targetedbeast.weighttransform.PowerOffsetTransform,
-        targetedbeast.weighttransform.SpsaTuner;
+        targetedbeast.weighttransform.SpsaTuner,
+        targetedbeast.weighttransform.TreeJumpFunction;
 }
