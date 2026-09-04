@@ -1,6 +1,9 @@
 <package name='TargetedBeast' version='1.1.0'>
   <depends on='BEAST.base' atleast='2.8.0'/>
   <depends on='BEAST.app' atleast='2.8.0'/>
+  <depends on='BEASTlabs'/>
+  <depends on='BDMM-Prime'/>
+  <depends on='feast' atleast='11.0.1'/>
 
 
       <service type="beast.base.core.BEASTInterface">
@@ -21,9 +24,12 @@
         <provider classname="targetedbeast.edgeweights.CombinedEdgeWeights"/>
 
         <provider classname="targetedbeast.weighttransform.SpsaTuner"/>
+
+        <provider classname="targetedbeast.benchmark.BenchmarkMCMC"/>
         <provider classname="targetedbeast.weighttransform.GridTuner"/>
         <provider classname="targetedbeast.weighttransform.PowerOffsetTransform"/>
         <provider classname="targetedbeast.weighttransform.ExpOffsetTransform"/>
+        <provider classname="targetedbeast.weighttransform.TreeJumpFunction"/>
 
         <provider classname="targetedbeast.init.ensureNoZeroEdgeLength"/>
 
@@ -54,6 +60,12 @@
         <provider classname="targetedbeast.operators.NodeRandomizer2"/>
         <provider classname="targetedbeast.operators.NodeRandomizer22"/>
         <provider classname="targetedbeast.util.Alignment2PCA"/>
+
+        <!-- lib/feast.v10.6.0.jar is bundled for infB/lassaL example data loading;
+             registered here (not as an installed 'feast' package) since only these
+             two classes are used. -->
+        <provider classname="feast.fileio.AlignmentFromFasta"/>
+        <provider classname="feast.fileio.TraitSetFromTaxonSet"/>
     </service>
 
   <!-- targetedbeast.altoperators.* is unfinished scratch code (LengthConsistentUpDown.scaleTree
