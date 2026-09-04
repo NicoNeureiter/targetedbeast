@@ -734,6 +734,27 @@ public class TargetedOperatorDetailedBalanceTest extends DetailedBalanceTest<Tre
     }
 
     /**
+     * RangeSlide's weighted step calls getTargetWeights twice per proposal: once before the
+     * topology change, once after (for the reverse-move term). FelsensteinWeights walks live tree
+     * pointers at getTargetWeights time, so it needs its "without node" cache refreshed against
+     * the post-move tree for the second call - unlike getPCAWeights above, which doesn't care.
+     */
+    @Test
+    public void testRangeSlideFelsenstein() throws Exception {
+        testDetailedBalance(new TreeTrial(tree -> {
+            RangeSlide operator = new RangeSlide();
+            operator.initByName(
+                    "tree", tree,
+                    "weight", 1.0,
+                    "edgeWeights", getLikelihoodWeights(tree),
+                    "useWeightedStep", true,
+                    "size", 0.25,
+                    "optimise", false);
+            return operator;
+        }));
+    }
+
+    /**
      * RangeSlide uses its target weights as they come rather than squaring them, so a
      * transform here replaces an identity rather than an exponent of 2.
      */

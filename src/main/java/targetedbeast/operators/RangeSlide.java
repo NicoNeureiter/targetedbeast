@@ -420,9 +420,25 @@ public class RangeSlide extends TargetedWeightOperator {
 		if (logHastingsRatio == Double.NEGATIVE_INFINITY) {
 			return logHastingsRatio;
 		}
-		
-		// calculate the distance of the previous edge without node i, prior to updating
-		// everything
+
+		// Recompute the "without node i" cache against the moved tree T': edgeWeights
+		// implementations that look up cached per-node values (ConstantWeights, PCAWeights2) don't
+		// need this, but ones that walk live tree pointers at getTargetWeights time
+		// (FelsensteinWeights) do - its outsidePartials/partialsWithoutNode were computed relative
+		// to i's old position, which is now stale after the topology change above. Mirrors
+		// TargetedWilsonBalding's reverseAncestors/second updateByOperatorWithoutNode call.
+		List<Integer> newAncestors = new ArrayList<>();
+		Node newAncestor = i.getParent();
+		while (newAncestor != null) {
+			if (newTargets.containsKey(newAncestor)) {
+				newAncestors.add(newAncestor.getNr());
+			}
+			newAncestor = newAncestor.getParent();
+		}
+		edgeWeights.prestore();
+		edgeWeights.updateByOperatorWithoutNode(i.getNr(), newAncestors);
+
+		// calculate the distance of the previous edge without node i
 		k = 0;
 		distance = applyTargetTransform(
 				edgeWeights.getTargetWeights(i.getNr(), new ArrayList<>(newTargets.keySet())));

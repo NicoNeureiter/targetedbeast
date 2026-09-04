@@ -718,10 +718,10 @@ public class FelsensteinWeights extends Distribution implements EdgeWeights {
 		double[] weights = new double[toNodeNrs.size()];
 		for (int k = 0; k < toNodeNrs.size(); k++) {
 			int toNodeNr = toNodeNrs.get(k);
-            Node toNode = treeInput.get().getNode(toNodeNr);
-            
+            Node toNode = resolveScoringNode(treeInput.get().getNode(toNodeNr), fromNode);
+
             // Use partialsWithoutNode (excludes fromNodeNr's contribution)
-			double[] toPartials = getPartialsWithoutNode(toNodeNr);
+			double[] toPartials = getPartialsWithoutNode(toNode.getNr());
 			double newHeight = getToHeightWithoutNode(toNode, fromNode);
 
 			// Compute the full proposed tree log-likelihood
@@ -747,10 +747,10 @@ public class FelsensteinWeights extends Distribution implements EdgeWeights {
 		double[] weights = new double[toNodeNrs.size()];
 		for (int k = 0; k < toNodeNrs.size(); k++) {
 			int toNodeNr = toNodeNrs.get(k);
-            Node toNode = treeInput.get().getNode(toNodeNr);
-            
+            Node toNode = resolveScoringNode(treeInput.get().getNode(toNodeNr), fromNode);
+
             // Use partialsWithoutNode (excludes fromNodeNr's contribution)
-			double[] toPartials = getPartialsWithoutNode(toNodeNr);
+			double[] toPartials = getPartialsWithoutNode(toNode.getNr());
 
 			// Compute the full proposed tree log-likelihood
 			double logLikelihood = computeProposedTreeLogLikelihood(fromNode, toNode, fromPartials, toPartials, newHeight);
@@ -764,6 +764,22 @@ public class FelsensteinWeights extends Distribution implements EdgeWeights {
 
         // System.out.println(Arrays.toString(p));
         return p;
+	}
+
+	/**
+	 * Candidates equal to fromNode's own current parent p are ill-defined as attachment points:
+	 * p becomes unary (transparent) once fromNode is pruned, so partialsWithoutNode[p] is never
+	 * computed and getPartialsWithoutNode(p) would silently fall back to p's own real partials -
+	 * which already include fromNode, double-counting its data. Score this candidate as p's real
+	 * other child instead: attaching fromNode "above p" when p already is fromNode's parent
+	 * changes nothing but height, so it is exactly attaching fromNode above that other child.
+	 */
+	private Node resolveScoringNode(Node toNode, Node fromNode) {
+		Node parent = fromNode.getParent();
+		if (toNode != parent) {
+			return toNode;
+		}
+		return parent.getLeft() == fromNode ? parent.getRight() : parent.getLeft();
 	}
 
     double[] clipMaxToSecondMaxRatio(double[] weights, double maxRatio) {
@@ -1010,7 +1026,9 @@ public class FelsensteinWeights extends Distribution implements EdgeWeights {
         assert toHeight > 0;
         assert toHeight > toNode.getHeight();
         assert toHeight > fromNode.getHeight();
-        assert !toNode.isRoot();
+        // toNode.isRoot() is a legitimate candidate (attach above the current root, creating a
+        // new one) - handled correctly below via the grandparent == null branch, since
+        // getEffectiveParent(toNode, ...) is null whenever toNode has no real parent.
 
 		// Step 1: Compute partials at the hypothetical parent from both children
 		calculateTransitionMatrix(fromNode, toHeight, _fromMatrix);
