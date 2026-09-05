@@ -1157,6 +1157,15 @@ touching any existing, already-published setting's XML.
 
 ## `partial` — thorough-tier comparison against `pca` (raw ESJD/ESS only, timing out of scope)
 
+> **INVALIDATED — regenerate before citing or acting on these numbers.** Every cell below ran with a
+> `PartialWeights` bug that broke detailed balance, fixed in `df93fe8`. `RangeSlide` offers the source
+> node's own parent `p` as a target candidate; `getPartialsWithoutNode(p)` silently fell back to `p`'s
+> real partials, which still include the moving node, so that candidate was scored on double-counted
+> data. `examples/infb_HA_141/template.xml` runs `targetedRangeSlide` with `useWeightedStep="true"`
+> and `weight="5"`, so a large share of proposals in every run below used a kernel that did not
+> preserve detailed balance. `FelsensteinWeights` received the equivalent guard earlier (`3517f9a`),
+> so the `felsenstein` section is unaffected, as are all `PCAWeights2`-family results.
+
 **Scope of this round.** This comparison reports raw, per-chain mixing quantities —
 `acceptRate`, raw `esjd_rnni` (total squared RNNI jump accumulated over the whole chain, *not*
 divided by wall-clock time), and the ESS gate — against `pca`'s already-published `thorough`-tier
@@ -1272,6 +1281,10 @@ approved — the next step, if wanted, is a clean, single-method timing readout 
 already on disk (the interrupted 500k-sample trace) before deciding whether to invest in a full run.
 
 ## Practical takeaway (this round)
+
+> **The `partial` half of this takeaway is INVALIDATED** by the detailed-balance bug described under
+> "`partial` — thorough-tier comparison against `pca`" above (fixed in `df93fe8`). The `felsenstein`
+> observations are unaffected.
 
 Neither `partial` nor `felsenstein` has a decision-grade result yet. `partial` clears the ESS gate
 on raw mixing quantities and looks comparable to `pca` on acceptance/jump size/raw ESJD, but the
@@ -1459,6 +1472,12 @@ whether this specific combination is worth keeping: it is not.
 these runs and before committing.
 
 ### A flattening grid for `PartialWeights` (`partial_grid`), CPU-time methodology
+
+> **INVALIDATED — regenerate before citing or acting on these numbers.** Same `PartialWeights`
+> detailed-balance bug as the `partial` section above, fixed in `df93fe8`. Both `partial_grid` and the
+> `partial` baseline it is compared against ran on the broken kernel, so the paired +11.5% result
+> below carries no weight. The grid-selection reasoning and the CPU-time methodology note remain
+> valid and are worth reusing when this is rerun.
 
 **The merge.** `beast2.8-feature-trunk`'s weight-transform work (`RatioGridTuner`, the offset-floor
 feature used by `pca_grid_mid_dual`/`pca_grid_mid_ratio` above) was merged into this branch at
