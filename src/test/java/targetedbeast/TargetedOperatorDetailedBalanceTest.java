@@ -765,6 +765,28 @@ public class TargetedOperatorDetailedBalanceTest extends DetailedBalanceTest<Tre
     }
 
     /**
+     * PartialWeights is the one weight function that lets a candidate target equal fromNode's
+     * own parent p (RangeSlide's targets can include "extend p's own edge"), which is exactly
+     * the ill-defined case PartialWeights.resolveScoringNode exists for: p becomes unary once
+     * fromNode is pruned, so getPartialsWithoutNode(p) silently fell back to p's real (stale)
+     * partials that still include fromNode's own contribution.
+     */
+    @Test
+    public void testRangeSlidePartialWeighted() throws Exception {
+        testDetailedBalance(new TreeTrial(tree -> {
+            RangeSlide operator = new RangeSlide();
+            operator.initByName(
+                    "tree", tree,
+                    "weight", 1.0,
+                    "edgeWeights", getPartialWeights(tree),
+                    "useWeightedStep", true,
+                    "size", 0.25,
+                    "optimise", false);
+            return operator;
+        }));
+    }
+
+    /**
      * RangeSlide uses its target weights as they come rather than squaring them, so a
      * transform here replaces an identity rather than an exponent of 2.
      */
