@@ -15,8 +15,47 @@ import argparse
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 TEMPLATE_PATH = PROJECT_ROOT / "examples" / "infb_HA_141" / "template.xml"
 
+# Training data for the "learned" setting below: posterior tree/log pairs from the already-run,
+# ESS-gated thorough-tier `pca_grid_mid` comparison (runs/eval6/infb/pca_grid_mid/rep{0..3}),
+# reused as-is rather than generating a fresh posterior sample. Both trainingTreeFile and
+# trainingLogFile take multiple entries in XML (one <trainingTreeFile>/<trainingLogFile> element
+# per rep, combined). Burnin/thin are both left at the training-side minimum (0/1) because these
+# posterior samples already start strictly after BenchmarkMCMC's own preBurnin (100,000 states).
+_LEARNED_TRAINING_RUN_DIR = (
+    "/Users/nneureiter/Projects/BEAST3/targetedbeast/runs/eval6/infb/pca_grid_mid"
+)
+_LEARNED_TRAINING_REPS = [0, 1, 2, 3]
+_LEARNED_TRAINING_TREE_FILES = '\n        '.join(
+    f'<trainingTreeFile>{_LEARNED_TRAINING_RUN_DIR}/rep{r}/run.trees</trainingTreeFile>'
+    for r in _LEARNED_TRAINING_REPS
+)
+_LEARNED_TRAINING_LOG_FILES = '\n        '.join(
+    f'<trainingLogFile>{_LEARNED_TRAINING_RUN_DIR}/rep{r}/run.log</trainingLogFile>'
+    for r in _LEARNED_TRAINING_REPS
+)
+# Where the fitted model is cached: LearnedWeights trains once (first XML parse that hits this
+# path missing) and then loads the cached fit on every subsequent parse (each benchmark rep),
+# so training only happens once regardless of --reps.
+LEARNED_WEIGHTS_FILE = (
+    "/Users/nneureiter/Projects/BEAST3/targetedbeast/.claude/worktrees/agent-learned-weights"
+    "/runs/learned_fit/infb_learned.weights.tsv"
+)
+
 EDGE_WEIGHTS_XML = {
     "constant": '<distribution id="edgeweights" spec="targetedbeast.edgeweights.ConstantWeights" tree="@tree"/>',
+    # Offline-trained LearnedWeights: trains a Brownian-surrogate embedding from the pca_grid_mid
+    # posterior samples above (dimension=10 to match "pca"'s PCAWeights2 dimension), then caches
+    # to LEARNED_WEIGHTS_FILE. Modest optimizer budget (not a hyperparameter search) - the goal is
+    # a working trained artifact for a first thorough-tier comparison, not the best possible fit.
+    "learned": ('<distribution id="edgeweights" spec="targetedbeast.edgeweights.LearnedWeights" '
+                'tree="@tree" data="@infB_HA" likelihood="@treeLikelihood" maxWeight="20" '
+                'dimension="10" nTrainingTrees="3000" maxIterations="3000" learningRate="0.02" '
+                'pcaRegularizationWeight="1e-3" slopeRegularizationWeight="1e-3" miniBatchSize="300" '
+                'useLogSlopeParameterization="true" trainingTreeBurninPercentage="0" '
+                f'trainingTreeThinInterval="1" trainedWeightsFile="{LEARNED_WEIGHTS_FILE}">\n'
+                f'        {_LEARNED_TRAINING_TREE_FILES}\n'
+                f'        {_LEARNED_TRAINING_LOG_FILES}\n'
+                '        </distribution>'),
     "parsimony": '<distribution id="edgeweights" spec="targetedbeast.edgeweights.ParsimonyWeights2" '
                  'tree="@tree" maxWeight="20" data="@infB_HA"/>',
     "pca": '<distribution id="edgeweights" spec="targetedbeast.edgeweights.PCAWeights2" '
@@ -219,6 +258,7 @@ WEIGHT_TRANSFORM_FOR_SETTING = {
     "constant": "none",
     "parsimony": "none",
     "pca": "none",
+    "learned": "none",
     "pca_grid": "grid",
     "pca_grid_low": "grid_low",
     "pca_grid_mid": "grid_mid",
