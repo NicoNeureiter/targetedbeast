@@ -3,6 +3,7 @@ open module targetedbeast {
     requires beast.base;
     // targetedbeast.annotator.CladeAnnotator, targetedbeast.alignment.ConsensusAlignment
     requires beast.fx;
+    requires beast.labs;                 // RNNIMetric in TreeJumpFunctionTest
 
     requires java.desktop;               // JOptionPane in targetedbeast.annotator
     requires colt;                       // SVD in targetedbeast.util.Alignment2PCA
@@ -10,6 +11,7 @@ open module targetedbeast {
 
     exports targetedbeast.alignment;
     exports targetedbeast.annotator;
+    exports targetedbeast.benchmark;
     exports targetedbeast.coalescent;
     exports targetedbeast.edgeweights;
     exports targetedbeast.edgeweights.learnedweights;
@@ -27,6 +29,7 @@ open module targetedbeast {
     provides beast.base.core.BEASTInterface with
         targetedbeast.alignment.ConsensusAlignment,
         targetedbeast.alignment.RapidAlignment,
+        targetedbeast.benchmark.BenchmarkMCMC,
         targetedbeast.coalescent.RapidCoalescent,
         targetedbeast.coalescent.RapidTreeIntervals,
         targetedbeast.edgeweights.CombinedEdgeWeights,
@@ -64,5 +67,7 @@ open module targetedbeast {
         targetedbeast.weighttransform.ExpOffsetTransform,
         targetedbeast.weighttransform.GridTuner,
         targetedbeast.weighttransform.PowerOffsetTransform,
-        targetedbeast.weighttransform.SpsaTuner;
+        targetedbeast.weighttransform.RatioGridTuner,
+        targetedbeast.weighttransform.SpsaTuner,
+        targetedbeast.weighttransform.TreeJumpFunction;
 }

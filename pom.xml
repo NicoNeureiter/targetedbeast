@@ -39,6 +39,9 @@
         <maven.compiler.release>25</maven.compiler.release>
 
         <beast.version>2.8.0-beta8</beast.version>
+        <beastlabs.version>2.1.0-SNAPSHOT</beastlabs.version>
+        <bdmm-prime.version>3.0.0</bdmm-prime.version>
+        <feast.version>11.0.1</feast.version>
         <colt.version>1.2.0</colt.version>
         <commons-math3.version>3.6.1</commons-math3.version>
 
@@ -81,6 +84,39 @@
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-math3</artifactId>
             <version>${commons-math3.version}</version>
+        </dependency>
+
+        <!-- BEASTLabs: SimpleRandomTree and tree metrics (RobinsonsFouldMetric, RNNIMetric,
+             BranchScoreMetric) for the evaluation pipeline. Built locally against
+             beast.version 2.8.0-beta5; not bundled into lib/ (see src/assembly/beast-package.xml). -->
+        <dependency>
+            <groupId>io.github.beast2-dev</groupId>
+            <artifactId>beast-labs</artifactId>
+            <version>${beastlabs.version}</version>
+        </dependency>
+
+        <!-- BDMM-Prime: replaces the unported bdsky BirthDeathSkylineModel as iecor's tree
+             prior (single-type BirthDeathMigrationDistribution + EpiParameterization). Built
+             locally against beast.version 2.8.0-beta5; not bundled into lib/ (see
+             src/assembly/beast-package.xml). -->
+        <dependency>
+            <groupId>io.github.tgvaughan</groupId>
+            <artifactId>bdmm-prime</artifactId>
+            <version>${bdmm-prime.version}</version>
+        </dependency>
+
+        <!-- feast: the lassaL template loads its alignment via feast.fileio.AlignmentFromFasta and
+             its tip dates via TraitSetFromTaxonSet. At runtime an installed package gets these from
+             the feast BEAST package, declared as <depends on='feast'/> in version.xml; this
+             dependency exists so the classes are on the module path for compile, surefire and
+             exec:exec, where the package manager is not involved. Compile scope, not 'provided':
+             exec:exec resolves %classpath without provided-scope artifacts, so lassaL fails to
+             parse under it. Nothing bundles this into the zip: src/assembly/beast-package.xml
+             has an includes allow-list naming only targetedbeast, colt and commons-math3. -->
+        <dependency>
+            <groupId>io.github.tgvaughan</groupId>
+            <artifactId>feast</artifactId>
+            <version>${feast.version}</version>
         </dependency>
 
         <!-- Tests: the suite mixes JUnit 4 and JUnit 5, so both engines are needed -->
