@@ -351,6 +351,7 @@ def render_run_xml(template_text: str, setting: str, chain_length: int, out_dir:
     xml = xml.replace(
         state_needle,
         '<metric id="rnni" spec="beastlabs.evolution.tree.RNNIMetric" taxonset="@TaxonSet.infB_HA"/>\n'
+        '        <metric id="kf" spec="targetedbeast.weighttransform.BranchScoreTreeMetric"/>\n'
         f'        {state_needle}',
     )
 

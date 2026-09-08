@@ -64,6 +64,7 @@ open module targetedbeast {
         targetedbeast.operators.WeightedWideOperator,
         targetedbeast.operatorschedule.TargetedOperatorSchedule,
         targetedbeast.util.Alignment2PCA,
+        targetedbeast.weighttransform.BranchScoreTreeMetric,
         targetedbeast.weighttransform.ExpOffsetTransform,
         targetedbeast.weighttransform.GridTuner,
         targetedbeast.weighttransform.PowerOffsetTransform,
