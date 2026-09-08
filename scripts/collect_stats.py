@@ -175,6 +175,7 @@ def main() -> None:
     if args.trees is not None:
         tree_ess = compute_tree_pseudo_ess(args.trees, args.tree_burnin_percent)
         row["treeESS_min"] = fmt(tree_ess["min"])
+        row["treeESS_p10"] = fmt(tree_ess["p10"])
         row["treeESS_median"] = fmt(tree_ess["median"])
         row["treeESS_max"] = fmt(tree_ess["max"])
         row["treeESS_n_trees_used"] = fmt(tree_ess["n_trees_used"])
@@ -189,7 +190,8 @@ def main() -> None:
         f"meanJumpGivenAccepted={row['meanJumpGivenAccepted']}"
         + (f" lowest_ESS={row.get('lowest_ESS')} ({row.get('lowest_ESS_param')})"
            if args.ess_table is not None else "")
-        + (f" treeESS_min={row.get('treeESS_min')} treeESS_median={row.get('treeESS_median')}"
+        + (f" treeESS_min={row.get('treeESS_min')} treeESS_p10={row.get('treeESS_p10')} "
+           f"treeESS_median={row.get('treeESS_median')}"
            if args.trees is not None else "")
     )
 

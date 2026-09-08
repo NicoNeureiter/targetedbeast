@@ -97,10 +97,18 @@ def main() -> None:
     rf_matrix = np.frombuffer(rf_bytes, dtype=np.uint32).reshape(n, n).copy()
 
     result = compute_pseudo_ess(rf_matrix, n_refs=args.n_refs, seed=args.seed)
+    # Plain `min` over n_refs reference trees is an extreme-value order statistic: with
+    # n_refs=100 it's the worst of 100 individually-noisy per-reference ESS estimates, so it's
+    # pulled down by sampling noise even for a well-mixed chain (multiple-testing pessimism).
+    # p10 keeps the "worst case, not just typical case" intent while being far less sensitive to
+    # a single unlucky reference tree.
+    valid = result["ess_values"][~np.isnan(result["ess_values"])]
+    p10 = float(np.percentile(valid, 10)) if valid.size else float("nan")
     print(json.dumps({
         "n_trees": n_trees,
         "n_trees_used": n_trees_used,
         "min": result["min"],
+        "p10": p10,
         "median": result["median"],
         "max": result["max"],
         "n_refs_used": result["n_refs_used"],
