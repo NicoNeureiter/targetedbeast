@@ -160,6 +160,18 @@ public class LearnedWeights extends Distribution implements EdgeWeights {
                     + "when true the runtime proposal scale equals the learned slope directly (no sign flip); "
                     + "set to false (default) to use the current unconstrained-slope / sign-flip behavior",
             false);
+        final public Input<Double> validationFractionInput = new Input<>(
+            "validationFraction",
+            "fraction of training samples held out for validation-based early stopping and best-parameter selection; 0 (default) disables validation",
+            0.0);
+        final public Input<Integer> earlyStoppingPatienceInput = new Input<>(
+            "earlyStoppingPatience",
+            "stop optimization when validation loss has not improved for this many consecutive validation evaluations; 0 (default) disables early stopping",
+            0);
+        final public Input<Integer> validationIntervalInput = new Input<>(
+            "validationInterval",
+            "evaluate validation loss every this many optimizer iterations",
+            1);
     final public Input<GenericTreeLikelihood> likelihoodInput = new Input<>("likelihood", "tree likelihood template used to configure per-tree training likelihoods", Validate.REQUIRED);
 
     final public Input<String> surrogateWeightsFileInput = new Input<>(
@@ -228,6 +240,15 @@ public class LearnedWeights extends Distribution implements EdgeWeights {
         }
         if (slopeRegularizationWeightInput.get() < 0.0) {
             throw new IllegalArgumentException("slopeRegularizationWeight must be >= 0, but was " + slopeRegularizationWeightInput.get());
+        }
+        if (!(validationFractionInput.get() >= 0.0) || !(validationFractionInput.get() < 1.0)) {
+            throw new IllegalArgumentException("validationFraction must be in [0, 1), but was " + validationFractionInput.get());
+        }
+        if (earlyStoppingPatienceInput.get() < 0) {
+            throw new IllegalArgumentException("earlyStoppingPatience must be >= 0, but was " + earlyStoppingPatienceInput.get());
+        }
+        if (validationIntervalInput.get() < 1) {
+            throw new IllegalArgumentException("validationInterval must be >= 1, but was " + validationIntervalInput.get());
         }
         if (scaleQuadraticPartOnlyInput.get() && trainQuadraticOnlyInput.get()) {
             throw new IllegalArgumentException("scaleQuadraticPartOnly and trainQuadraticOnly cannot both be enabled in XML");
@@ -379,6 +400,8 @@ public class LearnedWeights extends Distribution implements EdgeWeights {
             separateBaseAndQuadraticCalibrationInput.get(),
             scaleQuadraticPartOnlyInput.get(),
             trainsQuadraticOnly());
+        reportingObjective.configureValidation(validationFractionInput.get(), earlyStoppingPatienceInput.get(), validationIntervalInput.get());
+        optimizationObjective.configureValidation(validationFractionInput.get(), earlyStoppingPatienceInput.get(), validationIntervalInput.get());
         boolean optimizeBrownianRates = optimizeBrownianRatesInput.get();
         reportingObjective.setOptimizeBrownianRates(optimizeBrownianRates);
         optimizationObjective.setOptimizeBrownianRates(optimizeBrownianRates);
@@ -532,8 +555,11 @@ public class LearnedWeights extends Distribution implements EdgeWeights {
         saveTrainedWeightsIfRequested(optimizedEmbeddings);
 
         double elapsedSec = (System.nanoTime() - startNanos) / 1_000_000_000.0;
+        double finalValidationLoss = reportingObjective.isValidationEnabled()
+                ? reportingObjective.evaluateValidationLoss(result.optimizedTheta)
+                : Double.NaN;
         Log.info.println(String.format(
-            "LearnedWeights: optimization %s in %.3fs (stopReason=%s, iter=%d, eval=%d, objectiveEvalCalls=%d, initial=%.6f, final=%.6f, delta=%.6f, initialGradientNorm=%.6g, finalGradientNorm=%.6g, fitLoss=%.6f, slopePenalty=%.6f, pcaPenalty=%.6f, baseScale=%.6f, quadraticScale=%.6f, baseRuntimeScale=%.6f, runtimeScale=%.6f, intercept=%.6f)",
+            "LearnedWeights: optimization %s in %.3fs (stopReason=%s, iter=%d, eval=%d, objectiveEvalCalls=%d, initial=%.6f, final=%.6f, delta=%.6f, initialGradientNorm=%.6g, finalGradientNorm=%.6g, fitLoss=%.6f, slopePenalty=%.6f, pcaPenalty=%.6f, baseScale=%.6f, quadraticScale=%.6f, baseRuntimeScale=%.6f, runtimeScale=%.6f, intercept=%.6f, validationLoss=%.6f)",
                 result.status,
                 elapsedSec,
                 result.stopReason,
@@ -552,7 +578,8 @@ public class LearnedWeights extends Distribution implements EdgeWeights {
             mean(learnedSlopes),
             runtimeProposalBaseScale,
             runtimeProposalScale,
-            learnedIntercept));
+            learnedIntercept,
+            finalValidationLoss));
         Log.info.println("LearnedWeights: optimized per-dimension Brownian rates=" + Arrays.toString(brownianTraitRates));
         if (optimizedRootPriorVariances != null) {
             Log.info.println("LearnedWeights: optimized per-dimension root prior variances=" + Arrays.toString(rootPriorVariances));

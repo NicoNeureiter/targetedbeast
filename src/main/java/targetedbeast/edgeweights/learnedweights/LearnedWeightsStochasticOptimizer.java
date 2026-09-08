@@ -131,9 +131,9 @@ public final class LearnedWeightsStochasticOptimizer {
 
         if (initialGradientNorm <= config.gradientTolerance) {
             return new LearnedWeightsOptimizer.Result(
-                    point,
+                    resolveFinalPoint(point, evaluationObjective),
                     initialLoss,
-                    initialLoss,
+                    resolveFinalLoss(initialLoss, evaluationObjective),
                     0,
                     evaluations,
                     "success",
@@ -192,11 +192,24 @@ public final class LearnedWeightsStochasticOptimizer {
                     bestPoint = Arrays.copyOf(point, point.length);
                 }
 
+                if (evaluationObjective.shouldStopEarly()) {
+                    return new LearnedWeightsOptimizer.Result(
+                            resolveFinalPoint(bestPoint, evaluationObjective),
+                            initialLoss,
+                            resolveFinalLoss(bestLoss, evaluationObjective),
+                            completedIterations,
+                            evaluations,
+                            "success",
+                            evaluationObjective.getEarlyStoppingStopReason(),
+                            initialGradientNorm,
+                            fullSnapshot.gradientNorm);
+                }
+
                 if (fullSnapshot.gradientNorm <= config.gradientTolerance) {
                     return new LearnedWeightsOptimizer.Result(
-                            bestPoint,
+                            resolveFinalPoint(bestPoint, evaluationObjective),
                             initialLoss,
-                            bestLoss,
+                            resolveFinalLoss(bestLoss, evaluationObjective),
                             completedIterations,
                             evaluations,
                             "success",
@@ -225,15 +238,26 @@ public final class LearnedWeightsStochasticOptimizer {
         }
 
         return new LearnedWeightsOptimizer.Result(
-                bestPoint,
+                resolveFinalPoint(bestPoint, evaluationObjective),
                 initialLoss,
-                bestLoss,
+                resolveFinalLoss(bestLoss, evaluationObjective),
                 completedIterations,
                 evaluations,
                 status,
                 stopReason,
                 initialGradientNorm,
                 finalGradientNorm);
+    }
+
+    /** Prefers the validation-selected point over the periodic full-loss best, when available. */
+    private static double[] resolveFinalPoint(double[] fallback, LearnedWeightsOptimizer.DifferentiableFunction objective) {
+        double[] earlyBest = objective.getEarlyStoppingBestParameters();
+        return earlyBest != null ? earlyBest : fallback;
+    }
+
+    private static double resolveFinalLoss(double fallback, LearnedWeightsOptimizer.DifferentiableFunction objective) {
+        double[] earlyBest = objective.getEarlyStoppingBestParameters();
+        return earlyBest != null ? objective.getEarlyStoppingBestLoss() : fallback;
     }
 
     private EvaluationSnapshot evaluate(

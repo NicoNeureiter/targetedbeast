@@ -34,6 +34,24 @@ public final class LearnedWeightsOptimizer {
         }
 
         double valueAndGradient(double[] point, double[] gradient);
+
+        /** True once held-out validation loss has stopped improving for the configured patience. */
+        default boolean shouldStopEarly() {
+            return false;
+        }
+
+        /** Parameters selected by validation loss, or null if validation is disabled or no checkpoint has run yet. */
+        default double[] getEarlyStoppingBestParameters() {
+            return null;
+        }
+
+        default double getEarlyStoppingBestLoss() {
+            return Double.NaN;
+        }
+
+        default String getEarlyStoppingStopReason() {
+            return "early stopping";
+        }
     }
 
     private static final int DEFAULT_MAX_ITER = 2_000;
@@ -150,7 +168,7 @@ public final class LearnedWeightsOptimizer {
         }
 
         EvaluationAdapter adapter = new EvaluationAdapter(objective, point, currentLoss, gradient, 1);
-        GradientNormChecker checker = new GradientNormChecker(adapter, config.gradientTolerance);
+        GradientNormChecker checker = new GradientNormChecker(adapter, config.gradientTolerance, objective);
         NonLinearConjugateGradientOptimizer optimizer = new NonLinearConjugateGradientOptimizer(
                 NonLinearConjugateGradientOptimizer.Formula.POLAK_RIBIERE,
                 checker,
@@ -168,25 +186,28 @@ public final class LearnedWeightsOptimizer {
                     GoalType.MINIMIZE,
                     new InitialGuess(point));
 
-            double[] optimizedPoint = optimum.getPoint();
+            double[] optimizedPoint = resolveFinalPoint(optimum.getPoint(), objective);
             double finalGradientNorm = adapter.getGradientNorm(optimizedPoint);
+            String stopReason = checker.isEarlyStopped()
+                    ? objective.getEarlyStoppingStopReason()
+                    : String.format("gradient norm %.3g <= tolerance %.3g", finalGradientNorm, config.gradientTolerance);
             return new Result(
                     optimizedPoint,
                     initialLoss,
-                    optimum.getValue(),
+                    resolveFinalLoss(optimum.getValue(), objective),
                     optimizer.getIterations(),
                     adapter.getEvaluationCount(),
                     "success",
-                    String.format("gradient norm %.3g <= tolerance %.3g", finalGradientNorm, config.gradientTolerance),
+                    stopReason,
                     initialGradientNorm,
                     finalGradientNorm);
         } catch (TooManyIterationsException e) {
-            double[] bestPoint = adapter.getBestPoint();
+            double[] bestPoint = resolveFinalPoint(adapter.getBestPoint(), objective);
             double finalGradientNorm = adapter.getGradientNorm(bestPoint);
             return new Result(
                     bestPoint,
                     initialLoss,
-                    adapter.getBestValue(),
+                    resolveFinalLoss(adapter.getBestValue(), objective),
                     config.maxIter,
                     adapter.getEvaluationCount(),
                     "partial",
@@ -194,12 +215,12 @@ public final class LearnedWeightsOptimizer {
                     initialGradientNorm,
                     finalGradientNorm);
         } catch (TooManyEvaluationsException e) {
-            double[] bestPoint = adapter.getBestPoint();
+            double[] bestPoint = resolveFinalPoint(adapter.getBestPoint(), objective);
             double finalGradientNorm = adapter.getGradientNorm(bestPoint);
             return new Result(
                     bestPoint,
                     initialLoss,
-                    adapter.getBestValue(),
+                    resolveFinalLoss(adapter.getBestValue(), objective),
                     optimizer.getIterations(),
                     adapter.getEvaluationCount(),
                     "partial",
@@ -207,12 +228,12 @@ public final class LearnedWeightsOptimizer {
                     initialGradientNorm,
                     finalGradientNorm);
         } catch (RuntimeException e) {
-            double[] bestPoint = adapter.getBestPoint();
+            double[] bestPoint = resolveFinalPoint(adapter.getBestPoint(), objective);
             double finalGradientNorm = adapter.getGradientNorm(bestPoint);
             return new Result(
                     bestPoint,
                     initialLoss,
-                    adapter.getBestValue(),
+                    resolveFinalLoss(adapter.getBestValue(), objective),
                     optimizer.getIterations(),
                     adapter.getEvaluationCount(),
                     "partial",
@@ -220,6 +241,17 @@ public final class LearnedWeightsOptimizer {
                     initialGradientNorm,
                     finalGradientNorm);
         }
+    }
+
+    /** Prefers the validation-selected point over the optimizer's own training/full-loss best, when available. */
+    private static double[] resolveFinalPoint(double[] fallback, DifferentiableFunction objective) {
+        double[] earlyBest = objective.getEarlyStoppingBestParameters();
+        return earlyBest != null ? earlyBest : fallback;
+    }
+
+    private static double resolveFinalLoss(double fallback, DifferentiableFunction objective) {
+        double[] earlyBest = objective.getEarlyStoppingBestParameters();
+        return earlyBest != null ? objective.getEarlyStoppingBestLoss() : fallback;
     }
 
     private static int computeMaxEvaluations(int maxIter) {
@@ -238,16 +270,27 @@ public final class LearnedWeightsOptimizer {
     private static final class GradientNormChecker implements ConvergenceChecker<PointValuePair> {
         private final EvaluationAdapter adapter;
         private final double gradientTolerance;
+        private final DifferentiableFunction objective;
+        private boolean earlyStopped = false;
 
-        GradientNormChecker(EvaluationAdapter adapter, double gradientTolerance) {
+        GradientNormChecker(EvaluationAdapter adapter, double gradientTolerance, DifferentiableFunction objective) {
             this.adapter = adapter;
             this.gradientTolerance = gradientTolerance;
+            this.objective = objective;
         }
 
         @Override
         public boolean converged(int iteration, PointValuePair previous, PointValuePair current) {
+            if (objective.shouldStopEarly()) {
+                earlyStopped = true;
+                return true;
+            }
             double gradientNorm = adapter.getGradientNorm(current.getPoint());
             return Double.isFinite(gradientNorm) && gradientNorm <= gradientTolerance;
+        }
+
+        boolean isEarlyStopped() {
+            return earlyStopped;
         }
     }
 

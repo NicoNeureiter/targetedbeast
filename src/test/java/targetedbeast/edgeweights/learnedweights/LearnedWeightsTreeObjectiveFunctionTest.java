@@ -2,6 +2,7 @@ package targetedbeast.edgeweights.learnedweights;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertTrue;
 
 import java.util.ArrayList;
@@ -484,6 +485,211 @@ public class LearnedWeightsTreeObjectiveFunctionTest {
         Arrays.sort(observedLosses);
         Arrays.sort(expectedLosses);
         assertArrayEquals(expectedLosses, observedLosses, 1e-12);
+    }
+
+    @Test
+    public void validationSplit_isDeterministicForFixedSeed() {
+        List<LearnedWeightsTreeTrainer.TrainingTreeSample> samples = createManySamples(10);
+
+        LearnedWeightsTreeObjectiveFunction first = newObjectiveWithSamples(samples, 42L);
+        first.configureValidation(0.3, 0, 1);
+
+        LearnedWeightsTreeObjectiveFunction second = newObjectiveWithSamples(samples, 42L);
+        second.configureValidation(0.3, 0, 1);
+
+        assertArrayEquals(first.getTrainIndices(), second.getTrainIndices());
+        assertArrayEquals(first.getValidationIndices(), second.getValidationIndices());
+    }
+
+    @Test
+    public void validationSplit_isDisjointAndExhaustive() {
+        List<LearnedWeightsTreeTrainer.TrainingTreeSample> samples = createManySamples(10);
+        LearnedWeightsTreeObjectiveFunction objective = newObjectiveWithSamples(samples, 3L);
+        objective.configureValidation(0.3, 0, 1);
+
+        int[] trainIndices = objective.getTrainIndices();
+        int[] validationIndices = objective.getValidationIndices();
+
+        assertEquals(10, trainIndices.length + validationIndices.length);
+        assertEquals(3, validationIndices.length);
+
+        boolean[] seen = new boolean[10];
+        for (int index : trainIndices) {
+            assertTrue("train index out of range: " + index, index >= 0 && index < 10);
+            assertTrue("index " + index + " appears more than once", !seen[index]);
+            seen[index] = true;
+        }
+        for (int index : validationIndices) {
+            assertTrue("validation index out of range: " + index, index >= 0 && index < 10);
+            assertTrue("index " + index + " appears more than once", !seen[index]);
+            seen[index] = true;
+        }
+        for (int index = 0; index < seen.length; index++) {
+            assertTrue("index " + index + " missing from split", seen[index]);
+        }
+    }
+
+    @Test
+    public void validationFractionZero_disablesValidationAndKeepsFullTrainingPool() {
+        List<LearnedWeightsTreeTrainer.TrainingTreeSample> samples = createManySamples(10);
+        LearnedWeightsTreeObjectiveFunction objective = newObjectiveWithSamples(samples, 42L);
+        objective.configureValidation(0.0, 0, 1);
+
+        assertTrue(!objective.isValidationEnabled());
+        assertEquals(10, objective.getTrainIndices().length);
+        assertEquals(0, objective.getValidationIndices().length);
+    }
+
+    @Test
+    public void miniBatch_neverDrawsValidationSamples() {
+        Alignment alignment = createAlignment();
+        double[] theta = new double[] {
+                0.0, 0.2,
+                0.8, -0.1,
+                -0.3, 1.0,
+                1.1, 1.3
+        };
+        LearnedWeightsTreeTrainer trainer = new LearnedWeightsTreeTrainer(null, alignment, 0);
+        List<Tree> trees = createTrees(alignment);
+        List<LearnedWeightsTreeTrainer.TrainingTreeSample> samples = new ArrayList<>();
+        for (int i = 0; i < 12; i++) {
+            LearnedWeightsTreeTrainer.TrainingTreeSample baseSample = trainer.buildTrainingSample(trees.get(i % trees.size()), 0.0);
+            double surrogate = LearnedWeightsTreeObjectiveFunction.computeSurrogateLogLikelihood(baseSample, theta, 2, 1.0);
+            samples.add(new LearnedWeightsTreeTrainer.TrainingTreeSample(
+                    (1.0 + 0.1 * i) * surrogate - 0.25 * i,
+                    baseSample.precisionMatrix,
+                    baseSample.logDeterminant));
+        }
+
+        LearnedWeightsTreeObjectiveFunction miniBatchObjective = new LearnedWeightsTreeObjectiveFunction(
+                samples, alignment.getTaxonCount(), 2, 1.0, null, 0.0, 0.0, 1, 7L);
+        miniBatchObjective.configureValidation(0.25, 0, 1);
+        miniBatchObjective.beginOptimizationRun("test");
+
+        int[] validationIndices = miniBatchObjective.getValidationIndices();
+        assertTrue("test fixture must actually hold out samples", validationIndices.length > 0);
+        double[] params = miniBatchObjective.createInitialParameters(theta);
+
+        double[] lossPerIndex = new double[samples.size()];
+        for (int i = 0; i < samples.size(); i++) {
+            LearnedWeightsTreeObjectiveFunction singleton = new LearnedWeightsTreeObjectiveFunction(
+                    List.of(samples.get(i)), alignment.getTaxonCount(), 2, 1.0);
+            lossPerIndex[i] = singleton.value(params);
+        }
+
+        for (int iteration = 0; iteration < 3 * samples.size(); iteration++) {
+            miniBatchObjective.beginIteration(iteration);
+            double observed = miniBatchObjective.value(params);
+            for (int validationIndex : validationIndices) {
+                assertNotEquals(
+                        "mini-batch must never draw a validation sample",
+                        lossPerIndex[validationIndex], observed, 1e-9);
+            }
+        }
+    }
+
+    @Test
+    public void bestParameters_followValidationLossRatherThanTrainingLossWhenEnabled() {
+        List<LearnedWeightsTreeTrainer.TrainingTreeSample> baseSamples = createManySamples(10);
+
+        // Learn the deterministic split first, then build final samples whose targets are
+        // rigged so that intercept=5 fits the train group perfectly (and is bad on validation)
+        // while intercept=-5 fits the validation group perfectly (and is bad on training).
+        LearnedWeightsTreeObjectiveFunction splitProbe = newObjectiveWithSamples(baseSamples, 42L);
+        splitProbe.configureValidation(0.3, 0, 1);
+        boolean[] isValidation = new boolean[baseSamples.size()];
+        for (int index : splitProbe.getValidationIndices()) {
+            isValidation[index] = true;
+        }
+
+        double[] theta = new double[] {
+                0.0, 0.2,
+                0.8, -0.1,
+                -0.3, 1.0,
+                1.1, 1.3
+        };
+        int dim = 2;
+        List<LearnedWeightsTreeTrainer.TrainingTreeSample> riggedSamples = new ArrayList<>();
+        for (int i = 0; i < baseSamples.size(); i++) {
+            LearnedWeightsTreeTrainer.TrainingTreeSample base = baseSamples.get(i);
+            double surrogate = LearnedWeightsTreeObjectiveFunction.computeSurrogateLogLikelihood(base, theta, dim, 1.0);
+            double groupOffset = isValidation[i] ? -5.0 : 5.0;
+            riggedSamples.add(new LearnedWeightsTreeTrainer.TrainingTreeSample(
+                    surrogate + groupOffset, base.precisionMatrix, base.logDeterminant));
+        }
+
+        LearnedWeightsTreeObjectiveFunction objective = newObjectiveWithSamples(riggedSamples, 42L);
+        objective.configureValidation(0.3, 0, 1);
+        objective.beginOptimizationRun("test");
+
+        double[] rates = new double[] {1.0, 1.0};
+        double[] slopes = new double[] {1.0, 1.0};
+        double[] trainBestParameters = objective.createParameters(theta, rates, null, null, slopes, 5.0);
+        double[] validationBestParameters = objective.createParameters(theta, rates, null, null, slopes, -5.0);
+
+        double[] gradient = new double[objective.getParameterCount()];
+        objective.valueAndGradient(trainBestParameters, gradient);
+        objective.valueAndGradient(validationBestParameters, gradient);
+
+        assertArrayEquals(validationBestParameters, objective.getBestParameters(), 1e-10);
+        assertEquals(0.0, objective.getBestValidationLoss(), 1e-8);
+    }
+
+    @Test
+    public void shouldStopEarly_firesAfterConfiguredPatienceOfNonImprovement() {
+        List<LearnedWeightsTreeTrainer.TrainingTreeSample> samples = createManySamples(10);
+        LearnedWeightsTreeObjectiveFunction objective = newObjectiveWithSamples(samples, 42L);
+        objective.configureValidation(0.3, 3, 1);
+        objective.beginOptimizationRun("test");
+
+        double[] theta = new double[] {
+                0.0, 0.2,
+                0.8, -0.1,
+                -0.3, 1.0,
+                1.1, 1.3
+        };
+        double[] parameters = objective.createInitialParameters(theta);
+        double[] gradient = new double[objective.getParameterCount()];
+
+        objective.valueAndGradient(parameters, gradient); // establishes the first validation checkpoint
+        assertTrue(!objective.shouldStopEarly());
+
+        objective.valueAndGradient(parameters, gradient); // 1st non-improvement (identical loss)
+        assertEquals(1, objective.getConsecutiveValidationNonImprovements());
+        assertTrue(!objective.shouldStopEarly());
+
+        objective.valueAndGradient(parameters, gradient); // 2nd non-improvement
+        assertEquals(2, objective.getConsecutiveValidationNonImprovements());
+        assertTrue(!objective.shouldStopEarly());
+
+        objective.valueAndGradient(parameters, gradient); // 3rd non-improvement -> patience reached
+        assertEquals(3, objective.getConsecutiveValidationNonImprovements());
+        assertTrue(objective.shouldStopEarly());
+    }
+
+    private static List<LearnedWeightsTreeTrainer.TrainingTreeSample> createManySamples(int n) {
+        Alignment alignment = createAlignment();
+        LearnedWeightsTreeTrainer trainer = new LearnedWeightsTreeTrainer(null, alignment, 0);
+        List<Tree> trees = createTrees(alignment);
+        List<LearnedWeightsTreeTrainer.TrainingTreeSample> samples = new ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            samples.add(trainer.buildTrainingSample(trees.get(i % trees.size()), 0.1 * i));
+        }
+        return samples;
+    }
+
+    private static LearnedWeightsTreeObjectiveFunction newObjectiveWithSamples(
+            List<LearnedWeightsTreeTrainer.TrainingTreeSample> samples, long seed) {
+        return new LearnedWeightsTreeObjectiveFunction(
+                samples,
+                createAlignment().getTaxonCount(),
+                2,
+                1.0,
+                null,
+                0.0,
+                0.0,
+                0,
+                seed);
     }
 
     private static Alignment createAlignment() {

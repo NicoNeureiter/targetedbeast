@@ -42,6 +42,16 @@ public class LearnedWeightsTreeObjectiveFunction implements LearnedWeightsOptimi
     private int activeBatchCount;
     private Random miniBatchRandom;
 
+    private double validationFraction = 0.0;
+    private int earlyStoppingPatience = 0;
+    private int validationInterval = 1;
+    private int[] trainIndices;
+    private int[] validationIndices = new int[0];
+    private double bestValidationLoss = Double.POSITIVE_INFINITY;
+    private double lastValidationLoss = Double.NaN;
+    private int consecutiveValidationNonImprovements = 0;
+    private int validationCheckCounter = 0;
+
     private double[] bestParameters;
     private double bestLoss = Double.POSITIVE_INFINITY;
     private double bestFitLoss = Double.POSITIVE_INFINITY;
@@ -331,7 +341,8 @@ public class LearnedWeightsTreeObjectiveFunction implements LearnedWeightsOptimi
         this.useMiniBatches = miniBatchSize > 0 && miniBatchSize < trainingSamples.size();
         this.miniBatchSize = useMiniBatches ? miniBatchSize : trainingSamples.size();
         this.miniBatchSeed = miniBatchSeed;
-        this.activeBatchCount = trainingSamples.size();
+        this.trainIndices = identityIndices(trainingSamples.size());
+        this.activeBatchCount = trainIndices.length;
     }
 
     public LearnedWeightsTreeObjectiveFunction(
@@ -352,12 +363,186 @@ public class LearnedWeightsTreeObjectiveFunction implements LearnedWeightsOptimi
                 scaleQuadraticPartOnly, trainQuadraticOnly);
     }
 
+    /**
+     * Configures a held-out validation split. Must be called before {@link #beginOptimizationRun}.
+     * The split is deterministic given {@code miniBatchSeed} (passed at construction) and is
+     * disjoint from / exhaustive over the training samples. validationFraction &lt;= 0 disables
+     * validation and leaves the mini-batch/full-batch training pool unchanged.
+     */
+    public void configureValidation(double validationFraction, int earlyStoppingPatience, int validationInterval) {
+        if (!(validationFraction >= 0.0) || !(validationFraction < 1.0)) {
+            throw new IllegalArgumentException("validationFraction must be in [0, 1), but was " + validationFraction);
+        }
+        if (earlyStoppingPatience < 0) {
+            throw new IllegalArgumentException("earlyStoppingPatience must be >= 0, but was " + earlyStoppingPatience);
+        }
+        if (validationInterval < 1) {
+            throw new IllegalArgumentException("validationInterval must be >= 1, but was " + validationInterval);
+        }
+        this.validationFraction = validationFraction;
+        this.earlyStoppingPatience = earlyStoppingPatience;
+        this.validationInterval = validationInterval;
+        computeValidationSplit();
+    }
+
+    private void computeValidationSplit() {
+        int n = trainingSamples.size();
+        int validationCount = validationFraction > 0.0 ? (int) Math.floor(validationFraction * n) : 0;
+        if (validationCount <= 0 || validationCount >= n) {
+            trainIndices = identityIndices(n);
+            validationIndices = new int[0];
+            return;
+        }
+        int[] shuffled = identityIndices(n);
+        Random splitRandom = new Random(miniBatchSeed);
+        for (int i = shuffled.length - 1; i > 0; i--) {
+            int j = splitRandom.nextInt(i + 1);
+            int tmp = shuffled[i];
+            shuffled[i] = shuffled[j];
+            shuffled[j] = tmp;
+        }
+        validationIndices = Arrays.copyOfRange(shuffled, 0, validationCount);
+        trainIndices = Arrays.copyOfRange(shuffled, validationCount, n);
+        Arrays.sort(validationIndices);
+        Arrays.sort(trainIndices);
+    }
+
+    private static int[] identityIndices(int n) {
+        int[] indices = new int[n];
+        for (int i = 0; i < n; i++) {
+            indices[i] = i;
+        }
+        return indices;
+    }
+
+    public boolean isValidationEnabled() {
+        return validationIndices.length > 0;
+    }
+
+    public int[] getTrainIndices() {
+        return Arrays.copyOf(trainIndices, trainIndices.length);
+    }
+
+    public int[] getValidationIndices() {
+        return Arrays.copyOf(validationIndices, validationIndices.length);
+    }
+
+    public double getLastValidationLoss() {
+        return lastValidationLoss;
+    }
+
+    public double getBestValidationLoss() {
+        return bestValidationLoss;
+    }
+
+    public int getConsecutiveValidationNonImprovements() {
+        return consecutiveValidationNonImprovements;
+    }
+
+    @Override
+    public boolean shouldStopEarly() {
+        return isValidationEnabled() && earlyStoppingPatience > 0
+                && consecutiveValidationNonImprovements >= earlyStoppingPatience;
+    }
+
+    @Override
+    public double[] getEarlyStoppingBestParameters() {
+        return isValidationEnabled() ? getBestParameters() : null;
+    }
+
+    @Override
+    public double getEarlyStoppingBestLoss() {
+        return isValidationEnabled() ? bestLoss : Double.NaN;
+    }
+
+    @Override
+    public String getEarlyStoppingStopReason() {
+        return String.format(
+                "early stopping: validation loss did not improve for %d evaluations (patience=%d)",
+                consecutiveValidationNonImprovements, earlyStoppingPatience);
+    }
+
+    /**
+     * Mean loss over the held-out validation set at the given parameters, using the same
+     * residual/prediction path as training. Excludes regularisation penalties: those are a
+     * property of the parameters, not the data, so they are not part of a held-out loss estimate.
+     */
+    public double evaluateValidationLoss(double[] parameters) {
+        if (!isValidationEnabled()) {
+            return Double.NaN;
+        }
+        validateParameters(parameters);
+        double intercept = parameters[interceptParameterIndex];
+        double[] currentBrownianRates = extractBrownianRates(parameters);
+        double[] currentRootPriorVariances = extractRootPriorVariances(parameters);
+        double[] baseScales = extractBaseScales(parameters);
+        double[] slopes = extractSlopes(parameters);
+        double[] embeddings = extractEmbeddings(parameters);
+        double sampleWeight = 1.0 / validationIndices.length;
+        double loss = 0.0;
+        for (int idx : validationIndices) {
+            double residual = computeResidual(
+                    trainingSamples.get(idx), embeddings, intercept, currentBrownianRates,
+                    currentRootPriorVariances, baseScales, slopes);
+            loss += sampleWeight * residual * residual;
+        }
+        return loss;
+    }
+
+    private double computeResidual(
+            LearnedWeightsTreeTrainer.TrainingTreeSample sample,
+            double[] embeddings,
+            double intercept,
+            double[] currentBrownianRates,
+            double[] currentRootPriorVariances,
+            double[] baseScales,
+            double[] slopes) {
+        double[] baseContributions = computeBaseLogLikelihoodContributions(sample, dim, currentBrownianRates, currentRootPriorVariances);
+        double[] quadraticContributions = computeQuadraticLogLikelihoodContributions(sample, embeddings, dim, currentBrownianRates, currentRootPriorVariances);
+        if (separateBaseAndQuadraticCalibration) {
+            double prediction = intercept + dot(baseScales, baseContributions) + dot(slopes, quadraticContributions);
+            return prediction - sample.targetLogLikelihood;
+        }
+        double[] fullContributions = add(baseContributions, quadraticContributions);
+        double[] regressionContributions = usesQuadraticRegressionContributions() ? quadraticContributions : fullContributions;
+        double prediction = intercept + dot(slopes, regressionContributions);
+        double regressionTarget = getRegressionTarget(sample, currentBrownianRates, currentRootPriorVariances);
+        return prediction - regressionTarget;
+    }
+
+    private void maybeCheckValidation(double[] parameters) {
+        if (!isValidationEnabled()) {
+            return;
+        }
+        validationCheckCounter++;
+        if (validationCheckCounter % validationInterval != 0) {
+            return;
+        }
+        double validationLoss = evaluateValidationLoss(parameters);
+        lastValidationLoss = validationLoss;
+        if (validationLoss < bestValidationLoss) {
+            bestValidationLoss = validationLoss;
+            consecutiveValidationNonImprovements = 0;
+            bestLoss = validationLoss;
+            bestFitLoss = lastFitLoss;
+            bestSlopePenalty = lastSlopePenalty;
+            bestPcaPenalty = lastPcaPenalty;
+            bestParameters = Arrays.copyOf(parameters, parameterCount);
+            bestBaseScales = Arrays.copyOf(lastBaseScales, lastBaseScales.length);
+            bestSlopes = Arrays.copyOf(lastSlopes, lastSlopes.length);
+            bestRootPriorVariances = lastRootPriorVariances == null ? null : Arrays.copyOf(lastRootPriorVariances, lastRootPriorVariances.length);
+            bestIntercept = lastIntercept;
+        } else {
+            consecutiveValidationNonImprovements++;
+        }
+    }
+
     @Override
     public void beginIteration(int iteration) {
         currentIteration = iteration;
         if (!useMiniBatches) {
             activeBatchStart = 0;
-            activeBatchCount = trainingSamples.size();
+            activeBatchCount = trainIndices.length;
             return;
         }
         if (batchOrder == null || batchOrder.length != trainingSamples.size()) {
@@ -379,7 +564,9 @@ public class LearnedWeightsTreeObjectiveFunction implements LearnedWeightsOptimi
 
     @Override
     public double valueAndGradient(double[] parameters, double[] gradient) {
-        return evaluate(parameters, gradient);
+        double loss = evaluate(parameters, gradient);
+        maybeCheckValidation(parameters);
+        return loss;
     }
 
     public void beginOptimizationRun(String label) {
@@ -411,6 +598,10 @@ public class LearnedWeightsTreeObjectiveFunction implements LearnedWeightsOptimi
         lastBaseScales = createUnitScaleVector();
         lastSlopes = createUnitSlopeVector();
         lastRootPriorVariances = initialRootPriorVariances == null ? null : Arrays.copyOf(initialRootPriorVariances, initialRootPriorVariances.length);
+        bestValidationLoss = Double.POSITIVE_INFINITY;
+        lastValidationLoss = Double.NaN;
+        consecutiveValidationNonImprovements = 0;
+        validationCheckCounter = 0;
         resetMiniBatchSchedule();
     }
 
@@ -1389,7 +1580,9 @@ public class LearnedWeightsTreeObjectiveFunction implements LearnedWeightsOptimi
             System.arraycopy(gradientSlope, 0, gradient, slopeParameterStartIndex, dim);
         }
 
-        if (loss < bestLoss) {
+        // When validation is enabled, best-parameter selection is driven exclusively by
+        // maybeCheckValidation() (called from valueAndGradient), not by this training loss.
+        if (!isValidationEnabled() && loss < bestLoss) {
             bestLoss = loss;
             bestFitLoss = fitLoss;
             bestSlopePenalty = slopePenalty;
@@ -1706,16 +1899,13 @@ public class LearnedWeightsTreeObjectiveFunction implements LearnedWeightsOptimi
     private void resetMiniBatchSchedule() {
         if (!useMiniBatches) {
             activeBatchStart = 0;
-            activeBatchCount = trainingSamples.size();
+            activeBatchCount = trainIndices.length;
             batchOrder = null;
             batchCursor = 0;
             miniBatchRandom = null;
             return;
         }
-        batchOrder = new int[trainingSamples.size()];
-        for (int index = 0; index < batchOrder.length; index++) {
-            batchOrder[index] = index;
-        }
+        batchOrder = Arrays.copyOf(trainIndices, trainIndices.length);
         batchCursor = 0;
         activeBatchStart = 0;
         activeBatchCount = Math.min(miniBatchSize, batchOrder.length);
@@ -1734,7 +1924,7 @@ public class LearnedWeightsTreeObjectiveFunction implements LearnedWeightsOptimi
 
     private int resolveSampleIndex(int batchIndex) {
         if (!useMiniBatches) {
-            return batchIndex;
+            return trainIndices[batchIndex];
         }
         return batchOrder[activeBatchStart + batchIndex];
     }
@@ -1770,7 +1960,7 @@ public class LearnedWeightsTreeObjectiveFunction implements LearnedWeightsOptimi
 
         double elapsedSec = (now - runStartNanos) / 1_000_000_000.0;
         Log.info.println(String.format(
-            "%s: objective iteration %d/%s, elapsed=%.1fs, trialLoss=%.6f, bestSeenLoss=%.6f, fitLoss=%.6f, slopePenalty=%.6f, pcaPenalty=%.6f, baseScale=%.6f, quadraticScale=%.6f, intercept=%.6f",
+            "%s: objective iteration %d/%s, elapsed=%.1fs, trialLoss=%.6f, bestSeenLoss=%.6f, fitLoss=%.6f, slopePenalty=%.6f, pcaPenalty=%.6f, baseScale=%.6f, quadraticScale=%.6f, intercept=%.6f, validationLoss=%.6f",
             progressLabel,
             currentIteration,
             configuredMaxIterations > 0 ? configuredMaxIterations : "?",
@@ -1782,7 +1972,8 @@ public class LearnedWeightsTreeObjectiveFunction implements LearnedWeightsOptimi
             lastPcaPenalty,
             mean(lastBaseScales),
             mean(lastSlopes),
-            lastIntercept));
+            lastIntercept,
+            lastValidationLoss));
         lastProgressLogNanos = now;
     }
 }
