@@ -523,25 +523,31 @@ public class LearnedWeights extends Distribution implements EdgeWeights {
             result = optimizer.optimize(initialParameters, optimizationObjective);
         }
 
+        // Picks a canonical point on the embedding<->rate rescaling ridge (see
+        // canonicalizeParameters javadoc) before reporting/persisting results, so fitted per-axis
+        // rates reflect real anisotropy rather than wherever the optimizer's trajectory happened to
+        // drift. Loss-invariant by construction; does not change which optimum was found.
+        double[] optimizedTheta = reportingObjective.canonicalizeParameters(result.optimizedTheta);
+
         double[] finalGradient = new double[reportingObjective.getParameterCount()];
-        double fullFinalLoss = reportingObjective.valueAndGradient(result.optimizedTheta, finalGradient);
+        double fullFinalLoss = reportingObjective.valueAndGradient(optimizedTheta, finalGradient);
         double fullFinalGradientNorm = reportingObjective.gradientNorm(finalGradient);
 
-        brownianTraitRates = reportingObjective.extractBrownianRates(result.optimizedTheta);
-        double[] optimizedRootPriorVariances = reportingObjective.extractRootPriorVariances(result.optimizedTheta);
+        brownianTraitRates = reportingObjective.extractBrownianRates(optimizedTheta);
+        double[] optimizedRootPriorVariances = reportingObjective.extractRootPriorVariances(optimizedTheta);
         if (optimizedRootPriorVariances != null) {
             rootPriorVariances = optimizedRootPriorVariances;
         }
-        learnedBaseScales = reportingObjective.extractBaseScales(result.optimizedTheta);
+        learnedBaseScales = reportingObjective.extractBaseScales(optimizedTheta);
         learnedBaseScale = mean(learnedBaseScales);
         runtimeProposalBaseScales = resolveRuntimeProposalScales(learnedBaseScales);
         runtimeProposalBaseScale = mean(runtimeProposalBaseScales);
-        learnedSlopes = reportingObjective.extractSlopes(result.optimizedTheta);
+        learnedSlopes = reportingObjective.extractSlopes(optimizedTheta);
         learnedSlope = mean(learnedSlopes);
         runtimeProposalScales = resolveRuntimeProposalScales(learnedSlopes);
         runtimeProposalScale = mean(runtimeProposalScales);
-        learnedIntercept = reportingObjective.extractIntercept(result.optimizedTheta);
-        double[] optimizedEmbeddings = reportingObjective.extractEmbeddings(result.optimizedTheta);
+        learnedIntercept = reportingObjective.extractIntercept(optimizedTheta);
+        double[] optimizedEmbeddings = reportingObjective.extractEmbeddings(optimizedTheta);
         double optimizedEmbeddingNorm = l2Norm(optimizedEmbeddings);
         double optimizedEmbeddingMaxAbs = maxAbs(optimizedEmbeddings);
         int optimizedEmbeddingNonZeroCount = countNonZeroEntries(optimizedEmbeddings, 1e-12);
@@ -556,7 +562,7 @@ public class LearnedWeights extends Distribution implements EdgeWeights {
 
         double elapsedSec = (System.nanoTime() - startNanos) / 1_000_000_000.0;
         double finalValidationLoss = reportingObjective.isValidationEnabled()
-                ? reportingObjective.evaluateValidationLoss(result.optimizedTheta)
+                ? reportingObjective.evaluateValidationLoss(optimizedTheta)
                 : Double.NaN;
         Log.info.println(String.format(
             "LearnedWeights: optimization %s in %.3fs (stopReason=%s, iter=%d, eval=%d, objectiveEvalCalls=%d, initial=%.6f, final=%.6f, delta=%.6f, initialGradientNorm=%.6g, finalGradientNorm=%.6g, fitLoss=%.6f, slopePenalty=%.6f, pcaPenalty=%.6f, baseScale=%.6f, quadraticScale=%.6f, baseRuntimeScale=%.6f, runtimeScale=%.6f, intercept=%.6f, validationLoss=%.6f)",

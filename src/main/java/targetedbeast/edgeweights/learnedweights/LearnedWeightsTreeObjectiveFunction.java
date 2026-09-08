@@ -834,6 +834,57 @@ public class LearnedWeightsTreeObjectiveFunction implements LearnedWeightsOptimi
         return runEvaluationCount;
     }
 
+    /**
+     * Breaks the axis-wise embedding&lt;-&gt;Brownian-rate rescaling degeneracy: scaling embedding
+     * axis {@code a} by {@code c} and rate {@code a} by {@code c^2} leaves the quadratic
+     * log-likelihood term on that axis exactly unchanged, while the (rate-dependent) log-determinant
+     * term shifts by a per-sample-constant amount that the intercept silently absorbs. That makes
+     * per-axis embedding scale, and therefore the reported per-axis rate, an optimizer artifact
+     * rather than a reproducible quantity.
+     *
+     * <p>This picks a canonical point on that ridge — unit RMS embedding norm per axis — by applying
+     * the exact inverse transform (rate by {@code 1/c^2}, intercept shifted to compensate the
+     * log-determinant term) so the predicted log-likelihood of every training sample is unchanged;
+     * see {@code LearnedWeightsTreeObjectiveFunctionCanonicalizationTest} for the invariance check.
+     *
+     * <p>Scoped to the default regression configuration: a no-op when
+     * {@code separateBaseAndQuadraticCalibration}, {@code scaleQuadraticPartOnly}, or
+     * {@code trainQuadraticOnly} is set (those change how rate enters the prediction) or when
+     * Brownian rates are not being optimized (then embedding scale is not degenerate with rate,
+     * since rate cannot move to compensate).
+     */
+    public double[] canonicalizeParameters(double[] parameters) {
+        validateParameters(parameters);
+        double[] canonical = Arrays.copyOf(parameters, parameters.length);
+        if (!optimizeBrownianRates || separateBaseAndQuadraticCalibration || scaleQuadraticPartOnly || trainQuadraticOnly) {
+            return canonical;
+        }
+        double[] slopes = extractSlopes(parameters);
+        LearnedWeightsTreeTrainer.TrainingTreeSample referenceSample = trainingSamples.get(0);
+        int logNormalizerDimension = optimizeRootPriorVariances
+                ? referenceSample.rootFreeLogNormalizerDimension
+                : referenceSample.logNormalizerDimension;
+
+        for (int axis = 0; axis < dim; axis++) {
+            double sumSquares = 0.0;
+            for (int taxon = 0; taxon < taxonCount; taxon++) {
+                double embedding = canonical[taxon * dim + axis];
+                sumSquares += embedding * embedding;
+            }
+            double rms = Math.sqrt(sumSquares / taxonCount);
+            if (!(rms > 0.0) || !Double.isFinite(rms)) {
+                continue;
+            }
+            double scale = 1.0 / rms;
+            for (int taxon = 0; taxon < taxonCount; taxon++) {
+                canonical[taxon * dim + axis] *= scale;
+            }
+            canonical[rateParameterStartIndex + axis] += 2.0 * Math.log(scale);
+            canonical[interceptParameterIndex] += slopes[axis] * logNormalizerDimension * Math.log(scale);
+        }
+        return canonical;
+    }
+
     public double[] extractEmbeddings(double[] parameters) {
         validateParameters(parameters);
         return Arrays.copyOf(parameters, embeddingParameterCount);
