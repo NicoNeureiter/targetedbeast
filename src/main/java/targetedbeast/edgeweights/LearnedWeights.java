@@ -526,7 +526,11 @@ public class LearnedWeights extends Distribution implements EdgeWeights {
         // Picks a canonical point on the embedding<->rate rescaling ridge (see
         // canonicalizeParameters javadoc) before reporting/persisting results, so fitted per-axis
         // rates reflect real anisotropy rather than wherever the optimizer's trajectory happened to
-        // drift. Loss-invariant by construction; does not change which optimum was found.
+        // drift. Fit-loss-invariant by construction; does not change which optimum was found. When
+        // pcaRegularizationWeight > 0, the regularization penalty is not invariant (embeddings move
+        // relative to referenceEmbeddings), so fullFinalLoss/pcaPenalty logged below can differ
+        // slightly from the optimizer's own trajectory endpoint - diagnostic-only, does not affect
+        // model selection (evaluateValidationLoss excludes regularization).
         double[] optimizedTheta = reportingObjective.canonicalizeParameters(result.optimizedTheta);
 
         double[] finalGradient = new double[reportingObjective.getParameterCount()];

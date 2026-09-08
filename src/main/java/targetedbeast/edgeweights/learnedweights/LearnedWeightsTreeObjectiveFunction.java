@@ -846,6 +846,9 @@ public class LearnedWeightsTreeObjectiveFunction implements LearnedWeightsOptimi
      * the exact inverse transform (rate by {@code 1/c^2}, intercept shifted to compensate the
      * log-determinant term) so the predicted log-likelihood of every training sample is unchanged;
      * see {@code LearnedWeightsTreeObjectiveFunctionCanonicalizationTest} for the invariance check.
+     * This only compensates the fit-loss term: when {@code pcaRegularizationWeight > 0}, moving
+     * embeddings to unit RMS norm changes their distance to {@code referenceEmbeddings} and hence
+     * the PCA penalty, so total loss (fit + regularization) is not exactly invariant in that case.
      *
      * <p>Scoped to the default regression configuration: a no-op when
      * {@code separateBaseAndQuadraticCalibration}, {@code scaleQuadraticPartOnly}, or
