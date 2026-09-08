@@ -556,7 +556,7 @@ public class LearnedWeightsTreeObjectiveFunctionTest {
             LearnedWeightsTreeTrainer.TrainingTreeSample baseSample = trainer.buildTrainingSample(trees.get(i % trees.size()), 0.0);
             double surrogate = LearnedWeightsTreeObjectiveFunction.computeSurrogateLogLikelihood(baseSample, theta, 2, 1.0);
             samples.add(new LearnedWeightsTreeTrainer.TrainingTreeSample(
-                    (1.0 + 0.1 * i) * surrogate - 0.25 * i,
+                    (1.0 + 0.1 * i) * surrogate - 0.25 * i - 0.017 * i * i,
                     baseSample.precisionMatrix,
                     baseSample.logDeterminant));
         }
@@ -665,6 +665,90 @@ public class LearnedWeightsTreeObjectiveFunctionTest {
         objective.valueAndGradient(parameters, gradient); // 3rd non-improvement -> patience reached
         assertEquals(3, objective.getConsecutiveValidationNonImprovements());
         assertTrue(objective.shouldStopEarly());
+    }
+
+    @Test
+    public void miniBatchWithValidation_progressesThroughAllTrainIndicesWithinAnEpoch() {
+        // Regression test for a bug where beginIteration() compared batchOrder.length against
+        // trainingSamples.size() instead of trainIndices.length: with validation enabled,
+        // trainIndices.length < trainingSamples.size() always, so the mini-batch schedule reset
+        // (same seed) on every call and batchCursor never advanced -- the same batch was drawn
+        // forever instead of cycling through the train pool.
+        Alignment alignment = createAlignment();
+        double[] theta = new double[] {
+                0.0, 0.2,
+                0.8, -0.1,
+                -0.3, 1.0,
+                1.1, 1.3
+        };
+        LearnedWeightsTreeTrainer trainer = new LearnedWeightsTreeTrainer(null, alignment, 0);
+        List<Tree> trees = createTrees(alignment);
+        List<LearnedWeightsTreeTrainer.TrainingTreeSample> samples = new ArrayList<>();
+        for (int i = 0; i < 12; i++) {
+            LearnedWeightsTreeTrainer.TrainingTreeSample baseSample = trainer.buildTrainingSample(trees.get(i % trees.size()), 0.0);
+            double surrogate = LearnedWeightsTreeObjectiveFunction.computeSurrogateLogLikelihood(baseSample, theta, 2, 1.0);
+            samples.add(new LearnedWeightsTreeTrainer.TrainingTreeSample(
+                    (1.0 + 0.1 * i) * surrogate - 0.25 * i - 0.017 * i * i,
+                    baseSample.precisionMatrix,
+                    baseSample.logDeterminant));
+        }
+
+        LearnedWeightsTreeObjectiveFunction miniBatchObjective = new LearnedWeightsTreeObjectiveFunction(
+                samples, alignment.getTaxonCount(), 2, 1.0, null, 0.0, 0.0, 1, 7L);
+        miniBatchObjective.configureValidation(0.25, 0, 1);
+        miniBatchObjective.beginOptimizationRun("test");
+
+        int[] trainIndices = miniBatchObjective.getTrainIndices();
+        assertTrue("test fixture must actually hold out samples", trainIndices.length < samples.size());
+
+        double[] params = miniBatchObjective.createInitialParameters(theta);
+
+        double[] lossPerIndex = new double[samples.size()];
+        for (int i = 0; i < samples.size(); i++) {
+            LearnedWeightsTreeObjectiveFunction singleton = new LearnedWeightsTreeObjectiveFunction(
+                    List.of(samples.get(i)), alignment.getTaxonCount(), 2, 1.0);
+            lossPerIndex[i] = singleton.value(params);
+        }
+
+        double[] expectedTrainLosses = new double[trainIndices.length];
+        for (int i = 0; i < trainIndices.length; i++) {
+            expectedTrainLosses[i] = lossPerIndex[trainIndices[i]];
+        }
+
+        double[] observedLosses = new double[trainIndices.length];
+        for (int iteration = 0; iteration < trainIndices.length; iteration++) {
+            miniBatchObjective.beginIteration(iteration);
+            observedLosses[iteration] = miniBatchObjective.value(params);
+        }
+
+        Arrays.sort(expectedTrainLosses);
+        Arrays.sort(observedLosses);
+        assertArrayEquals(
+                "mini-batch schedule must visit every train-pool sample exactly once per epoch, not repeat the same one forever",
+                expectedTrainLosses, observedLosses, 1e-9);
+    }
+
+    @Test
+    public void objectivesWithDifferentMiniBatchSizesButMatchingSeed_produceIdenticalValidationSplit() {
+        // Regression test for a bug where LearnedWeights.runLearningPhase() built reportingObjective
+        // with a hardcoded miniBatchSeed=1L while optimizationObjective used the configured
+        // miniBatchSeedInput; when they diverged, reportingObjective's "validation" set could
+        // overlap with samples optimizationObjective actually trained on. The fix ties both
+        // objectives to the same seed regardless of miniBatchSize, which this test verifies at
+        // the split-computation level.
+        List<LearnedWeightsTreeTrainer.TrainingTreeSample> samples = createManySamples(10);
+        long sharedSeed = 99L;
+
+        LearnedWeightsTreeObjectiveFunction reportingObjective = new LearnedWeightsTreeObjectiveFunction(
+                samples, createAlignment().getTaxonCount(), 2, 1.0, null, 0.0, 0.0, 0, sharedSeed);
+        LearnedWeightsTreeObjectiveFunction optimizationObjective = new LearnedWeightsTreeObjectiveFunction(
+                samples, createAlignment().getTaxonCount(), 2, 1.0, null, 0.0, 0.0, 3, sharedSeed);
+
+        reportingObjective.configureValidation(0.3, 0, 1);
+        optimizationObjective.configureValidation(0.3, 0, 1);
+
+        assertArrayEquals(reportingObjective.getTrainIndices(), optimizationObjective.getTrainIndices());
+        assertArrayEquals(reportingObjective.getValidationIndices(), optimizationObjective.getValidationIndices());
     }
 
     private static List<LearnedWeightsTreeTrainer.TrainingTreeSample> createManySamples(int n) {

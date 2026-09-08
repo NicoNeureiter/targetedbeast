@@ -380,7 +380,7 @@ public class LearnedWeights extends Distribution implements EdgeWeights {
             pcaRegularizationWeightInput.get(),
             slopeRegularizationWeightInput.get(),
             0,
-            1L,
+            miniBatchSeedInput.get(),
             useLogSlopeParameterizationInput.get(),
             separateBaseAndQuadraticCalibrationInput.get(),
             scaleQuadraticPartOnlyInput.get(),

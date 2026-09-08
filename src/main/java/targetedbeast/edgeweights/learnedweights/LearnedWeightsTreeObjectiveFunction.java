@@ -545,7 +545,7 @@ public class LearnedWeightsTreeObjectiveFunction implements LearnedWeightsOptimi
             activeBatchCount = trainIndices.length;
             return;
         }
-        if (batchOrder == null || batchOrder.length != trainingSamples.size()) {
+        if (batchOrder == null || batchOrder.length != trainIndices.length) {
             resetMiniBatchSchedule();
         }
         if (batchCursor >= batchOrder.length) {
