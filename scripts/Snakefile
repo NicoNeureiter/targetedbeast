@@ -157,6 +157,19 @@ def render_inputs(wildcards):
               str(PROJECT_ROOT / entry["template"])]
     if entry["renderer"]:
         inputs.append(str(SCRIPT_DIR / f"{entry['renderer']}.py"))
+    # infb's "learned" setting trains on the same-tier "constant" cells' own outputs (see
+    # render_infb_benchmark_xml.py's _learned_edge_weights_xml) - declared here so Snakemake
+    # builds those cells first and re-renders "learned" if they change. Narrowly scoped to
+    # (infb, learned): this is the only renderer/setting pair with this cross-setting dependency.
+    # render_inputs is also called from render_reference_checkpoint (wildcards: only `dataset`)
+    # and render_burnin_speed (wildcards: `dataset`/`setting`/`rep`, no `tier` - its tier is fixed
+    # via reference_tier_of, not a wildcard), so both `setting` and `tier` are looked up with
+    # getattr(..., None) to not blow up on those call sites.
+    tier = getattr(wildcards, "tier", None)
+    if wildcards.dataset == "infb" and getattr(wildcards, "setting", None) == "learned" and tier:
+        for rep in reps_for("infb", tier):
+            cell = CELL_DIR.format(dataset="infb", tier=tier, setting="constant", rep=rep)
+            inputs += [f"{cell}/run.trees", f"{cell}/run.log"]
     return inputs
 
 

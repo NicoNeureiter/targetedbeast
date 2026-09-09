@@ -15,47 +15,15 @@ import argparse
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 TEMPLATE_PATH = PROJECT_ROOT / "examples" / "infb_HA_141" / "template.xml"
 
-# Training data for the "learned" setting below: posterior tree/log pairs from the already-run,
-# ESS-gated thorough-tier `pca_grid_mid` comparison (runs/eval6/infb/pca_grid_mid/rep{0..3}),
-# reused as-is rather than generating a fresh posterior sample. Both trainingTreeFile and
-# trainingLogFile take multiple entries in XML (one <trainingTreeFile>/<trainingLogFile> element
-# per rep, combined). Burnin/thin are both left at the training-side minimum (0/1) because these
-# posterior samples already start strictly after BenchmarkMCMC's own preBurnin (100,000 states).
-_LEARNED_TRAINING_RUN_DIR = (
-    "/Users/nneureiter/Projects/BEAST3/targetedbeast/runs/eval6/infb/pca_grid_mid"
-)
-_LEARNED_TRAINING_REPS = [0, 1, 2, 3]
-_LEARNED_TRAINING_TREE_FILES = '\n        '.join(
-    f'<trainingTreeFile>{_LEARNED_TRAINING_RUN_DIR}/rep{r}/run.trees</trainingTreeFile>'
-    for r in _LEARNED_TRAINING_REPS
-)
-_LEARNED_TRAINING_LOG_FILES = '\n        '.join(
-    f'<trainingLogFile>{_LEARNED_TRAINING_RUN_DIR}/rep{r}/run.log</trainingLogFile>'
-    for r in _LEARNED_TRAINING_REPS
-)
-# Where the fitted model is cached: LearnedWeights trains once (first XML parse that hits this
-# path missing) and then loads the cached fit on every subsequent parse (each benchmark rep),
-# so training only happens once regardless of --reps.
-LEARNED_WEIGHTS_FILE = (
-    "/Users/nneureiter/Projects/BEAST3/targetedbeast/.claude/worktrees/agent-learned-weights"
-    "/runs/learned_fit/infb_learned.weights.tsv"
-)
+# Training data for the "learned" setting: reuses the harness's own completed `constant` cells for
+# the same (dataset, tier) - see _learned_edge_weights_xml() below, which discovers them from
+# out_dir at render time (posterior samples are exchangeable regardless of which setting produced
+# them, so there is no reason to pin this to one historical run - see render_run_xml's docstring).
 
 EDGE_WEIGHTS_XML = {
     "constant": '<distribution id="edgeweights" spec="targetedbeast.edgeweights.ConstantWeights" tree="@tree"/>',
-    # Offline-trained LearnedWeights: trains a Brownian-surrogate embedding from the pca_grid_mid
-    # posterior samples above (dimension=10 to match "pca"'s PCAWeights2 dimension), then caches
-    # to LEARNED_WEIGHTS_FILE. Modest optimizer budget (not a hyperparameter search) - the goal is
-    # a working trained artifact for a first thorough-tier comparison, not the best possible fit.
-    "learned": ('<distribution id="edgeweights" spec="targetedbeast.edgeweights.LearnedWeights" '
-                'tree="@tree" data="@infB_HA" likelihood="@treeLikelihood" maxWeight="20" '
-                'dimension="10" nTrainingTrees="3000" maxIterations="3000" learningRate="0.02" '
-                'pcaRegularizationWeight="1e-3" slopeRegularizationWeight="1e-3" miniBatchSize="300" '
-                'useLogSlopeParameterization="true" trainingTreeBurninPercentage="0" '
-                f'trainingTreeThinInterval="1" trainedWeightsFile="{LEARNED_WEIGHTS_FILE}">\n'
-                f'        {_LEARNED_TRAINING_TREE_FILES}\n'
-                f'        {_LEARNED_TRAINING_LOG_FILES}\n'
-                '        </distribution>'),
+    # Built dynamically per out_dir by _learned_edge_weights_xml() - see render_run_xml.
+    "learned": None,
     "parsimony": '<distribution id="edgeweights" spec="targetedbeast.edgeweights.ParsimonyWeights2" '
                  'tree="@tree" maxWeight="20" data="@infB_HA"/>',
     "pca": '<distribution id="edgeweights" spec="targetedbeast.edgeweights.PCAWeights2" '
@@ -316,14 +284,59 @@ EDGE_WEIGHT_TRANSFORM_FOR_SETTING = {
 }
 
 
+def _learned_edge_weights_xml(out_dir: Path) -> str:
+    """Build the "learned" setting's LearnedWeights element, training on the sibling `constant`
+    cells for the same (dataset, tier) - out_dir is <dataset>/<tier>/learned/rep<rep>, so
+    out_dir.parent.parent/constant holds those cells. Posterior samples are exchangeable
+    regardless of which setting produced them, so any completed `constant` reps at this tier are
+    valid training data - discovered here rather than hardcoded, since reps-per-tier varies.
+    """
+    constant_dir = out_dir.parent.parent / "constant"
+    rep_dirs = sorted(
+        (p for p in constant_dir.glob("rep*")
+         if (p / "run.trees").exists() and (p / "run.log").exists()),
+        key=lambda p: int(p.name[len("rep"):]),
+    )
+    if not rep_dirs:
+        raise SystemExit(
+            f'No completed `constant` reps found under "{constant_dir}" (need rep*/run.trees + '
+            'rep*/run.log in each). The "learned" setting trains on constant\'s posterior '
+            "samples - run constant's cells for this tier first, e.g. via the Snakefile "
+            "(`snakemake -j... runs/<dataset>/<tier>/summary.tsv`), then re-render learned."
+        )
+    tree_files = '\n        '.join(
+        f'<trainingTreeFile>{p / "run.trees"}</trainingTreeFile>' for p in rep_dirs
+    )
+    log_files = '\n        '.join(
+        f'<trainingLogFile>{p / "run.log"}</trainingLogFile>' for p in rep_dirs
+    )
+    # Where the fitted model is cached: LearnedWeights trains once (first XML parse that hits this
+    # path missing) and loads the cached fit on every subsequent parse within the same process.
+    # Scoped under out_dir itself (each rep's own cell) rather than a shared path, since each rep
+    # is rendered/run as its own separate BEAST process - there was never a cross-rep sharing
+    # benefit, and a shared path is a write/read race if reps ever run concurrently (-j>1).
+    trained_weights_file = out_dir / "learned.weights.tsv"
+    return ('<distribution id="edgeweights" spec="targetedbeast.edgeweights.LearnedWeights" '
+            'tree="@tree" data="@infB_HA" likelihood="@treeLikelihood" maxWeight="20" '
+            'dimension="10" nTrainingTrees="3000" maxIterations="3000" learningRate="0.02" '
+            'pcaRegularizationWeight="1e-3" slopeRegularizationWeight="1e-3" miniBatchSize="300" '
+            'useLogSlopeParameterization="true" trainingTreeBurninPercentage="0" '
+            f'trainingTreeThinInterval="1" trainedWeightsFile="{trained_weights_file}">\n'
+            f'        {tree_files}\n'
+            f'        {log_files}\n'
+            '        </distribution>')
+
+
 def render_run_xml(template_text: str, setting: str, chain_length: int, out_dir: Path,
                     jump_interval: int, pre_burnin: int) -> str:
     transform_element, transform_ref, transform_log = \
         WEIGHT_TRANSFORM_XML[WEIGHT_TRANSFORM_FOR_SETTING[setting]]
     edge_transform_element, edge_transform_ref, edge_transform_log = \
         EDGE_WEIGHT_TRANSFORM_XML[EDGE_WEIGHT_TRANSFORM_FOR_SETTING.get(setting, "none")]
+    edge_weights = (_learned_edge_weights_xml(out_dir) if setting == "learned"
+                     else EDGE_WEIGHTS_XML[setting])
     xml = template_text.format(
-        edge_weights=EDGE_WEIGHTS_XML[setting],
+        edge_weights=edge_weights,
         chain_length=str(chain_length),
         target_weight_transform=transform_element,
         target_weight_transform_ref=transform_ref,
@@ -362,6 +375,9 @@ def render_run_xml(template_text: str, setting: str, chain_length: int, out_dir:
 
 
 def main() -> None:
+    # Ad hoc single-tree mode, outside the Snakefile grid. out_dir is <out-root>/<setting>/rep<rep>
+    # - the same shape render_run_xml expects, so "learned" works here too, but only if the caller
+    # has already populated <out-root>/constant/rep*/{run.trees,run.log} themselves first.
     parser = argparse.ArgumentParser()
     parser.add_argument("--settings", choices=list(EDGE_WEIGHTS_XML), nargs="+", required=True)
     parser.add_argument("--reps", type=int, required=True)
