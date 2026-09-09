@@ -4,15 +4,24 @@
 # multi-dataset harness driven by scripts/datasets.yaml. Pipeline, per (dataset, tier, setting,
 # rep) cell:
 #
-#   1. `mvn -o compile` (re)compiles targetedbeast onto target/classes, which exec:exec's
-#      --module-path %classpath picks up directly - no ant, no unzip-into-install-dir, no
-#      hardcoded BEAST 2.7 path. This step reruns whenever a Java source file changes.
-#   2. `render_xml.py` renders one cell's run.xml from datasets.yaml + the dataset's own renderer
+#   1. `render_xml.py` renders one cell's run.xml from datasets.yaml + the dataset's own renderer
 #      script (render_infb_benchmark_xml.py / render_iecor_benchmark_xml.py) or, for primates,
 #      render_xml.py's own render_primates().
+#   2. Each run_beast* rule's shell command starts with `mvn -o compile -q &&`: this
+#      (re)compiles targetedbeast onto target/classes, which exec:exec's --module-path %classpath
+#      picks up directly - no ant, no unzip-into-install-dir, no hardcoded BEAST 2.7 path. This is
+#      deliberately *not* a Snakemake `input:` dependency (no rule/marker file for it, unlike the
+#      old `rule build`/BUILD_MARKER) - mvn's own incremental compilation already makes a no-op
+#      recompile fast, and keeping it out of the DAG means editing an unrelated Java file no
+#      longer makes Snakemake consider every already-completed cell stale (it used to, via
+#      BUILD_MARKER's mtime touching every cell that depended on it - including reference cells
+#      that took ~61 minutes to produce). `write_cell_manifest.py` (run.xml's sha256 + the git
+#      commit at run time) is the replacement record of what code actually produced a cell -
+#      see `check_reference_freshness.py` / rule check_references below.
 #   3. BEAST runs the cell through `mvn -o exec:exec` on the module path, producing
 #      run.log/run.trees/run.xml.state/run.opstats.tsv (BenchmarkMCMC's own per-operator +
-#      chain-level statistics report) and a timed run.runtime.
+#      chain-level statistics report), a timed run.runtime, and (only after the run succeeds)
+#      cell.manifest.json.
 #   4. `smoke`/`fast` tiers stop at opstats.tsv - no ESS claim is made at those chain lengths
 #      (Phase 3a). `thorough`/`cross-check` also run loganalyser (ESS is exactly what gates
 #      those tiers, per docs/evaluation/where-targeting-wins.md).
@@ -71,9 +80,6 @@ LOGANALYSER = config.get(
     str(PROJECT_ROOT.parent / "beast3" / "bin" / "loganalyser"),
 )
 BURNIN = int(config.get("burnin", 10))
-
-JAVA_SOURCES = [str(p) for p in (PROJECT_ROOT / "src" / "main" / "java").rglob("*.java")]
-BUILD_MARKER = str(PROJECT_ROOT / "target" / ".compiled.marker")
 
 CELL_DIR = str(RUNS_ROOT / "{dataset}" / "{tier}" / "{setting}" / "rep{rep}")
 
@@ -144,20 +150,6 @@ rule cross_check:
         str(RUNS_ROOT / "iecor" / "cross-check" / "summary.tsv"),
 
 
-rule build:
-    input:
-        JAVA_SOURCES,
-        str(PROJECT_ROOT / "pom.xml"),
-    output:
-        touch(BUILD_MARKER),
-    shell:
-        # compile, not package: exec:exec's module path reads target/classes directly, and
-        # package additionally builds the distributable zip / runs the assembly plugin, which
-        # nothing in this pipeline needs (mvn package remains the right command for that,
-        # unrelated to running benchmark cells).
-        'cd "{PROJECT_ROOT}" && mvn -o compile -q'
-
-
 def render_inputs(wildcards):
     entry = REGISTRY[wildcards.dataset]
     inputs = [str(SCRIPT_DIR / "render_xml.py"), str(SCRIPT_DIR / "datasets.yaml"),
@@ -183,7 +175,6 @@ rule render:
 rule run_beast:
     input:
         xml=CELL_DIR + "/run.xml",
-        build=BUILD_MARKER,
     params:
         seed=beast_seed,
     output:
@@ -192,6 +183,7 @@ rule run_beast:
         state=CELL_DIR + "/run.xml.state",
         opstats=CELL_DIR + "/run.opstats.tsv",
         runtime=CELL_DIR + "/run.runtime",
+        manifest=CELL_DIR + "/cell.manifest.json",
     wildcard_constraints:
         # fast/smoke only - thorough/cross-check use run_beast_checkpointed below.
         tier=FRESH_TIER_PATTERN,
@@ -206,10 +198,17 @@ rule run_beast:
         # Since every rendered run.xml is literally named "run.xml", every cell would otherwise
         # clobber the same "<project root>/run.xml.state" - confirmed by running one cell without
         # this flag and finding the state file in the project root, not the cell directory.
-        'cd "{PROJECT_ROOT}" && SECONDS=0 && '
+        #
+        # `mvn -o compile -q` is prefixed here rather than declared as a Snakemake input (no
+        # BUILD_MARKER) - see module docstring above.
+        'cd "{PROJECT_ROOT}" && mvn -o compile -q && SECONDS=0 && '
         "mvn -o exec:exec -Dbeast.main=beast.base.minimal.BeastMain "
         '-Dbeast.args="-overwrite -seed {params.seed} -statefile {output.state} {input.xml}" && '
-        'echo $SECONDS > "{output.runtime}"'
+        'echo $SECONDS > "{output.runtime}" && '
+        "python3 {SCRIPT_DIR}/write_cell_manifest.py --repo \"{PROJECT_ROOT}\" "
+        '--xml "{input.xml}" --dataset {wildcards.dataset} --tier {wildcards.tier} '
+        "--setting {wildcards.setting} --rep {wildcards.rep} --seed {params.seed} "
+        '--out "{output.manifest}"'
 
 
 # ---------------------------------------------------------------------------------------------
@@ -241,7 +240,9 @@ rule render_reference_checkpoint:
 rule run_beast_reference_checkpoint:
     input:
         xml=REFERENCE_CHECKPOINT_DIR + "/run.xml",
-        build=BUILD_MARKER,
+    params:
+        tier=lambda wc: reference_tier_of(wc.dataset),
+        setting=lambda wc: settings_for(wc.dataset)[0],
     output:
         log=REFERENCE_CHECKPOINT_DIR + "/run.log",
         trees=REFERENCE_CHECKPOINT_DIR + "/run.trees",
@@ -249,15 +250,20 @@ rule run_beast_reference_checkpoint:
         checkpoint=REFERENCE_CHECKPOINT_DIR + "/checkpoint.state",
         opstats=REFERENCE_CHECKPOINT_DIR + "/run.opstats.tsv",
         runtime=REFERENCE_CHECKPOINT_DIR + "/run.runtime",
+        manifest=REFERENCE_CHECKPOINT_DIR + "/cell.manifest.json",
     shell:
         # Seed 1000, matching seed=1000+rep at rep=0 (beast_seed) - this run stands in for what
         # used to be the baseline-setting/rep0 thorough/cross-check cell, at the same seed.
         # checkpoint.state is BenchmarkMCMC's own output (checkpointOut, written at sampleNr==0 -
         # the burn-in boundary), not something this shell command produces directly.
-        'cd "{PROJECT_ROOT}" && SECONDS=0 && '
+        'cd "{PROJECT_ROOT}" && mvn -o compile -q && SECONDS=0 && '
         "mvn -o exec:exec -Dbeast.main=beast.base.minimal.BeastMain "
         '-Dbeast.args="-overwrite -seed 1000 -statefile {output.state} {input.xml}" && '
-        'echo $SECONDS > "{output.runtime}"'
+        'echo $SECONDS > "{output.runtime}" && '
+        "python3 {SCRIPT_DIR}/write_cell_manifest.py --repo \"{PROJECT_ROOT}\" "
+        '--xml "{input.xml}" --dataset {wildcards.dataset} --tier {params.tier} '
+        "--setting {params.setting} --rep 0 --seed 1000 "
+        '--out "{output.manifest}"'
 
 
 def checkpoint_donor_state(wildcards):
@@ -267,7 +273,6 @@ def checkpoint_donor_state(wildcards):
 rule run_beast_checkpointed:
     input:
         xml=CELL_DIR + "/run.xml",
-        build=BUILD_MARKER,
         donor_checkpoint=checkpoint_donor_state,
     params:
         seed=beast_seed,
@@ -277,6 +282,7 @@ rule run_beast_checkpointed:
         state=CELL_DIR + "/run.xml.state",
         opstats=CELL_DIR + "/run.opstats.tsv",
         runtime=CELL_DIR + "/run.runtime",
+        manifest=CELL_DIR + "/cell.manifest.json",
     wildcard_constraints:
         tier=CHECKPOINT_TIER_PATTERN,
     shell:
@@ -290,11 +296,15 @@ rule run_beast_checkpointed:
         # core MCMC regardless of the rendered XML's own preBurnin value - the cell's rendered XML
         # is otherwise identical to a fresh-start cell's (same pre_burnin/chain_length/jumpInterval
         # from datasets.yaml), it just never uses its own preBurnin on resume.
-        'cd "{PROJECT_ROOT}" && SECONDS=0 && '
+        'cd "{PROJECT_ROOT}" && mvn -o compile -q && SECONDS=0 && '
         'cp "{input.donor_checkpoint}" "{output.state}" && '
         "mvn -o exec:exec -Dbeast.main=beast.base.minimal.BeastMain "
         '-Dbeast.args="-resume -seed {params.seed} -statefile {output.state} {input.xml}" && '
-        'echo $SECONDS > "{output.runtime}"'
+        'echo $SECONDS > "{output.runtime}" && '
+        "python3 {SCRIPT_DIR}/write_cell_manifest.py --repo \"{PROJECT_ROOT}\" "
+        '--xml "{input.xml}" --dataset {wildcards.dataset} --tier {wildcards.tier} '
+        "--setting {wildcards.setting} --rep {wildcards.rep} --seed {params.seed} "
+        '--out "{output.manifest}"'
 
 
 rule loganalyser:
@@ -349,6 +359,35 @@ rule aggregate:
                 lines = Path(path).read_text().splitlines()
                 rows = lines if i == 0 else lines[1:]
                 out.write("\n".join(rows) + "\n")
+        # Warn-only, informational only - never gates or blocks this rule (see rule
+        # check_references below); this is a one-line pointer, not the check itself.
+        print(f"To check these cells' provenance against HEAD: "
+              f"snakemake -j1 runs/{wildcards.dataset}/{wildcards.tier}/.check_references.done")
+
+
+rule check_references:
+    # Explicit, per-(dataset, tier) target only, requested by output path (rule has wildcards, so
+    # `snakemake check_references` alone is ambiguous) - mirrors cross_check/burnin_speed_summary,
+    # never swept into `rule all`:
+    #   snakemake -j1 runs/infb/thorough/.check_references.done
+    # Warn-only report (check_reference_freshness.py never exits non-zero).
+    input:
+        lambda wc: expand(
+            CELL_DIR + "/cell.manifest.json",
+            dataset=wc.dataset, tier=wc.tier,
+            setting=settings_for(wc.dataset), rep=reps_for(wc.dataset, wc.tier),
+        ),
+    output:
+        touch(str(RUNS_ROOT / "{dataset}" / "{tier}" / ".check_references.done")),
+    wildcard_constraints:
+        tier=TIER_PATTERN,
+    params:
+        # check_reference_freshness.py takes cell directories, not manifest files directly - each
+        # input path is CELL_DIR + "/cell.manifest.json", so its parent is the cell directory.
+        cell_dirs=lambda wc, input: [str(Path(p).parent) for p in input],
+    shell:
+        "python3 {SCRIPT_DIR}/check_reference_freshness.py --repo \"{PROJECT_ROOT}\" "
+        "{params.cell_dirs}"
 
 
 # ---------------------------------------------------------------------------------------------
@@ -401,9 +440,9 @@ rule render_burnin_speed:
 rule run_beast_burnin_speed:
     input:
         xml=BURNIN_SPEED_CELL_DIR + "/run.xml",
-        build=BUILD_MARKER,
     params:
         seed=beast_seed,
+        tier=lambda wc: reference_tier_of(wc.dataset),
     output:
         log=BURNIN_SPEED_CELL_DIR + "/run.log",
         trees=BURNIN_SPEED_CELL_DIR + "/run.trees",
@@ -411,14 +450,21 @@ rule run_beast_burnin_speed:
         opstats=BURNIN_SPEED_CELL_DIR + "/run.opstats.tsv",
         burnin=BURNIN_SPEED_CELL_DIR + "/run.burnin.tsv",
         runtime=BURNIN_SPEED_CELL_DIR + "/run.runtime",
+        manifest=BURNIN_SPEED_CELL_DIR + "/cell.manifest.json",
     shell:
         # Identical invocation to rule run_beast; run.burnin.tsv is BenchmarkMCMC's own extra
         # output, written on close() because referenceLowerBound/referenceUpperBound are set on
-        # this cell's XML (see BenchmarkMCMC.writeBurnInSpeedFile).
-        'cd "{PROJECT_ROOT}" && SECONDS=0 && '
+        # this cell's XML (see BenchmarkMCMC.writeBurnInSpeedFile). manifest's tier field records
+        # the reference_tier chain shape actually used (see render_burnin_speed), not the literal
+        # "burnin-speed" path segment.
+        'cd "{PROJECT_ROOT}" && mvn -o compile -q && SECONDS=0 && '
         "mvn -o exec:exec -Dbeast.main=beast.base.minimal.BeastMain "
         '-Dbeast.args="-overwrite -seed {params.seed} -statefile {output.state} {input.xml}" && '
-        'echo $SECONDS > "{output.runtime}"'
+        'echo $SECONDS > "{output.runtime}" && '
+        "python3 {SCRIPT_DIR}/write_cell_manifest.py --repo \"{PROJECT_ROOT}\" "
+        '--xml "{input.xml}" --dataset {wildcards.dataset} --tier {params.tier} '
+        "--setting {wildcards.setting} --rep {wildcards.rep} --seed {params.seed} "
+        '--out "{output.manifest}"'
 
 
 rule collect_burnin_speed_cell:
