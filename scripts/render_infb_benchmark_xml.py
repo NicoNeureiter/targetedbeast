@@ -319,7 +319,14 @@ def _learned_edge_weights_xml(out_dir: Path) -> str:
     return ('<distribution id="edgeweights" spec="targetedbeast.edgeweights.LearnedWeights" '
             'tree="@tree" data="@infB_HA" likelihood="@treeLikelihood" maxWeight="20" '
             'dimension="10" nTrainingTrees="3000" maxIterations="3000" learningRate="0.02" '
-            'pcaRegularizationWeight="1e-3" slopeRegularizationWeight="1e-3" miniBatchSize="300" '
+            # pcaRegularizationWeight=0 (2026-09-09): a mechanical hyperparameter sweep found
+            # pulling the embedding toward the PCA reference actively hurts offline fit quality
+            # at this training-data regime (pearson 0.308 -> 0.371 with regularization removed,
+            # and pearson dropped further when it was increased) - opposite of slope
+            # regularization, which stayed load-bearing at its current default. dimension=10 and
+            # slopeRegularizationWeight=1e-3 both showed only marginal deltas in that sweep, so
+            # they're left as-is for now.
+            'pcaRegularizationWeight="0" slopeRegularizationWeight="1e-3" miniBatchSize="300" '
             'useLogSlopeParameterization="true" trainingTreeBurninPercentage="0" '
             f'trainingTreeThinInterval="1" trainedWeightsFile="{trained_weights_file}">\n'
             f'        {tree_files}\n'
