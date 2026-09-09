@@ -530,6 +530,31 @@ public class LearnedWeightsTreeObjectiveFunctionTest {
     }
 
     @Test
+    public void evaluateBeforeFirstBeginIteration_withValidationEnabled_doesNotThrow() {
+        // Regression test: activeBatchCount used to be set once at construction time from the
+        // full (pre-split) sample count and only refreshed inside beginIteration(). A value()/
+        // evaluate() call made before the first beginIteration() - e.g. the initial-loss
+        // computation an optimizer run performs before its first iteration - indexed
+        // resolveSampleIndex() against that stale, larger count while trainIndices had already
+        // shrunk to the post-split size, throwing ArrayIndexOutOfBoundsException (observed via
+        // LearnedWeightsFitCli with a real 500-sample / 20% validation split: "Index 400 out of
+        // bounds for length 400"). Reproduced here at a smaller scale with the full-batch
+        // (miniBatchSize=0) construction shape LearnedWeights.java's reportingObjective uses.
+        List<LearnedWeightsTreeTrainer.TrainingTreeSample> samples = createManySamples(10);
+        LearnedWeightsTreeObjectiveFunction objective = newObjectiveWithSamples(samples, 42L);
+        objective.configureValidation(0.3, 0, 1);
+
+        assertEquals(7, objective.getTrainIndices().length);
+
+        double[] initialEmbeddings = new double[createAlignment().getTaxonCount() * 2];
+        double[] params = objective.createInitialParameters(initialEmbeddings);
+
+        // No beginIteration(...) call before this - must not throw.
+        double loss = objective.value(params);
+        assertTrue("loss must be finite", Double.isFinite(loss));
+    }
+
+    @Test
     public void validationFractionZero_disablesValidationAndKeepsFullTrainingPool() {
         List<LearnedWeightsTreeTrainer.TrainingTreeSample> samples = createManySamples(10);
         LearnedWeightsTreeObjectiveFunction objective = newObjectiveWithSamples(samples, 42L);

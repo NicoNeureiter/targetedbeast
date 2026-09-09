@@ -391,6 +391,7 @@ public class LearnedWeightsTreeObjectiveFunction implements LearnedWeightsOptimi
         if (validationCount <= 0 || validationCount >= n) {
             trainIndices = identityIndices(n);
             validationIndices = new int[0];
+            resetBatchStateForCurrentTrainIndices();
             return;
         }
         int[] shuffled = identityIndices(n);
@@ -405,6 +406,26 @@ public class LearnedWeightsTreeObjectiveFunction implements LearnedWeightsOptimi
         trainIndices = Arrays.copyOfRange(shuffled, validationCount, n);
         Arrays.sort(validationIndices);
         Arrays.sort(trainIndices);
+        resetBatchStateForCurrentTrainIndices();
+    }
+
+    /**
+     * activeBatchCount is set once at construction time from the full (pre-split) sample count
+     * (see the constructor) and is otherwise only refreshed by beginIteration(). A call to
+     * evaluate()/value() made before the first beginIteration() - e.g. the initial-loss
+     * computation at the start of an optimizer run - would otherwise index resolveSampleIndex()
+     * against the stale, larger count while trainIndices has already shrunk to the post-split
+     * size, throwing ArrayIndexOutOfBoundsException. Mirrors beginIteration()'s own full-batch
+     * reset so any evaluate() call is safe immediately after a split, regardless of whether
+     * beginIteration() has run yet; the mini-batch case still rebuilds its own shuffled schedule
+     * on the first real beginIteration() call via its existing batchOrder-length staleness check.
+     */
+    private void resetBatchStateForCurrentTrainIndices() {
+        activeBatchStart = 0;
+        activeBatchCount = trainIndices.length;
+        batchOrder = null;
+        batchCursor = 0;
+        miniBatchRandom = null;
     }
 
     private static int[] identityIndices(int n) {
