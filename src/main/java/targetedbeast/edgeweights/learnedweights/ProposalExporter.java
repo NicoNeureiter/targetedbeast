@@ -6,6 +6,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Locale;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 import beast.base.core.Log;
 import beast.base.evolution.tree.Node;
@@ -25,7 +26,9 @@ import beast.base.evolution.tree.Tree;
  *       independent likelihood evaluator (no live MCMC state is touched),</li>
  *   <li>builds the same (precisionMatrix, logDet, root-free Cholesky, ...)
  *       quantities the training pipeline expects, and</li>
- *   <li>appends a row to the output TSV in the same V4 format that the Python
+ *   <li>appends a row to the output TSV in the V5 format (V4 plus a groupId
+ *       identifying which competing-candidate regraft set the row came from,
+ *       and the tree-size covariates), which is a superset of what the Python
  *       loader ({@code surrogate_training/loader.py}) consumes.</li>
  * </ol>
  *
@@ -55,6 +58,9 @@ public final class ProposalExporter {
     private final int stride;
     private final AtomicInteger callCount = new AtomicInteger(0);
     private final AtomicInteger rowCount  = new AtomicInteger(0);
+    // Incremented once per competing-candidate set (one fromNode against its toNodeNrs batch);
+    // starts at NO_GROUP so a caller that never calls beginGroup() exports ungrouped rows.
+    private final AtomicLong groupCounter = new AtomicLong(LearnedWeightsTreeTrainer.TrainingTreeSample.NO_GROUP);
     private BufferedWriter writer;
     private boolean headerWritten = false;
 
@@ -86,6 +92,15 @@ public final class ProposalExporter {
 
     public boolean isFull() {
         return rowCount.get() >= maxRows;
+    }
+
+    /**
+     * Mark the start of a new competing-candidate set: call once per
+     * {@code getTargetWeightsAtHeights}/{@code getTargetWeightsInteger} invocation,
+     * before exporting any of its candidate proposals, so they all share one groupId.
+     */
+    public void beginGroup() {
+        groupCounter.incrementAndGet();
     }
 
     /**
@@ -158,13 +173,13 @@ public final class ProposalExporter {
         // 4. Build training sample (V matrix + logDet + root-free factor + ...).
         LearnedWeightsTreeTrainer.TrainingTreeSample sample;
         try {
-            sample = trainer.buildTrainingSample(copy, trueLL);
+            sample = trainer.buildTrainingSample(copy, trueLL, groupCounter.get());
         } catch (RuntimeException ex) {
             return;
         }
         if (sample.rootFreeCovarianceCholeskyLower == null) return;
 
-        // 5. Write a V4 row.
+        // 5. Write a V5 row.
         try {
             appendSample(sample);
         } catch (IOException e) {
@@ -219,7 +234,7 @@ public final class ProposalExporter {
     }
 
     private void writeHeader() throws IOException {
-        writer.write("# LearnedWeightsTrainingSamplesV4");
+        writer.write("# LearnedWeightsTrainingSamplesV5");
         writer.newLine();
         writer.write("taxa");
         for (String taxon : canonicalTaxa) {
@@ -237,6 +252,10 @@ public final class ProposalExporter {
         sb.append('\t').append(sample.logNormalizerDimension);
         sb.append('\t').append(String.format(Locale.US, "%.8g", sample.rootFreeLogDeterminant));
         sb.append('\t').append(sample.rootFreeLogNormalizerDimension);
+        sb.append('\t').append(sample.groupId);
+        sb.append('\t').append(String.format(Locale.US, "%.8g", sample.rootHeight));
+        sb.append('\t').append(String.format(Locale.US, "%.8g", sample.totalBranchLength));
+        sb.append('\t').append(String.format(Locale.US, "%.8g", sample.totalDiffusionLength));
         for (double[] row : sample.precisionMatrix) {
             for (double v : row) {
                 sb.append('\t').append(String.format(Locale.US, "%.8g", v));

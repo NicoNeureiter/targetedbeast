@@ -54,6 +54,9 @@ public class LearnedWeightsTreeTrainer {
     private static final Pattern TRAILING_INTEGER_PATTERN = Pattern.compile("(\\d+)$");
 
     public static final class TrainingTreeSample {
+        /** Sentinel groupId for samples that don't come from a competing-candidate set. */
+        public static final long NO_GROUP = -1L;
+
         public final double targetLogLikelihood;
         // Stored as the inverse Brownian covariance so valid off-diagonal entries can be negative.
         public final double[][] precisionMatrix;
@@ -68,6 +71,9 @@ public class LearnedWeightsTreeTrainer {
         public final double rootHeight;
         public final double totalBranchLength;
         public final double totalDiffusionLength;
+        // Identifies which competing-candidate regraft set (same fromNode, same toNodeNrs batch)
+        // this proposal was scored in; NO_GROUP for samples that aren't proposal-export rows.
+        public final long groupId;
 
         public TrainingTreeSample(double targetLogLikelihood, double[][] precisionMatrix, double logDeterminant) {
             this(targetLogLikelihood, precisionMatrix, logDeterminant, precisionMatrix.length,
@@ -96,7 +102,7 @@ public class LearnedWeightsTreeTrainer {
                 double rootHeight, double totalBranchLength, double totalDiffusionLength) {
             this(targetLogLikelihood, precisionMatrix, logDeterminant, logNormalizerDimension,
                     rootFreePrecisionMatrix, null, rootFreeLogDeterminant, rootFreeLogNormalizerDimension,
-                    rootHeight, totalBranchLength, totalDiffusionLength);
+                    rootHeight, totalBranchLength, totalDiffusionLength, NO_GROUP);
         }
 
         public TrainingTreeSample(double targetLogLikelihood, double[][] precisionMatrix, double logDeterminant,
@@ -105,14 +111,24 @@ public class LearnedWeightsTreeTrainer {
                 double rootHeight, double totalBranchLength, double totalDiffusionLength) {
             this(targetLogLikelihood, precisionMatrix, logDeterminant, logNormalizerDimension,
                     null, rootFreeCovarianceCholeskyLower, rootFreeLogDeterminant, rootFreeLogNormalizerDimension,
-                    rootHeight, totalBranchLength, totalDiffusionLength);
+                    rootHeight, totalBranchLength, totalDiffusionLength, NO_GROUP);
+        }
+
+        /** Overload for callers (e.g. proposal export) that know which competing-candidate group a sample belongs to. */
+        public TrainingTreeSample(double targetLogLikelihood, double[][] precisionMatrix, double logDeterminant,
+                int logNormalizerDimension, double[] rootFreeCovarianceCholeskyLower,
+                double rootFreeLogDeterminant, int rootFreeLogNormalizerDimension,
+                double rootHeight, double totalBranchLength, double totalDiffusionLength, long groupId) {
+            this(targetLogLikelihood, precisionMatrix, logDeterminant, logNormalizerDimension,
+                    null, rootFreeCovarianceCholeskyLower, rootFreeLogDeterminant, rootFreeLogNormalizerDimension,
+                    rootHeight, totalBranchLength, totalDiffusionLength, groupId);
         }
 
         private TrainingTreeSample(double targetLogLikelihood, double[][] precisionMatrix, double logDeterminant,
                 int logNormalizerDimension, double[][] rootFreePrecisionMatrix,
                 double[] rootFreeCovarianceCholeskyLower,
                 double rootFreeLogDeterminant, int rootFreeLogNormalizerDimension,
-                double rootHeight, double totalBranchLength, double totalDiffusionLength) {
+                double rootHeight, double totalBranchLength, double totalDiffusionLength, long groupId) {
             this.targetLogLikelihood = targetLogLikelihood;
             this.precisionMatrix = precisionMatrix;
             this.logDeterminant = logDeterminant;
@@ -137,6 +153,7 @@ public class LearnedWeightsTreeTrainer {
             this.rootHeight = rootHeight;
             this.totalBranchLength = totalBranchLength;
             this.totalDiffusionLength = totalDiffusionLength;
+            this.groupId = groupId;
         }
 
         public int getTaxonCount() {
@@ -824,6 +841,11 @@ public class LearnedWeightsTreeTrainer {
     }
 
     protected TrainingTreeSample buildTrainingSample(Tree tree, double targetLogLikelihood) {
+        return buildTrainingSample(tree, targetLogLikelihood, TrainingTreeSample.NO_GROUP);
+    }
+
+    /** Overload for callers (e.g. proposal export) that can attribute the sample to a competing-candidate group. */
+    protected TrainingTreeSample buildTrainingSample(Tree tree, double targetLogLikelihood, long groupId) {
         double[][] covariance = buildCovarianceMatrix(tree);
         MatrixFactorization factorization = factorizeCovariance(covariance);
         MatrixFactorization rootFreeFactorization = factorizeRootFreeCovariance(covariance, covariance.length);
@@ -838,7 +860,8 @@ public class LearnedWeightsTreeTrainer {
             rootFreeFactorization.logNormalizerDimension,
             treeScaleStatistics.rootHeight,
             treeScaleStatistics.totalBranchLength,
-            treeScaleStatistics.totalDiffusionLength);
+            treeScaleStatistics.totalDiffusionLength,
+            groupId);
     }
 
     private TreeScaleStatistics computeTreeScaleStatistics(Tree tree) {

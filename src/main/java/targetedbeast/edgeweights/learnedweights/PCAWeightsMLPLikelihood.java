@@ -4,6 +4,7 @@ import java.io.BufferedWriter;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import beast.base.core.Log;
@@ -72,6 +73,17 @@ public class PCAWeightsMLPLikelihood extends PCAWeightsBrownianFullLikelihood {
     /** Wire a proposal exporter (system-property gated; may be null). */
     public void setProposalExporter(ProposalExporter exporter) {
         this.proposalExporter = exporter;
+    }
+
+    @Override
+    protected double[] computeProposalLogScores(Node fromNode, GaussianMessage fromInside,
+            List<Integer> toNodeNrs, double[] resolvedHeights) {
+        // One call here == one competing-candidate set (fromNode against its toNodeNrs
+        // batch); mark the group boundary before any of its proposals get exported.
+        if (proposalExporter != null) {
+            proposalExporter.beginGroup();
+        }
+        return super.computeProposalLogScores(fromNode, fromInside, toNodeNrs, resolvedHeights);
     }
 
     @Override
