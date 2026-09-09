@@ -47,47 +47,73 @@ public class PcaEmbeddingDumpCli {
         PackageManager.loadExternalJars();
         BeastCliSupport.registerLocalPackageServices(PcaEmbeddingDumpCli.class, xmlFile);
 
-        XMLParser parser = new XMLParser(new HashMap<>());
-        Runnable runnable = parser.parseFile(xmlFile, false);
-
-        if (!(runnable instanceof BEASTInterface)) {
-            throw new IllegalStateException("Parsed runnable is not a BEASTInterface: " + runnable.getClass().getName());
+        // Only the alignment is needed here, but parsing the XML constructs LearnedWeights, whose
+        // initAndValidate() would otherwise run the full (irrelevant) training phase - fast only
+        // when trainedWeightsFile already holds a cache, slow on a cold one. PATH_BASE_DIR lets
+        // relative training-file paths in the XML resolve against the XML's own directory, as
+        // LearnedWeightsFitCli does; without it such an XML fails to parse at all.
+        String previousSkipLearning = System.getProperty(LearnedWeights.SKIP_LEARNING_SYSTEM_PROPERTY);
+        String previousPathBaseDir = System.getProperty(LearnedWeights.PATH_BASE_DIR_SYSTEM_PROPERTY);
+        System.setProperty(LearnedWeights.SKIP_LEARNING_SYSTEM_PROPERTY, "true");
+        File xmlParent = xmlFile.getParentFile();
+        if (xmlParent != null) {
+            System.setProperty(LearnedWeights.PATH_BASE_DIR_SYSTEM_PROPERTY, xmlParent.getAbsolutePath());
         }
 
-        LearnedWeights learnedWeights = BeastCliSupport.findLearnedWeights((BEASTInterface) runnable, cli.edgeweightsId);
-        if (learnedWeights == null) {
-            throw new IllegalStateException("Could not find a LearnedWeights object"
-                    + (cli.edgeweightsId == null ? "" : " with id='" + cli.edgeweightsId + "'")
-                    + " in XML object graph.");
-        }
+        try {
+            XMLParser parser = new XMLParser(new HashMap<>());
+            Runnable runnable = parser.parseFile(xmlFile, false);
 
-        Alignment alignment = learnedWeights.dataInput.get();
-        int dimension = cli.dimension;
-        Map<String, double[]> points = Alignment2PCA.getPoints(alignment, dimension, true, true);
-
-        List<String> taxa = alignment.getTaxaNames();
-        java.nio.file.Path outPath = Paths.get(cli.outPath);
-        try (PrintStream out = new PrintStream(java.nio.file.Files.newOutputStream(outPath))) {
-            StringBuilder header = new StringBuilder("taxon");
-            for (int d = 0; d < dimension; d++) {
-                header.append("\tpc").append(d);
+            if (!(runnable instanceof BEASTInterface)) {
+                throw new IllegalStateException("Parsed runnable is not a BEASTInterface: " + runnable.getClass().getName());
             }
-            out.println(header);
 
-            for (String taxon : taxa) {
-                double[] point = points.get(taxon);
-                if (point == null) {
-                    throw new IllegalStateException("Taxon '" + taxon + "' is missing from the PCA embedding map.");
-                }
-                StringBuilder row = new StringBuilder(taxon);
+            LearnedWeights learnedWeights = BeastCliSupport.findLearnedWeights((BEASTInterface) runnable, cli.edgeweightsId);
+            if (learnedWeights == null) {
+                throw new IllegalStateException("Could not find a LearnedWeights object"
+                        + (cli.edgeweightsId == null ? "" : " with id='" + cli.edgeweightsId + "'")
+                        + " in XML object graph.");
+            }
+
+            Alignment alignment = learnedWeights.dataInput.get();
+            int dimension = cli.dimension;
+            Map<String, double[]> points = Alignment2PCA.getPoints(alignment, dimension, true, true);
+
+            List<String> taxa = alignment.getTaxaNames();
+            java.nio.file.Path outPath = Paths.get(cli.outPath);
+            try (PrintStream out = new PrintStream(java.nio.file.Files.newOutputStream(outPath))) {
+                StringBuilder header = new StringBuilder("taxon");
                 for (int d = 0; d < dimension; d++) {
-                    row.append('\t').append(String.format(Locale.US, "%.10g", point[d]));
+                    header.append("\tpc").append(d);
                 }
-                out.println(row);
-            }
-        }
+                out.println(header);
 
-        System.out.println("PCA embedding written to " + outPath.toAbsolutePath());
+                for (String taxon : taxa) {
+                    double[] point = points.get(taxon);
+                    if (point == null) {
+                        throw new IllegalStateException("Taxon '" + taxon + "' is missing from the PCA embedding map.");
+                    }
+                    StringBuilder row = new StringBuilder(taxon);
+                    for (int d = 0; d < dimension; d++) {
+                        row.append('\t').append(String.format(Locale.US, "%.10g", point[d]));
+                    }
+                    out.println(row);
+                }
+            }
+
+            System.out.println("PCA embedding written to " + outPath.toAbsolutePath());
+        } finally {
+            restoreProperty(LearnedWeights.SKIP_LEARNING_SYSTEM_PROPERTY, previousSkipLearning);
+            restoreProperty(LearnedWeights.PATH_BASE_DIR_SYSTEM_PROPERTY, previousPathBaseDir);
+        }
+    }
+
+    private static void restoreProperty(String key, String previousValue) {
+        if (previousValue == null) {
+            System.clearProperty(key);
+        } else {
+            System.setProperty(key, previousValue);
+        }
     }
 
     private static void printUsage() {
