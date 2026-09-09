@@ -30,14 +30,18 @@ def git_dirty(repo: Path) -> bool:
     return bool(status.strip())
 
 
-def status_for(manifest: dict | None, head: str, dirty_now: bool) -> str:
+def status_for(manifest: dict | None, head: str) -> str:
     if manifest is None:
         return "no manifest"
-    if manifest.get("git_dirty"):
+    stale = manifest.get("git_commit") != head
+    dirty_at_run_time = bool(manifest.get("git_dirty"))
+    if stale and dirty_at_run_time:
+        return "STALE+DIRTY-AT-RUN-TIME"
+    if dirty_at_run_time:
         return "DIRTY-AT-RUN-TIME"
-    if manifest.get("git_commit") == head:
-        return "OK"
-    return "STALE"
+    if stale:
+        return "STALE"
+    return "OK"
 
 
 def load_manifest(cell_dir: Path) -> dict | None:
@@ -64,7 +68,7 @@ def main() -> None:
     rows = []
     for cell_dir in sorted(args.cell_dirs):
         manifest = load_manifest(cell_dir)
-        status = status_for(manifest, head, dirty_now)
+        status = status_for(manifest, head)
         rows.append((
             manifest.get("dataset", "?") if manifest else "?",
             manifest.get("tier", "?") if manifest else "?",

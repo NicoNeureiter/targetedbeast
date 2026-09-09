@@ -61,6 +61,7 @@
 # (rule run_beast, unchanged, still fresh-starts every cell - Phase 3c item 2's burn-in-speed axis).
 
 import re
+import shlex
 from pathlib import Path
 
 import yaml
@@ -384,7 +385,10 @@ rule check_references:
     params:
         # check_reference_freshness.py takes cell directories, not manifest files directly - each
         # input path is CELL_DIR + "/cell.manifest.json", so its parent is the cell directory.
-        cell_dirs=lambda wc, input: [str(Path(p).parent) for p in input],
+        # shlex.quote'd individually - Snakemake space-joins list params unquoted, which breaks
+        # on any path containing a space (PROJECT_ROOT is space-free here, but not guaranteed in
+        # general, e.g. this workspace's own "Library/Application Support/..." path elsewhere).
+        cell_dirs=lambda wc, input: " ".join(shlex.quote(str(Path(p).parent)) for p in input),
     shell:
         "python3 {SCRIPT_DIR}/check_reference_freshness.py --repo \"{PROJECT_ROOT}\" "
         "{params.cell_dirs}"
