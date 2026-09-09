@@ -3,6 +3,7 @@ package targetedbeast.tools;
 import java.io.File;
 import java.nio.file.Paths;
 import java.util.HashMap;
+import java.util.List;
 
 import beast.base.core.BEASTInterface;
 import beast.base.inference.Runnable;
@@ -10,6 +11,9 @@ import beast.base.parser.XMLParser;
 import beast.pkgmgmt.PackageManager;
 import targetedbeast.edgeweights.LearnedWeights;
 import targetedbeast.edgeweights.learnedweights.LearnedWeightsFitReporter;
+import targetedbeast.edgeweights.learnedweights.LearnedWeightsGroupedMetrics;
+import targetedbeast.edgeweights.learnedweights.LearnedWeightsTrainingSampleIO;
+import targetedbeast.edgeweights.learnedweights.LearnedWeightsTreeTrainer;
 
 /**
  * Standalone CLI to evaluate LearnedWeights fit directly from an XML configuration,
@@ -65,6 +69,16 @@ public class LearnedWeightsFitCli {
             }
 
             LearnedWeightsFitReporter.Report report = LearnedWeightsFitReporter.evaluate(learnedWeights);
+
+            if (cli.proposalsPath != null) {
+                String[] canonicalTaxa = learnedWeights.dataInput.get().getTaxaNames().toArray(new String[0]);
+                List<LearnedWeightsTreeTrainer.TrainingTreeSample> groupedSamples =
+                        LearnedWeightsTrainingSampleIO.readSamples(Paths.get(cli.proposalsPath), canonicalTaxa);
+                LearnedWeightsGroupedMetrics.GroupedReport grouped =
+                        LearnedWeightsGroupedMetrics.evaluate(learnedWeights, groupedSamples);
+                report = report.withGrouped(grouped);
+            }
+
             java.nio.file.Path csvOut = Paths.get(cli.outPrefix + ".weights.csv");
             java.nio.file.Path summaryOut = Paths.get(cli.outPrefix + ".summary.tsv");
 
@@ -101,13 +115,14 @@ public class LearnedWeightsFitCli {
     }
 
     private static void printUsage() {
-        System.out.println("Usage: LearnedWeightsFitCli --xml <file.xml> [--out-prefix <prefix>] [--edgeweights-id <id>] [--train-quadratic-only]");
+        System.out.println("Usage: LearnedWeightsFitCli --xml <file.xml> [--out-prefix <prefix>] [--edgeweights-id <id>] [--train-quadratic-only] [--proposals <path-to-v5-tsv>]");
         System.out.println();
         System.out.println("Examples:");
         System.out.println("  --xml /path/IECoR_targetedLearned.xml");
         System.out.println("  --xml /path/IECoR_targetedLearned.xml --out-prefix /tmp/iecor-fit");
         System.out.println("  --xml /path/IECoR_targetedLearned.xml --edgeweights-id edgeweights");
         System.out.println("  --xml /path/IECoR_targetedLearned.xml --train-quadratic-only");
+        System.out.println("  --xml /path/IECoR_targetedLearned.xml --proposals /tmp/proposals.tsv");
     }
 
     private static final class Args {
@@ -116,6 +131,7 @@ public class LearnedWeightsFitCli {
         String edgeweightsId = "edgeweights";
         boolean trainQuadraticOnly;
         boolean showHelp;
+        String proposalsPath;
 
         static Args parse(String[] args) {
             Args parsed = new Args();
@@ -137,6 +153,9 @@ public class LearnedWeightsFitCli {
                         break;
                     case "--train-quadratic-only":
                         parsed.trainQuadraticOnly = true;
+                        break;
+                    case "--proposals":
+                        parsed.proposalsPath = nextValue(args, ++i, a);
                         break;
                     default:
                         // Allow positional shorthand: first arg = xml, second = out prefix

@@ -104,11 +104,23 @@ public final class LearnedWeightsFitReporter {
         public final Metrics learned;
         public final Metrics pca;
         public final List<Row> rows;
+        /** Grouped (within-candidate-set) ranking metrics; null unless a caller supplied grouped data. */
+        public final LearnedWeightsGroupedMetrics.GroupedReport grouped;
 
         public Report(Metrics learned, Metrics pca, List<Row> rows) {
+            this(learned, pca, rows, null);
+        }
+
+        public Report(Metrics learned, Metrics pca, List<Row> rows, LearnedWeightsGroupedMetrics.GroupedReport grouped) {
             this.learned = learned;
             this.pca = pca;
             this.rows = Collections.unmodifiableList(new ArrayList<>(rows));
+            this.grouped = grouped;
+        }
+
+        /** Returns a copy of this report with grouped ranking metrics attached. */
+        public Report withGrouped(LearnedWeightsGroupedMetrics.GroupedReport grouped) {
+            return new Report(learned, pca, rows, grouped);
         }
     }
 
@@ -254,6 +266,14 @@ public final class LearnedWeightsFitReporter {
             writer.newLine();
             writeMetricsLine(writer, "learned", report.learned);
             writeMetricsLine(writer, "pca", report.pca);
+
+            if (report.grouped != null) {
+                writer.newLine();
+                writer.write("model\tgroupsSeen\tgroupsUsable\tspearmanGroupsUsable\ttop1Accuracy\tmeanSpearman\tmedianSpearman\tmeanNdcg\tmedianNdcg");
+                writer.newLine();
+                writeGroupedMetricsLine(writer, "learned", report.grouped.learned);
+                writeGroupedMetricsLine(writer, "pca", report.grouped.pca);
+            }
         }
     }
 
@@ -262,6 +282,12 @@ public final class LearnedWeightsFitReporter {
         sb.append("Fit metrics (lower KL/RMSE is better, higher correlation/top1 is better)\n");
         sb.append(formatMetrics("learned", report.learned)).append('\n');
         sb.append(formatMetrics("pca", report.pca));
+        if (report.grouped != null) {
+            sb.append('\n');
+            sb.append("Grouped (within-candidate-set) ranking metrics\n");
+            sb.append(formatGroupedMetrics("learned", report.grouped.learned)).append('\n');
+            sb.append(formatGroupedMetrics("pca", report.grouped.pca));
+        }
         return sb.toString();
     }
 
@@ -316,6 +342,37 @@ public final class LearnedWeightsFitReporter {
                 m.top1Accuracy,
                 m.samples,
                 m.pairs);
+    }
+
+    private static void writeGroupedMetricsLine(BufferedWriter writer, String label,
+            LearnedWeightsGroupedMetrics.GroupedMetrics m) throws IOException {
+        writer.write(String.format(Locale.US,
+                "%s\t%d\t%d\t%d\t%.10g\t%.10g\t%.10g\t%.10g\t%.10g",
+                label,
+                m.groupsSeen,
+                m.groupsUsable,
+                m.spearmanGroupsUsable,
+                m.top1Accuracy,
+                m.meanSpearman,
+                m.medianSpearman,
+                m.meanNdcg,
+                m.medianNdcg));
+        writer.newLine();
+    }
+
+    private static String formatGroupedMetrics(String label, LearnedWeightsGroupedMetrics.GroupedMetrics m) {
+        return String.format(Locale.US,
+                "%s: top1=%.4f, meanSpearman=%.4f, medianSpearman=%.4f, meanNdcg=%.4f, medianNdcg=%.4f, "
+                        + "groupsSeen=%d, groupsUsable=%d, spearmanGroupsUsable=%d",
+                label,
+                m.top1Accuracy,
+                m.meanSpearman,
+                m.medianSpearman,
+                m.meanNdcg,
+                m.medianNdcg,
+                m.groupsSeen,
+                m.groupsUsable,
+                m.spearmanGroupsUsable);
     }
 
     private static double[] calibrate(double[] prediction, double[] target) {

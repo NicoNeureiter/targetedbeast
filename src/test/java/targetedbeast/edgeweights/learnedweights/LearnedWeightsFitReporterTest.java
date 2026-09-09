@@ -111,6 +111,53 @@ public class LearnedWeightsFitReporterTest {
         }
     }
 
+    @Test
+    public void withGrouped_appendsGroupedBlockWithoutChangingExistingOutput() throws Exception {
+        Fixture fixture = createFixture();
+
+        LearnedWeights learnedWeights = new LearnedWeights();
+        learnedWeights.initByName(
+                "data", fixture.alignment,
+                "tree", fixture.tree,
+                "likelihood", fixture.likelihood,
+                "dimension", 2,
+                "nTrainingTrees", 2,
+                "maxIterations", 10,
+                "learningRate", 0.05,
+                "offset", 0.01);
+
+        LearnedWeightsFitReporter.Report ungroupedReport = LearnedWeightsFitReporter.evaluate(learnedWeights);
+        assertEquals(null, ungroupedReport.grouped);
+
+        LearnedWeightsGroupedMetrics.GroupedMetrics fakeMetrics = new LearnedWeightsGroupedMetrics.GroupedMetrics(
+                3, 2, 1, 0.5, 0.25, 0.25, 0.75, 0.75);
+        LearnedWeightsGroupedMetrics.GroupedReport fakeGrouped =
+                new LearnedWeightsGroupedMetrics.GroupedReport(fakeMetrics, fakeMetrics);
+        LearnedWeightsFitReporter.Report groupedReport = ungroupedReport.withGrouped(fakeGrouped);
+
+        // The ungrouped-path outputs must be identical whether or not grouped data is later attached.
+        Path summaryUngrouped = Files.createTempFile("learnedweights-fit-summary-ungrouped", ".tsv");
+        Path summaryGrouped = Files.createTempFile("learnedweights-fit-summary-grouped", ".tsv");
+        try {
+            LearnedWeightsFitReporter.writeSummaryTsv(summaryUngrouped, ungroupedReport);
+            LearnedWeightsFitReporter.writeSummaryTsv(summaryGrouped, groupedReport);
+
+            java.util.List<String> ungroupedLines = Files.readAllLines(summaryUngrouped);
+            java.util.List<String> groupedLines = Files.readAllLines(summaryGrouped);
+            assertEquals(ungroupedLines, groupedLines.subList(0, ungroupedLines.size()));
+            assertTrue(groupedLines.size() > ungroupedLines.size());
+            assertTrue(groupedLines.get(ungroupedLines.size() + 1).contains("groupsSeen"));
+
+            String consoleUngrouped = LearnedWeightsFitReporter.formatConsoleSummary(ungroupedReport);
+            String consoleGrouped = LearnedWeightsFitReporter.formatConsoleSummary(groupedReport);
+            assertTrue(consoleGrouped.startsWith(consoleUngrouped));
+            assertTrue(consoleGrouped.contains("meanNdcg="));
+        } finally {
+            Files.deleteIfExists(summaryUngrouped);
+            Files.deleteIfExists(summaryGrouped);
+        }
+    }
+
     private static Fixture createFixture() {
         Sequence seqA = new Sequence("A", "ACGTACGTAA");
         Sequence seqB = new Sequence("B", "ACGTACGTAT");
