@@ -126,7 +126,8 @@ def main() -> None:
                          help="loganalyser -oneline output; omitted for non-ESS-gated tiers")
     parser.add_argument("--trees", type=Path, default=None,
                          help="run.trees file; when given, adds tree-space pseudo-ESS columns "
-                              "(treeESS_min/median/max) via TreeTracer's pseudo-ESS estimator")
+                              "(treeESS_{min,p10,median,max}_{rf,kf}) via TreeTracer's pseudo-ESS "
+                              "estimator, for both RF and KF distance")
     parser.add_argument("--tree-burnin-percent", type=float, default=10.0,
                          help="Burn-in percent for --trees, by tree count. Default 10 (matches "
                               "the loganalyser -b default used for --ess-table).")
@@ -174,10 +175,12 @@ def main() -> None:
 
     if args.trees is not None:
         tree_ess = compute_tree_pseudo_ess(args.trees, args.tree_burnin_percent)
-        row["treeESS_min"] = fmt(tree_ess["min"])
-        row["treeESS_p10"] = fmt(tree_ess["p10"])
-        row["treeESS_median"] = fmt(tree_ess["median"])
-        row["treeESS_max"] = fmt(tree_ess["max"])
+        for metric in ("rf", "kf"):
+            stats = tree_ess[metric]
+            row[f"treeESS_min_{metric}"] = fmt(stats["min"])
+            row[f"treeESS_p10_{metric}"] = fmt(stats["p10"])
+            row[f"treeESS_median_{metric}"] = fmt(stats["median"])
+            row[f"treeESS_max_{metric}"] = fmt(stats["max"])
         row["treeESS_n_trees_used"] = fmt(tree_ess["n_trees_used"])
 
     header = list(row.keys())
@@ -190,8 +193,7 @@ def main() -> None:
         f"meanJumpGivenAccepted={row['meanJumpGivenAccepted']}"
         + (f" lowest_ESS={row.get('lowest_ESS')} ({row.get('lowest_ESS_param')})"
            if args.ess_table is not None else "")
-        + (f" treeESS_min={row.get('treeESS_min')} treeESS_p10={row.get('treeESS_p10')} "
-           f"treeESS_median={row.get('treeESS_median')}"
+        + (f" treeESS_p10_rf={row.get('treeESS_p10_rf')} treeESS_p10_kf={row.get('treeESS_p10_kf')}"
            if args.trees is not None else "")
     )
 

@@ -1,8 +1,14 @@
 """Pseudo-ESS for a BEAST .trees file, computed via TreeTracer's own machinery
-(Lanfear et al. 2016: RF distance from every sampled tree to ~100 random
-reference trees, univariate ESS on each resulting trace, report min/median/max).
+(Lanfear et al. 2016: pairwise distance from every sampled tree to ~100 random
+reference trees, univariate ESS on each resulting trace, report min/p10/median/max).
 
-Reuses TreeTracer's library code directly (rapidtrees for pairwise RF,
+Computes this for two distance metrics in one pass over the tree file (parsed once,
+reused for both): RF (Robinson-Foulds, topology/clades only - blind to branch lengths)
+and KF (Kuhner-Felsenstein / branch score - continuous branch-length differences over
+matched clades). RF and KF disagreed sharply on a real learned-vs-constant comparison
+(2026-09-09 evaluation), so both are reported going forward rather than picking one.
+
+Reuses TreeTracer's library code directly (rapidtrees for pairwise distances,
 treetracer.ess.pseudo_ess for the ESS estimator) rather than TreeTracer's own
 Dash app / subprocess-worker plumbing, none of which this needs. Must be run
 with the interpreter from TreeTracer's own venv (rapidtrees is a compiled
@@ -11,7 +17,8 @@ extension installed there, not in this project's venv):
     /Users/nneureiter/Projects/treetracer/.venv/bin/python scripts/tree_pseudo_ess.py \\
         run.trees --burnin-percent 10
 
-Prints one JSON line to stdout: {"n_trees", "n_trees_used", "min", "median", "max", "n_refs_used"}.
+Prints one JSON line to stdout: {"n_trees", "n_trees_used", "n_refs_used",
+"rf": {"min", "p10", "median", "max"}, "kf": {"min", "p10", "median", "max"}}.
 """
 from __future__ import annotations
 
@@ -87,6 +94,23 @@ def main() -> None:
     map_list = [translate_map] if translate_map else []
     map_indices = [0] * n_trees_used if translate_map else None
 
+    def pseudo_ess_stats(matrix) -> dict:
+        result = compute_pseudo_ess(matrix, n_refs=args.n_refs, seed=args.seed)
+        # Plain `min` over n_refs reference trees is an extreme-value order statistic: with
+        # n_refs=100 it's the worst of 100 individually-noisy per-reference ESS estimates, so
+        # it's pulled down by sampling noise even for a well-mixed chain (multiple-testing
+        # pessimism). p10 keeps the "worst case, not just typical case" intent while being far
+        # less sensitive to a single unlucky reference tree.
+        valid = result["ess_values"][~np.isnan(result["ess_values"])]
+        p10 = float(np.percentile(valid, 10)) if valid.size else float("nan")
+        return {
+            "min": result["min"],
+            "p10": p10,
+            "median": result["median"],
+            "max": result["max"],
+            "n_refs_used": result["n_refs_used"],
+        }
+
     result_names, rf_bytes, _leaf_names, _n_bip, _presence_bytes, _bip_bytes = (
         rapidtrees.pairwise_rf_with_snapshots_from_newick_iter(
             names, iter(newicks), map_list, map_indices,
@@ -95,23 +119,21 @@ def main() -> None:
     )
     n = len(result_names)
     rf_matrix = np.frombuffer(rf_bytes, dtype=np.uint32).reshape(n, n).copy()
+    rf_stats = pseudo_ess_stats(rf_matrix)
 
-    result = compute_pseudo_ess(rf_matrix, n_refs=args.n_refs, seed=args.seed)
-    # Plain `min` over n_refs reference trees is an extreme-value order statistic: with
-    # n_refs=100 it's the worst of 100 individually-noisy per-reference ESS estimates, so it's
-    # pulled down by sampling noise even for a well-mixed chain (multiple-testing pessimism).
-    # p10 keeps the "worst case, not just typical case" intent while being far less sensitive to
-    # a single unlucky reference tree.
-    valid = result["ess_values"][~np.isnan(result["ess_values"])]
-    p10 = float(np.percentile(valid, 10)) if valid.size else float("nan")
+    kf_names, kf_dist = rapidtrees.pairwise_kf_from_newick_iter(
+        names, iter(newicks), map_list, map_indices, rooted=not args.unrooted,
+    )
+    kf_n = len(kf_names)
+    kf_matrix = np.array(kf_dist, dtype=np.float64).reshape(kf_n, kf_n)
+    kf_stats = pseudo_ess_stats(kf_matrix)
+
     print(json.dumps({
         "n_trees": n_trees,
         "n_trees_used": n_trees_used,
-        "min": result["min"],
-        "p10": p10,
-        "median": result["median"],
-        "max": result["max"],
-        "n_refs_used": result["n_refs_used"],
+        "n_refs_used": rf_stats["n_refs_used"],
+        "rf": rf_stats,
+        "kf": kf_stats,
     }))
 
 
