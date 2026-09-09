@@ -163,6 +163,9 @@ public final class LearnedWeightsGroupedMetrics {
                 LearnedWeightsReportSupport.median(ndcgValues));
     }
 
+    /** Ties break to the lowest index; a fully-tied group (e.g. degenerate all-zero
+     *  predictions) therefore reads as a top-1 "hit" whenever the true argmax is also
+     *  index 0, rather than signalling the tie. */
     private static int argmax(double[] values) {
         int best = 0;
         for (int i = 1; i < values.length; i++) {
