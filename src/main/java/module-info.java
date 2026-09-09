@@ -6,6 +6,7 @@ open module targetedbeast {
     requires beast.labs;                 // RNNIMetric in TreeJumpFunctionTest
 
     requires java.desktop;               // JOptionPane in targetedbeast.annotator
+    requires java.management;            // ThreadMXBean in targetedbeast.benchmark.BenchmarkMCMC
     requires colt;                       // SVD in targetedbeast.util.Alignment2PCA
     requires commons.math3;              // linear algebra in targetedbeast.edgeweights.PCAWeights
 

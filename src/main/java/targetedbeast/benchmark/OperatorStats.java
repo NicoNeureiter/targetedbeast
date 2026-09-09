@@ -44,7 +44,11 @@ public class OperatorStats {
         this.meanSqJump = new double[numMetrics];
     }
 
-    /** Record timing/acceptance for one proposal. Call once per propagateState call. */
+    /**
+     * Record timing/acceptance for one proposal. Call once per propagateState call.
+     *
+     * @param operatorPlusLikelihoodTimeMs per-thread CPU time, not wall-clock (see {@link BenchmarkMCMC})
+     */
     void recordProposal(double operatorPlusLikelihoodTimeMs, boolean accepted) {
         proposals++;
         if (accepted) {
@@ -67,7 +71,8 @@ public class OperatorStats {
      * @param accepted whether this proposal was accepted
      * @param jump     per-metric jump distance (not squared), same order as the metric list;
      *                 {@code jump[0]} is the primary metric, used for meanJumpGivenAccepted
-     * @param instrumentationTimeMs wall time spent computing these distances (tree copy + all metrics)
+     * @param instrumentationTimeMs per-thread CPU time spent computing these distances (tree copy +
+     *                              all metrics) - not wall-clock, see {@link BenchmarkMCMC}
      */
     void recordSample(boolean accepted, double[] jump, double instrumentationTimeMs) {
         sampledProposals++;
@@ -88,6 +93,7 @@ public class OperatorStats {
         return proposals == 0 ? Double.NaN : (double) accepts / proposals;
     }
 
+    /** Mean operator+likelihood time per proposal, per-thread CPU time (not wall-clock). */
     double meanTimeMs() {
         return meanTimeMs;
     }

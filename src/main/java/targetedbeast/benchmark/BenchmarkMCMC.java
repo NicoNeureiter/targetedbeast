@@ -3,6 +3,8 @@ package targetedbeast.benchmark;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.PrintWriter;
+import java.lang.management.ManagementFactory;
+import java.lang.management.ThreadMXBean;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -36,7 +38,10 @@ import targetedbeast.operators.AdaptableOperatorSampler;
  * <li>tree copies (the expensive part) happen only on every {@code jumpInterval}-th proposal;</li>
  * <li>ESJD/second is computed against operator+likelihood time only, never against time spent
  * copying trees or computing metrics (that cost is its own column,
- * {@code instrumentationOverheadMs} - the tree copy dominates it, not the distance calls);</li>
+ * {@code instrumentationOverheadMs} - the tree copy dominates it, not the distance calls);
+ * all timing is per-thread CPU time ({@link ThreadMXBean#getCurrentThreadCpuTime()}), not
+ * wall-clock, so it stays comparable across benchmark cells run concurrently under
+ * {@code snakemake -j4};</li>
  * <li>the headline is the chain-level row (operator {@value #CHAIN_ROW_NAME}): sum-of(n_i * ESJD_i)
  * over total operator+likelihood time; per-operator rows are diagnostics;</li>
  * <li>the {@link Randomizer} seed is recorded, and no metric may call {@link Randomizer}.</li>
@@ -121,6 +126,11 @@ public class BenchmarkMCMC extends MCMC {
     private String checkpointOutPath;
     private boolean checkpointWritten;
 
+    // Per-thread CPU time, not wall-clock: benchmark cells run concurrently (snakemake -j4), and
+    // wall-clock would conflate algorithmic cost with time spent waiting for a core. Safe because
+    // propagateState always runs on a single calling thread here - no BEAGLE, no worker threads.
+    private final ThreadMXBean threadMXBean = ManagementFactory.getThreadMXBean();
+
     // ---- operator bookkeeping (built lazily on first propagateState call, once
     //      operatorSchedule.init()/TargetedOperatorSchedule's operator substitution has run) ----
     private List<Operator> trackedOperators;
@@ -149,6 +159,21 @@ public class BenchmarkMCMC extends MCMC {
                 ? new BurnInSpeedTracker(referenceLowerBound, referenceUpperBound) : null;
         checkpointOutPath = checkpointOutInput.get();
         checkpointWritten = false;
+
+        if (!threadMXBean.isCurrentThreadCpuTimeSupported()) {
+            throw new RuntimeException("This JVM does not support per-thread CPU time "
+                    + "measurement (ThreadMXBean.isCurrentThreadCpuTimeSupported() == false); "
+                    + "BenchmarkMCMC's esjdPerSec timing requires it and refuses to silently fall "
+                    + "back to wall-clock timing.");
+        }
+        if (!threadMXBean.isThreadCpuTimeEnabled()) {
+            threadMXBean.setThreadCpuTimeEnabled(true);
+        }
+    }
+
+    /** Per-thread CPU time in nanoseconds, same unit and call-site role as System.nanoTime(). */
+    private long cpuTimeNs() {
+        return threadMXBean.getCurrentThreadCpuTime();
     }
 
     @Override
@@ -171,18 +196,18 @@ public class BenchmarkMCMC extends MCMC {
         long treeCopyNs = 0;
         List<Tree> treesBefore = null;
         if (sampled) {
-            final long c0 = System.nanoTime();
+            final long c0 = cpuTimeNs();
             treesBefore = copyStateTrees();
-            treeCopyNs = System.nanoTime() - c0;
+            treeCopyNs = cpuTimeNs() - c0;
         }
         if (postBurnin) {
             snapshotOperatorCounts();
         }
         final double oldLL = oldLogLikelihood;
 
-        final long t0 = System.nanoTime();
+        final long t0 = cpuTimeNs();
         final Operator op = super.propagateState(sampleNr);
-        final long t1 = System.nanoTime();
+        final long t1 = cpuTimeNs();
 
         if (!postBurnin) {
             // Burn-in: Operator.accept()/reject() are not called by core during burn-in
@@ -215,7 +240,7 @@ public class BenchmarkMCMC extends MCMC {
         stats.recordSqDeltaLogPosterior(sqDeltaLogPosterior);
 
         if (sampled) {
-            final long m0 = System.nanoTime();
+            final long m0 = cpuTimeNs();
             final double[] jump = new double[metrics.size()];
             for (int i = 0; i < metrics.size(); i++) {
                 final TreeMetric metric = metrics.get(i);
@@ -226,7 +251,7 @@ public class BenchmarkMCMC extends MCMC {
                 }
                 jump[i] = Math.sqrt(sumSq);
             }
-            final long m1 = System.nanoTime();
+            final long m1 = cpuTimeNs();
             final double instrumentationMs = (treeCopyNs + (m1 - m0)) / 1e6;
             stats.recordSample(accepted, jump, instrumentationMs);
             writeJumpTraceRow(sampleNr, leaf, accepted, jump);
