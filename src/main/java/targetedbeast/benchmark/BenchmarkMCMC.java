@@ -171,7 +171,17 @@ public class BenchmarkMCMC extends MCMC {
         }
     }
 
-    /** Per-thread CPU time in nanoseconds, same unit and call-site role as System.nanoTime(). */
+    /**
+     * Per-thread CPU time in nanoseconds, same unit and call-site role as System.nanoTime().
+     *
+     * <p>Only correct as long as propagateState() and everything it calls (likelihood
+     * evaluation included) stays on this one thread. Currently true for every rendered
+     * benchmark XML (no `-threads N&gt;1`, so ThreadedTreeLikelihood/CompoundDistribution never
+     * spawn worker threads - see ProgramStatus.m_nThreads). If a future run ever adds `-threads`
+     * for speed, worker-thread CPU time would silently NOT be attributed here: meanTimeMs would
+     * collapse toward the calling thread's now-mostly-idle-waiting time and esjdPerSec would
+     * inflate accordingly, with no error to flag it.
+     */
     private long cpuTimeNs() {
         return threadMXBean.getCurrentThreadCpuTime();
     }
