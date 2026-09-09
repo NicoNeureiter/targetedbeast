@@ -75,11 +75,23 @@ with open(SCRIPT_DIR / "datasets.yaml", encoding="utf-8") as f:
 
 DATASETS = list(REGISTRY)
 
-# loganalyser lives next to the beast3 launchers, not this package - see workspace CLAUDE.md.
-LOGANALYSER = config.get(
-    "loganalyser",
-    str(PROJECT_ROOT.parent / "beast3" / "bin" / "loganalyser"),
-)
+def _find_loganalyser(start: Path) -> Path:
+    """loganalyser lives next to the beast3 launchers, a sibling of targetedbeast in the
+    workspace root - see workspace CLAUDE.md. `start.parent / "beast3" / ...` only resolves
+    correctly from the main targetedbeast checkout: from inside a worktree (targetedbeast/
+    .claude/worktrees/<name>/), the workspace root is further up, past the ".claude/worktrees/"
+    segment - so search ancestors instead of assuming a fixed depth (confirmed missing this way
+    when the thorough-tier run first reached the loganalyser rule from this worktree)."""
+    for ancestor in [start, *start.parents]:
+        candidate = ancestor / "beast3" / "bin" / "loganalyser"
+        if candidate.exists():
+            return candidate
+    # Not found anywhere above start - fall back to the historical one-level-up guess so the
+    # error message (a shell "no such file" on invocation) still names a sensible path.
+    return start.parent / "beast3" / "bin" / "loganalyser"
+
+
+LOGANALYSER = config.get("loganalyser", str(_find_loganalyser(PROJECT_ROOT)))
 BURNIN = int(config.get("burnin", 10))
 
 CELL_DIR = str(RUNS_ROOT / "{dataset}" / "{tier}" / "{setting}" / "rep{rep}")
