@@ -348,18 +348,32 @@ def collect_ess_input(wildcards):
     return []
 
 
+def collect_trees_input(wildcards):
+    # Tree-space pseudo-ESS (treeESS_min/p10/median/max via TreeTracer, see collect_stats.py)
+    # is expensive (rapidtrees pairwise distances over every sampled tree) and only meaningful
+    # at decision-grade chain lengths, so it's gated the same way as run.ess.tsv above - never
+    # computed for smoke/fast. Always included from here on for every ESS-gated cell (per the
+    # 2026-09-09 decision to treat treeESS_p10 as a standing metric, not an ad hoc one-off).
+    if ess_gated(wildcards.dataset, wildcards.tier):
+        return CELL_DIR.format(**wildcards) + "/run.trees"
+    return []
+
+
 rule collect_cell:
     input:
         opstats=CELL_DIR + "/run.opstats.tsv",
         runtime=CELL_DIR + "/run.runtime",
         ess=collect_ess_input,
+        trees=collect_trees_input,
     output:
         summary=CELL_DIR + "/cell.summary.tsv",
     params:
         ess_flag=lambda wc, input: f'--ess-table "{input.ess}"' if input.ess else "",
+        trees_flag=lambda wc, input: f'--trees "{input.trees}"' if input.trees else "",
     shell:
         "python3 {SCRIPT_DIR}/collect_stats.py "
         '--opstats "{input.opstats}" --runtime "{input.runtime}" {params.ess_flag} '
+        "{params.trees_flag} "
         "--dataset {wildcards.dataset} --tier {wildcards.tier} --setting {wildcards.setting} "
         '--rep {wildcards.rep} --summary-out "{output.summary}"'
 
