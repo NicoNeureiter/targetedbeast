@@ -9,6 +9,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import beast.base.core.Log;
 import beast.base.evolution.tree.Node;
+import beast.base.evolution.tree.Tree;
 import targetedbeast.edgeweights.PCAWeightsBrownianFullLikelihood;
 
 /**
@@ -60,10 +61,42 @@ public class PCAWeightsMLPLikelihood extends PCAWeightsBrownianFullLikelihood {
 
     private EmbeddingMLPSurrogate surrogate;
     private ProposalExporter proposalExporter;
+    private String currentOperatorTag;
+
+    // ------------------------------------------------------------------
+    // Fused axis-reweight+MLP surrogate (AxisReweightedFusedV1), optional
+    // second scoring path -- see setFusedSurrogate().
+    // ------------------------------------------------------------------
+    private AxisReweightedFusedSurrogate fusedSurrogate;
+    private LearnedWeightsTreeTrainer fusedTreeTrainer;
 
     /** Wire the loaded surrogate.  Called from LearnedWeights after JSON load. */
     public void setSurrogate(EmbeddingMLPSurrogate surrogate) {
         this.surrogate = surrogate;
+    }
+
+    /**
+     * Wire the fused axis-reweight+MLP surrogate and a {@link LearnedWeightsTreeTrainer}
+     * used only for {@link LearnedWeightsTreeTrainer#computeTreeScaleStatistics}
+     * (rootHeight/totalBranchLength/totalDiffusionLength of the candidate tree --
+     * see {@link #computeScaledProposedTreeLogLikelihood}). When set, this path is
+     * used instead of {@link #surrogate} in computeScaledProposedTreeLogLikelihood;
+     * when null (default), behavior is unchanged.
+     */
+    public void setFusedSurrogate(AxisReweightedFusedSurrogate fusedSurrogate, LearnedWeightsTreeTrainer treeTrainer) {
+        this.fusedSurrogate = fusedSurrogate;
+        this.fusedTreeTrainer = treeTrainer;
+    }
+
+    public AxisReweightedFusedSurrogate getFusedSurrogate() {
+        return fusedSurrogate;
+    }
+
+    /** Set by LearnedWeights.setCurrentOperatorTag, itself called by the operator right
+     *  before it invokes getTargetWeights*; read by beginGroup() to tag the ProposalExporter
+     *  row with which operator produced the group. */
+    public void setCurrentOperatorTag(String tag) {
+        this.currentOperatorTag = tag;
     }
 
     public EmbeddingMLPSurrogate getSurrogate() {
@@ -81,7 +114,7 @@ public class PCAWeightsMLPLikelihood extends PCAWeightsBrownianFullLikelihood {
         // One call here == one competing-candidate set (fromNode against its toNodeNrs
         // batch); mark the group boundary before any of its proposals get exported.
         if (proposalExporter != null) {
-            proposalExporter.beginGroup();
+            proposalExporter.beginGroup(currentOperatorTag);
         }
         return super.computeProposalLogScores(fromNode, fromInside, toNodeNrs, resolvedHeights);
     }
@@ -91,8 +124,8 @@ public class PCAWeightsMLPLikelihood extends PCAWeightsBrownianFullLikelihood {
             Node fromNode, Node toNode, GaussianMessage fromInside,
             GaussianMessage toInsideWithout, double toHeight) {
 
-        assert surrogate != null;
-        
+        assert surrogate != null || fusedSurrogate != null;
+
         // if (surrogate == null) {
         //     return super.computeScaledProposedTreeLogLikelihood(
         //         fromNode, toNode, fromInside, toInsideWithout, toHeight);
@@ -111,7 +144,13 @@ public class PCAWeightsMLPLikelihood extends PCAWeightsBrownianFullLikelihood {
         for (int d = 0; d < dim; d++) {
             qf[d] = -2.0 * quad[d];
         }
-        double pred = surrogate.predictFromQfAndLogDet(qf, logDet);
+
+        double pred;
+        if (fusedSurrogate != null) {
+            pred = computeFusedPrediction(fromNode, toNode, toHeight, qf, logDet);
+        } else {
+            pred = surrogate.predictFromQfAndLogDet(qf, logDet);
+        }
 
         if (proposalExporter != null && !proposalExporter.isFull()) {
             proposalExporter.exportProposal(fromNode, toNode, toHeight);
@@ -133,6 +172,38 @@ public class PCAWeightsMLPLikelihood extends PCAWeightsBrownianFullLikelihood {
             }
         }
         return pred;
+    }
+
+    /**
+     * Scores one proposal with {@link #fusedSurrogate}. Needs rootHeight/
+     * totalBranchLength/totalDiffusionLength of the *proposed* tree, which
+     * message-passing does not materialize -- so this builds the candidate
+     * tree exactly as {@link ProposalExporter#buildCandidateTree} does (deep
+     * copy the live tree + apply the SPR move), then reads scale statistics
+     * off it via {@link LearnedWeightsTreeTrainer#computeTreeScaleStatistics}.
+     *
+     * <p><b>Performance note:</b> this adds a full tree deep-copy per scored
+     * proposal, which the message-passing design in the parent class exists
+     * specifically to avoid. Accepted here as the cost of a correctness/
+     * go-no-go real-MCMC check for the fused surrogate -- not optimized away.
+     *
+     * <p>{@code qf}/{@code logDet} are reused as-is from the caller (the same
+     * root-free message-passing values used by the {@link #surrogate} path)
+     * for both the contribution term and the root_free_log_det scalar -- see
+     * {@link AxisReweightedFusedSurrogate#predict(double[], double, double, double, double)}.
+     */
+    private double computeFusedPrediction(Node fromNode, Node toNode, double toHeight,
+                                           double[] qf, double logDet) {
+        Tree liveTree = (Tree) treeInput.get();
+        Tree candidate = ProposalExporter.buildCandidateTree(liveTree, fromNode, toNode, toHeight);
+        if (candidate == null) {
+            // SPR pre-conditions failed / invalid heights -- fall back to the plain
+            // surrogate if available, else propagate a very poor score so this
+            // candidate is effectively never chosen.
+            return surrogate != null ? surrogate.predictFromQfAndLogDet(qf, logDet) : Double.NEGATIVE_INFINITY;
+        }
+        LearnedWeightsTreeTrainer.TreeScaleStatistics stats = fusedTreeTrainer.computeTreeScaleStatistics(candidate);
+        return fusedSurrogate.predict(qf, logDet, stats.rootHeight(), stats.totalBranchLength(), stats.totalDiffusionLength());
     }
 
     // ------------------------------------------------------------------
@@ -184,6 +255,7 @@ public class PCAWeightsMLPLikelihood extends PCAWeightsBrownianFullLikelihood {
             diagInitTried = true;
             String path = System.getProperty(DIAG_CSV_PROP);
             if (path == null || path.isBlank()) return;
+            if (surrogate == null) return; // diagnostic CSV only supports the plain EmbeddingMLPSurrogate path
             String maxStr = System.getProperty(DIAG_MAX_PROP);
             diagMaxCalls = (maxStr == null || maxStr.isBlank()) ? 1000 : Integer.parseInt(maxStr.trim());
             try {

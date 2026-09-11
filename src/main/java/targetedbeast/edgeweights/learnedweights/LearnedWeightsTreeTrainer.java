@@ -864,7 +864,9 @@ public class LearnedWeightsTreeTrainer {
             groupId);
     }
 
-    private TreeScaleStatistics computeTreeScaleStatistics(Tree tree) {
+    // Package-private (widened from private): PCAWeightsMLPLikelihood also needs this,
+    // to score candidate trees with AxisReweightedFusedSurrogate's scalar features.
+    TreeScaleStatistics computeTreeScaleStatistics(Tree tree) {
         double rootHeight = tree.getRoot().getHeight();
         double totalBranchLength = 0.0;
         double totalDiffusionLength = 0.0;
@@ -977,7 +979,8 @@ public class LearnedWeightsTreeTrainer {
         return sampledBranchRateModel.getRateForContext(node, currentSampledRateContext);
     }
 
-    private record TreeScaleStatistics(double rootHeight, double totalBranchLength, double totalDiffusionLength) {
+    // Package-private (widened from private): PCAWeightsMLPLikelihood also needs this type.
+    record TreeScaleStatistics(double rootHeight, double totalBranchLength, double totalDiffusionLength) {
     }
 
     private static String describeNode(Node node) {

@@ -336,6 +336,7 @@ public class RangeSlide extends TargetedWeightOperator {
 
 		// Every key of `targets` is a reachable attachment point, which is what the transform
 		// requires: it adds its offset to every entry it receives.
+		edgeWeights.setCurrentOperatorTag(getClass().getSimpleName());
 		double[] distance = applyTargetTransform(
 				edgeWeights.getTargetWeights(i.getNr(), new ArrayList<>(targets.keySet())));
 
@@ -424,6 +425,7 @@ public class RangeSlide extends TargetedWeightOperator {
 		// calculate the distance of the previous edge without node i, prior to updating
 		// everything
 		k = 0;
+		edgeWeights.setCurrentOperatorTag(getClass().getSimpleName());
 		distance = applyTargetTransform(
 				edgeWeights.getTargetWeights(i.getNr(), new ArrayList<>(newTargets.keySet())));
 		edgeWeights.reset();

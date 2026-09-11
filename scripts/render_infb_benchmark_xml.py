@@ -20,10 +20,21 @@ TEMPLATE_PATH = PROJECT_ROOT / "examples" / "infb_HA_141" / "template.xml"
 # out_dir at render time (posterior samples are exchangeable regardless of which setting produced
 # them, so there is no reason to pin this to one historical run - see render_run_xml's docstring).
 
+# Fixed, pre-trained weights for the "learned_fused" setting (AxisReweightedFusedV1, trained
+# offline in surrogate_training/train_axis_fused.py) - unlike "learned" this needs no
+# training-at-benchmark-time step, so its LearnedWeights element can be static, like "pca"'s.
+FUSED_SURROGATE_WEIGHTS_FILE = PROJECT_ROOT / "surrogate_training" / "data" / "exported" / "fused_v1.json"
+
 EDGE_WEIGHTS_XML = {
     "constant": '<distribution id="edgeweights" spec="targetedbeast.edgeweights.ConstantWeights" tree="@tree"/>',
     # Built dynamically per out_dir by _learned_edge_weights_xml() - see render_run_xml.
     "learned": None,
+    # Fixed pre-trained fused axis-reweight+MLP surrogate - see FUSED_SURROGATE_WEIGHTS_FILE.
+    # surrogateWeightsFile is left unset so LearnedWeights routes to the fused-only scoring path
+    # (see PCAWeightsMLPLikelihood.setFusedSurrogate); dimension=10 must match the exported model.
+    "learned_fused": '<distribution id="edgeweights" spec="targetedbeast.edgeweights.LearnedWeights" '
+                      'tree="@tree" data="@infB_HA" likelihood="@treeLikelihood" maxWeight="20" '
+                      f'dimension="10" fusedSurrogateWeightsFile="{FUSED_SURROGATE_WEIGHTS_FILE}"/>',
     "parsimony": '<distribution id="edgeweights" spec="targetedbeast.edgeweights.ParsimonyWeights2" '
                  'tree="@tree" maxWeight="20" data="@infB_HA"/>',
     "pca": '<distribution id="edgeweights" spec="targetedbeast.edgeweights.PCAWeights2" '
@@ -227,6 +238,7 @@ WEIGHT_TRANSFORM_FOR_SETTING = {
     "parsimony": "none",
     "pca": "none",
     "learned": "none",
+    "learned_fused": "none",
     "pca_grid": "grid",
     "pca_grid_low": "grid_low",
     "pca_grid_mid": "grid_mid",

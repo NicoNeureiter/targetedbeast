@@ -253,6 +253,7 @@ public class TargetedWilsonBalding extends TargetedWeightOperator {
 		}
 		assertAgesWithinIntervals(candidateAges, candidateIntervals, "forward candidate scoring");
 
+		edgeWeights.setCurrentOperatorTag(getClass().getSimpleName());
 		double[] rawTargetWeights = edgeWeights.getTargetWeights(i.getNr(), candidateNodes, candidateAges);
 		double[] distance = applyTargetTransform(rawTargetWeights);
 		double[] forwardMass = new double[distance.length];

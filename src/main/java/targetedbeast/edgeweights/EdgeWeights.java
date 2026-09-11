@@ -91,4 +91,13 @@ public interface EdgeWeights {
 		return false;
 	}
 
+	/**
+	 * Optional hint for diagnostics/export: which operator is about to call
+	 * {@link #getTargetWeights} / {@link #getTargetWeightsInteger}. No-op unless an
+	 * implementation actually records it (only {@code LearnedWeights}, for
+	 * {@code ProposalExporter}'s per-row {@code operatorType} column).
+	 */
+	default void setCurrentOperatorTag(String tag) {
+	}
+
 }

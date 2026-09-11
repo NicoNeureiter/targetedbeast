@@ -136,6 +136,7 @@ public class TargetedWilsonBaldingFixedHeight extends TargetedWeightOperator {
 			return Double.NEGATIVE_INFINITY;
 		}
 
+		edgeWeights.setCurrentOperatorTag(getClass().getSimpleName());
 		double[] rawTargetWeights = edgeWeights.getTargetWeightsInteger(i.getNr(), coExistingNodes, toHeight);
 		// Transform the whole feasible vector first, then take the sibling's mass out of it:
 		// the sibling is a genuine candidate for the reverse move, so it has to be present
@@ -313,6 +314,7 @@ public class TargetedWilsonBaldingFixedHeight extends TargetedWeightOperator {
             throw new RuntimeException("Couldn't find current node among coexisting nodes.");
 		}
 
+		edgeWeights.setCurrentOperatorTag(getClass().getSimpleName());
 		double[] rawTargetWeights = edgeWeights.getTargetWeightsInteger(i.getNr(), coExistingNodes, toHeight);
 		// Transform the whole feasible vector first, then take the sibling's mass out of it;
 		// see the comment on the same step in edgeWeightsTreeProposal.

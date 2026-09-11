@@ -295,6 +295,7 @@ public class TargetedWilsonBaldingHeightDelta extends TargetedWeightOperator {
 			return null;
 		}
 
+		edgeWeights.setCurrentOperatorTag(getClass().getSimpleName());
 		double[] rawWeights = edgeWeights.getTargetWeightsInteger(movingNode.getNr(), candidateNodeNrs, targetHeight);
 		edgeWeights.reset();
 

@@ -136,7 +136,9 @@ public final class EmbeddingMLPSurrogateIO {
     // Minimal JSON scanner — handles our flat schema only
     // ------------------------------------------------------------------
 
-    private static final class Scanner {
+    // Package-private (widened from private): shared with AxisReweightedFusedSurrogateIO,
+    // which parses the same flat JSON schema style.
+    static final class Scanner {
         private final String src;
         private int pos;
 

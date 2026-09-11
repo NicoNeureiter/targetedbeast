@@ -123,6 +123,7 @@ public class WeightedWideOperator extends TargetedWeightOperator {
         List<Double> toNodeHeights = coExistingNodes.stream()
                 .map(nr -> tree.getNode(nr).getParent().getHeight())
                 .toList();
+        edgeWeights.setCurrentOperatorTag(getClass().getSimpleName());
         double[] rawTargetWeights = edgeWeights.getTargetWeightsInteger(i.getNr(), coExistingNodes, toNodeHeights);
         // Transform the whole feasible vector, CiP included: it is a genuine candidate for the
         // reverse move, so it has to be present while the offset is applied, and is only

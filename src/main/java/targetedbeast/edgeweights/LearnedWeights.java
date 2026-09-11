@@ -26,6 +26,8 @@ import beast.base.evolution.tree.Tree;
 import beast.base.evolution.tree.TreeInterface;
 import beast.base.inference.Distribution;
 import beast.base.inference.State;
+import targetedbeast.edgeweights.learnedweights.AxisReweightedFusedSurrogate;
+import targetedbeast.edgeweights.learnedweights.AxisReweightedFusedSurrogateIO;
 import targetedbeast.edgeweights.learnedweights.EmbeddingMLPSurrogate;
 import targetedbeast.edgeweights.learnedweights.PCAWeightsMLPLikelihood;
 import targetedbeast.edgeweights.learnedweights.LearnedWeightsOptimizer;
@@ -179,6 +181,11 @@ public class LearnedWeights extends Distribution implements EdgeWeights {
         "path to a JSON weight file written by EmbeddingMLP.export_weights() in Python; "
         + "when provided, uses the pre-trained MLP surrogate for targeted operator proposal scoring");
 
+    final public Input<String> fusedSurrogateWeightsFileInput = new Input<>(
+        "fusedSurrogateWeightsFile",
+        "path to a JSON weight file written by train_axis_fused.py's export_fused_weights(); "
+        + "when provided, uses the fused axis-reweight+MLP surrogate for targeted operator proposal scoring");
+
     private double offset;
     private int dim;
     private double learnedBaseScale = 1.0;
@@ -294,25 +301,33 @@ public class LearnedWeights extends Distribution implements EdgeWeights {
                 applyTrainedWeightsState(tree, warmStartModelState, true);
                 runtimeModel.updateByOperator();
                 loadMlpSurrogateIfConfigured(tree);
+                loadFusedSurrogateIfConfigured(tree);
+                configureProposalExporterIfRequested(tree);
                 return;
             }
         }
         String surrogateConfigured = surrogateWeightsFileInput.get();
         boolean hasSurrogate = surrogateConfigured != null && !surrogateConfigured.isBlank();
-        if (value == null && !hasSurrogate) {
+        String fusedSurrogateConfigured = fusedSurrogateWeightsFileInput.get();
+        boolean hasFusedSurrogate = fusedSurrogateConfigured != null && !fusedSurrogateConfigured.isBlank();
+        if (value == null && !hasSurrogate && !hasFusedSurrogate) {
             runLearningPhase();
         } else if (value == null) {
-            Log.info.println("LearnedWeights: surrogateWeightsFile provided — skipping learning phase, using default Brownian rates.");
+            Log.info.println("LearnedWeights: surrogateWeightsFile/fusedSurrogateWeightsFile provided — skipping learning phase, using default Brownian rates.");
         }
         runtimeModel.updateByOperator();
         loadMlpSurrogateIfConfigured(tree);
+        loadFusedSurrogateIfConfigured(tree);
+        configureProposalExporterIfRequested(tree);
     }
 
     private PCAWeightsBrownianFullLikelihood createRuntimeModel(TreeInterface tree, String value) {
         Base branchRateModel = likelihoodInput.get().branchRateModelInput.get();
         String surrogateConfigured = surrogateWeightsFileInput.get();
         boolean hasSurrogate = surrogateConfigured != null && !surrogateConfigured.isBlank();
-        PCAWeightsBrownianFullLikelihood model = hasSurrogate
+        String fusedSurrogateConfigured = fusedSurrogateWeightsFileInput.get();
+        boolean hasFusedSurrogate = fusedSurrogateConfigured != null && !fusedSurrogateConfigured.isBlank();
+        PCAWeightsBrownianFullLikelihood model = (hasSurrogate || hasFusedSurrogate)
             ? new PCAWeightsMLPLikelihood()
             : new PCAWeightsBrownianFullLikelihood();
         model.initByName(
@@ -1116,8 +1131,73 @@ public class LearnedWeights extends Distribution implements EdgeWeights {
         Log.info.println("LearnedWeights: loaded MLP surrogate from " + path.toAbsolutePath()
             + " (dim=" + surrogate.dim() + ", nTaxa=" + surrogate.nTaxa() + ")"
             + "; surrogate embeddings injected into pruning model.");
+    }
 
-        configureProposalExporterIfRequested(tree);
+    /**
+     * Analogous to {@link #loadMlpSurrogateIfConfigured}, for the fused
+     * axis-reweight+MLP surrogate (see {@link AxisReweightedFusedSurrogate}).
+     * Also constructs a {@link LearnedWeightsTreeTrainer} (used only for its
+     * {@code computeTreeScaleStatistics} helper -- no training happens here)
+     * and hands it to {@link PCAWeightsMLPLikelihood#setFusedSurrogate}.
+     */
+    private void loadFusedSurrogateIfConfigured(TreeInterface tree) {
+        String configured = fusedSurrogateWeightsFileInput.get();
+        if (configured == null || configured.isBlank()) {
+            return;
+        }
+        if (!(runtimeModel instanceof PCAWeightsMLPLikelihood)) {
+            throw new IllegalStateException(
+                "fusedSurrogateWeightsFile is set but runtimeModel is not a PCAWeightsMLPLikelihood. "
+                + "This is a programming error in createRuntimeModel().");
+        }
+        Path path = resolveConfiguredPath(configured);
+        AxisReweightedFusedSurrogate fusedSurrogate;
+        try {
+            fusedSurrogate = AxisReweightedFusedSurrogateIO.read(path);
+        } catch (IOException e) {
+            throw new IllegalArgumentException(
+                "Failed to load fused surrogate weights from " + path.toAbsolutePath(), e);
+        }
+
+        if (fusedSurrogate.dim() != dim) {
+            throw new IllegalArgumentException(
+                "Fused surrogate has dim=" + fusedSurrogate.dim()
+                + " but LearnedWeights has dimension=" + dim
+                + ". Set dimension=\"" + fusedSurrogate.dim() + "\" in the XML.");
+        }
+
+        Map<String, Integer> taxonToNodeNr = new HashMap<>();
+        for (Node node : ((Tree) tree).getNodesAsArray()) {
+            if (node.isLeaf()) {
+                taxonToNodeNr.put(node.getID(), node.getNr());
+            }
+        }
+        String[] fusedTaxa = fusedSurrogate.taxa();
+        int[] fusedLeafNodeNrs = new int[fusedTaxa.length];
+        for (int i = 0; i < fusedTaxa.length; i++) {
+            Integer nr = taxonToNodeNr.get(fusedTaxa[i]);
+            if (nr == null) {
+                throw new IllegalArgumentException(
+                    "Fused surrogate taxon '" + fusedTaxa[i] + "' not found in the BEAST tree");
+            }
+            fusedLeafNodeNrs[i] = nr;
+        }
+
+        Alignment alignment = dataInput.get();
+        LearnedWeightsTreeTrainer treeTrainer = new LearnedWeightsTreeTrainer(
+                likelihoodInput.get(),
+                alignment,
+                0,
+                getRootPriorVariance(),
+                getTargetLogLikelihoodColumn());
+
+        ((PCAWeightsMLPLikelihood) runtimeModel).setFusedSurrogate(fusedSurrogate, treeTrainer);
+        runtimeModel.setLeafEmbeddings(fusedSurrogate.eFlat(), fusedLeafNodeNrs);
+        runtimeModel.updateByOperator();
+
+        Log.info.println("LearnedWeights: loaded fused surrogate from " + path.toAbsolutePath()
+            + " (dim=" + fusedSurrogate.dim() + ", nTaxa=" + fusedSurrogate.nTaxa() + ")"
+            + "; surrogate embeddings injected into pruning model.");
     }
 
     /**
@@ -1451,6 +1531,13 @@ public class LearnedWeights extends Distribution implements EdgeWeights {
     @Override
     public double getEdgeWeights(int nodeNr) {
         return runtimeModel.getEdgeWeights(nodeNr);
+    }
+
+    @Override
+    public void setCurrentOperatorTag(String tag) {
+        if (runtimeModel instanceof PCAWeightsMLPLikelihood mlpModel) {
+            mlpModel.setCurrentOperatorTag(tag);
+        }
     }
 
     @Override
