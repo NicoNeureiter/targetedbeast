@@ -48,6 +48,10 @@
         <beast.module>beast.base</beast.module>
         <beast.main>beast.base.minimal.BeastMain</beast.main>
         <beast.args/>
+        <!-- JVM -D system properties (e.g. -Dtargetedbeast.surrogate.proposalexport.tsv=...),
+             NOT program args: must precede -m module/Main on java's command line to be
+             recognised as JVM options, unlike beast.args which lands after -m. -->
+        <beast.jvmArgs/>
 
         <beast.pkg.name>TargetedBeast</beast.pkg.name>
         <beast.pkg.version>${project.version}</beast.pkg.version>
@@ -207,7 +211,7 @@
                 <configuration>
                     <executable>java</executable>
                     <workingDirectory>${project.basedir}</workingDirectory>
-                    <commandlineArgs>--module-path %classpath -DBEAST_PACKAGE_PATH=${project.build.outputDirectory} -m ${beast.module}/${beast.main} ${beast.args}</commandlineArgs>
+                    <commandlineArgs>--module-path %classpath -DBEAST_PACKAGE_PATH=${project.build.outputDirectory} ${beast.jvmArgs} -m ${beast.module}/${beast.main} ${beast.args}</commandlineArgs>
                 </configuration>
             </plugin>
 
