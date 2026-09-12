@@ -28,6 +28,7 @@ public final class AxisReweightedFusedSurrogateIO {
         String[] taxa = null;
         double[] eFlat = null;
         double[] w = null, scalarW = null, scalarMean = null, scalarStd = null;
+        double[] contributionMean = null, contributionStd = null;
         double[] mlpW1 = null, mlpB1 = null, mlpW2 = null, mlpB2Arr = null;
 
         while (sc.hasNextKey()) {
@@ -44,6 +45,8 @@ public final class AxisReweightedFusedSurrogateIO {
                 case "scalar_w"    -> scalarW    = sc.readDoubleArray();
                 case "scalar_mean" -> scalarMean = sc.readDoubleArray();
                 case "scalar_std"  -> scalarStd  = sc.readDoubleArray();
+                case "contribution_mean" -> contributionMean = sc.readDoubleArray();
+                case "contribution_std"  -> contributionStd  = sc.readDoubleArray();
                 case "mlp_w1"      -> mlpW1      = sc.readDoubleArray();
                 case "mlp_b1"      -> mlpB1      = sc.readDoubleArray();
                 case "mlp_w2"      -> mlpW2      = sc.readDoubleArray();
@@ -71,10 +74,18 @@ public final class AxisReweightedFusedSurrogateIO {
         if (taxa == null) taxa = defaultTaxa(nTaxa);
         if (mlpB2Arr.length != 1)
             throw new IllegalArgumentException("mlp_b2 expected length 1, got " + mlpB2Arr.length);
+        // Absent from older AxisReweightedFusedV1 files (pre-dating contribution z-scoring
+        // support): default to mean=0/std=1, a no-op normalisation, so old exports still work.
+        if (contributionMean == null) contributionMean = new double[dim];
+        if (contributionStd == null) {
+            contributionStd = new double[dim];
+            java.util.Arrays.fill(contributionStd, 1.0);
+        }
 
         return new AxisReweightedFusedSurrogate(
                 nTaxa, dim, nScalars, hidden, taxa,
                 eFlat, w, scalarW, scalarMean, scalarStd,
+                contributionMean, contributionStd,
                 mlpW1, mlpB1, mlpW2, mlpB2Arr[0]);
     }
 

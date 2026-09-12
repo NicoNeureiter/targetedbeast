@@ -122,17 +122,17 @@ public final class ProposalExporter {
         } catch (RuntimeException ex) {
             return;
         }
-        double trueLL;
+        double trueLogPosterior;
         try {
-            trueLL = trainer.computeCurrentTreeLogLikelihood(copy);
+            trueLogPosterior = trainer.computeCurrentTreeLogPosterior(copy);
         } catch (RuntimeException ex) {
             return;
         }
-        if (!Double.isFinite(trueLL)) return;
+        if (!Double.isFinite(trueLogPosterior)) return;
 
         LearnedWeightsTreeTrainer.TrainingTreeSample sample;
         try {
-            sample = trainer.buildTrainingSample(copy, trueLL, groupCounter.get());
+            sample = trainer.buildTrainingSample(copy, trueLogPosterior, groupCounter.get());
         } catch (RuntimeException ex) {
             return;
         }
@@ -158,19 +158,19 @@ public final class ProposalExporter {
         Tree copy = buildCandidateTree(liveTree, fromNode, toNode, toHeight);
         if (copy == null) return;
 
-        // 3. True target log-likelihood (uses trainer's independent evaluator).
-        double trueLL;
+        // 3. True target log-posterior (uses trainer's independent evaluator).
+        double trueLogPosterior;
         try {
-            trueLL = trainer.computeCurrentTreeLogLikelihood(copy);
+            trueLogPosterior = trainer.computeCurrentTreeLogPosterior(copy);
         } catch (RuntimeException ex) {
             return;
         }
-        if (!Double.isFinite(trueLL)) return;
+        if (!Double.isFinite(trueLogPosterior)) return;
 
         // 4. Build training sample (V matrix + logDet + root-free factor + ...).
         LearnedWeightsTreeTrainer.TrainingTreeSample sample;
         try {
-            sample = trainer.buildTrainingSample(copy, trueLL, groupCounter.get());
+            sample = trainer.buildTrainingSample(copy, trueLogPosterior, groupCounter.get());
         } catch (RuntimeException ex) {
             return;
         }

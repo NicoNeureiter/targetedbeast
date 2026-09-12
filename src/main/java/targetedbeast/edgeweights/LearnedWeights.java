@@ -176,6 +176,14 @@ public class LearnedWeights extends Distribution implements EdgeWeights {
             1);
     final public Input<GenericTreeLikelihood> likelihoodInput = new Input<>("likelihood", "tree likelihood template used to configure per-tree training likelihoods", Validate.REQUIRED);
 
+    final public Input<Distribution> treePriorInput = new Input<>(
+        "treePrior",
+        "optional tree-dependent prior (e.g. a Coalescent distribution) whose value is added to "
+        + "the ProposalExporter training target alongside the tree likelihood; parameter-only "
+        + "prior terms (clock rate, substitution model, population size, ...) don't need to be "
+        + "included here since they cancel exactly in any MH ratio within one scoring group. "
+        + "Only used when proposal export is active; ignored otherwise.");
+
     final public Input<String> surrogateWeightsFileInput = new Input<>(
         "surrogateWeightsFile",
         "path to a JSON weight file written by EmbeddingMLP.export_weights() in Python; "
@@ -1219,7 +1227,8 @@ public class LearnedWeights extends Distribution implements EdgeWeights {
                 alignment,
                 0,
                 getRootPriorVariance(),
-                getTargetLogLikelihoodColumn());
+                getTargetLogLikelihoodColumn(),
+                treePriorInput.get());
         String[] canonicalTaxa = alignment.getTaxaNames().toArray(new String[0]);
         ProposalExporter exporter = ProposalExporter.createFromSystemProperties(
                 mutableTree, exporterTrainer, canonicalTaxa);

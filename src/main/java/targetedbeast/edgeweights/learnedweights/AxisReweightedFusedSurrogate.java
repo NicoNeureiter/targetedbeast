@@ -33,6 +33,11 @@ public final class AxisReweightedFusedSurrogate {
     private final double[] scalarW;     // length nScalars
     private final double[] scalarMean;  // length nScalars
     private final double[] scalarStd;   // length nScalars
+    // z-scoring applied to `contribution` before it enters the MLP (not the `base` sum,
+    // which always uses raw contribution). Defaults to mean=0/std=1 (a no-op) when absent
+    // from the JSON, so older AxisReweightedFusedV1 files without these fields still work.
+    private final double[] contributionMean;  // length dim
+    private final double[] contributionStd;   // length dim
 
     private final double[] mlpW1;       // row-major, length hidden*(dim+nScalars)
     private final double[] mlpB1;       // length hidden
@@ -42,6 +47,7 @@ public final class AxisReweightedFusedSurrogate {
     AxisReweightedFusedSurrogate(
             int nTaxa, int dim, int nScalars, int hidden, String[] taxa,
             double[] eFlat, double[] w, double[] scalarW, double[] scalarMean, double[] scalarStd,
+            double[] contributionMean, double[] contributionStd,
             double[] mlpW1, double[] mlpB1, double[] mlpW2, double mlpB2) {
         this.nTaxa = nTaxa;
         this.dim = dim;
@@ -53,6 +59,8 @@ public final class AxisReweightedFusedSurrogate {
         this.scalarW = scalarW;
         this.scalarMean = scalarMean;
         this.scalarStd = scalarStd;
+        this.contributionMean = contributionMean;
+        this.contributionStd = contributionStd;
         this.mlpW1 = mlpW1;
         this.mlpB1 = mlpB1;
         this.mlpW2 = mlpW2;
@@ -98,7 +106,9 @@ public final class AxisReweightedFusedSurrogate {
 
         int inDim = dim + nScalars;
         double[] mlpInput = new double[inDim];
-        System.arraycopy(contribution, 0, mlpInput, 0, dim);
+        for (int d = 0; d < dim; d++) {
+            mlpInput[d] = (contribution[d] - contributionMean[d]) / contributionStd[d];
+        }
         System.arraycopy(scalarsNorm, 0, mlpInput, dim, nScalars);
 
         double[] h = new double[hidden];

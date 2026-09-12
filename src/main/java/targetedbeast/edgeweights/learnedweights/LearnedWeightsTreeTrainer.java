@@ -28,8 +28,11 @@ import beast.base.spec.evolution.branchratemodel.StrictClockModel;
 import beast.base.spec.evolution.likelihood.GenericTreeLikelihood;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.Tree;
+import beast.base.evolution.tree.TreeIntervals;
 import beast.base.evolution.tree.TreeParser;
 import beast.base.evolution.tree.TreeInterface;
+import beast.base.evolution.tree.coalescent.Coalescent;
+import beast.base.inference.Distribution;
 import beast.base.inference.parameter.IntegerParameter;
 import beast.base.inference.StateNode;
 import beast.base.inference.parameter.Parameter;
@@ -311,6 +314,14 @@ public class LearnedWeightsTreeTrainer {
     private final Map<String, StateNode> loggedParametersById;
     private final double rootPriorVariance;
     private final String targetLogLikelihoodColumn;
+    // Tree-dependent prior term (e.g. Coalescent), independent of runtimeLikelihoodTree -- see
+    // createTrainingTreePriorEvaluator(). Null unless a treePriorTemplate was supplied: the
+    // parameter-only prior terms (clockRate/freqs/gammaShape/kappa/popSize priors etc.) are
+    // deliberately NOT included here -- they don't depend on the tree, so they're a constant
+    // offset shared by every candidate in a scoring group and cancel exactly in any MH ratio;
+    // only the tree-dependent term needs to be in the training target at all.
+    private final Distribution treePriorEvaluator;
+    private final Tree runtimeTreePriorTree;
     private SampledRateContext currentSampledRateContext = SampledRateContext.empty();
 
     public LearnedWeightsTreeTrainer(
@@ -334,6 +345,24 @@ public class LearnedWeightsTreeTrainer {
             int nTrainingTrees,
             double rootPriorVariance,
             String targetLogLikelihoodColumn) {
+        this(likelihoodTemplate, alignment, nTrainingTrees, rootPriorVariance, targetLogLikelihoodColumn, null);
+    }
+
+    /**
+     * @param treePriorTemplate optional tree-dependent prior (e.g. the live {@code Coalescent}
+     *                          distribution) whose value on each candidate tree should be added
+     *                          to {@link #computeCurrentTreeLogPosterior}'s training target.
+     *                          Currently only {@code Coalescent} (with a {@code TreeIntervals}
+     *                          {@code treeIntervals} input) is supported; any other type throws
+     *                          at construction time rather than silently omitting the prior.
+     */
+    public LearnedWeightsTreeTrainer(
+            GenericTreeLikelihood likelihoodTemplate,
+            Alignment alignment,
+            int nTrainingTrees,
+            double rootPriorVariance,
+            String targetLogLikelihoodColumn,
+            Distribution treePriorTemplate) {
         this.likelihoodTemplate = likelihoodTemplate;
         this.alignment = alignment;
         this.nTrainingTrees = nTrainingTrees;
@@ -351,6 +380,17 @@ public class LearnedWeightsTreeTrainer {
             this.runtimeLikelihoodTree = getRuntimeLikelihoodTree(likelihoodEvaluator);
             this.loggedParametersById = collectLoggedParameters(likelihoodEvaluator, sampledBranchRateModel.getDelegate());
         }
+        if (treePriorTemplate == null) {
+            this.treePriorEvaluator = null;
+            this.runtimeTreePriorTree = null;
+        } else {
+            TreePriorEvaluator built = createTrainingTreePriorEvaluator(treePriorTemplate);
+            this.runtimeTreePriorTree = built.tree();
+            this.treePriorEvaluator = built.evaluator();
+        }
+    }
+
+    private record TreePriorEvaluator(Tree tree, Distribution evaluator) {
     }
 
     public List<TrainingTreeSample> generateTrainingSamples() {
@@ -979,6 +1019,12 @@ public class LearnedWeightsTreeTrainer {
         return sampledBranchRateModel.getRateForContext(node, currentSampledRateContext);
     }
 
+    // Package-private: PCAWeightsMLPLikelihood needs per-node rates to update
+    // totalDiffusionLength incrementally instead of rescanning a candidate tree.
+    double branchRateFor(Node node) {
+        return getBranchRate(node);
+    }
+
     // Package-private (widened from private): PCAWeightsMLPLikelihood also needs this type.
     record TreeScaleStatistics(double rootHeight, double totalBranchLength, double totalDiffusionLength) {
     }
@@ -1165,6 +1211,69 @@ public class LearnedWeightsTreeTrainer {
             runtimeLikelihoodTree.assignFrom(backupTree);
             runtimeLikelihoodTree.setEverythingDirty(true);
             sampledBranchRateModel.setCurrentSampledRateContext(currentSampledRateContext);
+        }
+    }
+
+    /**
+     * Like {@link #computeCurrentTreeLogLikelihood}, plus the tree-dependent prior term (see
+     * {@link #treePriorEvaluator}) when one was configured -- otherwise identical to the
+     * likelihood alone. This is what {@link ProposalExporter} uses as the training target: the
+     * full tree-dependent posterior, not just the sequence likelihood.
+     */
+    protected double computeCurrentTreeLogPosterior(Tree tree) {
+        double logP = computeCurrentTreeLogLikelihood(tree);
+        if (treePriorEvaluator == null) {
+            return logP;
+        }
+        Tree backupTree = runtimeTreePriorTree.copy();
+        try {
+            runtimeTreePriorTree.assignFrom(tree);
+            runtimeTreePriorTree.setEverythingDirty(true);
+            double priorLogP = treePriorEvaluator.calculateLogP();
+            if (!Double.isFinite(priorLogP)) {
+                throw new IllegalStateException("Non-finite tree prior log density for sampled tree " + tree.getID() + ": " + priorLogP);
+            }
+            return logP + priorLogP;
+        } finally {
+            runtimeTreePriorTree.assignFrom(backupTree);
+            runtimeTreePriorTree.setEverythingDirty(true);
+        }
+    }
+
+    /**
+     * Builds an independent (never touches live MCMC state) copy of a tree-dependent prior,
+     * mirroring {@link #createTrainingLikelihoodEvaluator}'s approach for the likelihood.
+     * Currently only supports {@code Coalescent} with a {@code TreeIntervals}-typed
+     * {@code treeIntervals} input (the shape used by every dataset this pipeline currently
+     * benchmarks) -- fails loudly for anything else rather than silently omitting the prior.
+     */
+    private TreePriorEvaluator createTrainingTreePriorEvaluator(Distribution treePriorTemplate) {
+        if (!(treePriorTemplate instanceof Coalescent coalescentTemplate)) {
+            throw new IllegalArgumentException(
+                    "treePriorTemplate must be a Coalescent distribution (got "
+                    + treePriorTemplate.getClass().getName() + "); other tree-prior types are not "
+                    + "yet supported by LearnedWeightsTreeTrainer's independent evaluator.");
+        }
+        TreeIntervals templateIntervals = coalescentTemplate.treeIntervalsInput.get();
+        if (templateIntervals == null) {
+            throw new IllegalArgumentException(
+                    "Coalescent treePriorTemplate must use the treeIntervals input (not the tree input directly).");
+        }
+        Tree templateTree = templateIntervals.treeInput.get();
+        if (templateTree == null) {
+            throw new IllegalArgumentException("Coalescent's treeIntervals must wrap a mutable Tree state node.");
+        }
+        Tree copiedTree = new Tree(templateTree.getRoot().copy());
+        copiedTree.setID(templateTree.getID());
+        try {
+            TreeIntervals freshIntervals = templateIntervals.getClass().getDeclaredConstructor().newInstance();
+            freshIntervals.initByName("tree", copiedTree);
+            Coalescent freshCoalescent = new Coalescent();
+            freshCoalescent.initByName("treeIntervals", freshIntervals, "populationModel", coalescentTemplate.popSizeInput.get());
+            return new TreePriorEvaluator(copiedTree, freshCoalescent);
+        } catch (InstantiationException | IllegalAccessException | InvocationTargetException | NoSuchMethodException e) {
+            throw new RuntimeException("Failed to build independent tree-prior evaluator for "
+                    + templateIntervals.getClass().getName(), e);
         }
     }
 
