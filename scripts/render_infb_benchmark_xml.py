@@ -32,13 +32,49 @@ EDGE_WEIGHTS_XML = {
     # Fixed pre-trained fused axis-reweight+MLP surrogate - see FUSED_SURROGATE_WEIGHTS_FILE.
     # surrogateWeightsFile is left unset so LearnedWeights routes to the fused-only scoring path
     # (see PCAWeightsMLPLikelihood.setFusedSurrogate); dimension=10 must match the exported model.
+    # treePrior is only consulted when ProposalExporter is active (system-property gated) -
+    # harmless here otherwise; wires the tree-dependent coalescent prior into training targets
+    # (see LearnedWeightsTreeTrainer.computeCurrentTreeLogPosterior).
     "learned_fused": '<distribution id="edgeweights" spec="targetedbeast.edgeweights.LearnedWeights" '
                       'tree="@tree" data="@infB_HA" likelihood="@treeLikelihood" maxWeight="20" '
-                      f'dimension="10" fusedSurrogateWeightsFile="{FUSED_SURROGATE_WEIGHTS_FILE}"/>',
+                      f'dimension="10" fusedSurrogateWeightsFile="{FUSED_SURROGATE_WEIGHTS_FILE}" '
+                      'treePrior="@CoalescentConstant"/>',
+    # Simplified: no separate scalar_w linear path, hidden=20, positive-weight-constrained MLP
+    # -- see surrogate_training/train_axis_fused_simplified.py.
+    "learned_fused_simplified": '<distribution id="edgeweights" spec="targetedbeast.edgeweights.LearnedWeights" '
+                      'tree="@tree" data="@infB_HA" likelihood="@treeLikelihood" maxWeight="20" '
+                      f'dimension="10" fusedSurrogateWeightsFile="{FUSED_SURROGATE_WEIGHTS_FILE.parent / "fused_simplified_v1.json"}"/>',
+    # Same weights as "learned_fused", but with the SPR operators' default squaring replaced by
+    # an explicit exponent (see WEIGHT_TRANSFORM_XML's "fixed1"/"fixed05"). LearnedWeights returns
+    # exp(predicted tree log posterior - max), so squaring is temperature 0.5 on a *calibrated*
+    # log posterior; exponent 1 is the calibrated choice.
+    "learned_fused_t1": '<distribution id="edgeweights" spec="targetedbeast.edgeweights.LearnedWeights" '
+                      'tree="@tree" data="@infB_HA" likelihood="@treeLikelihood" maxWeight="20" '
+                      f'dimension="10" fusedSurrogateWeightsFile="{FUSED_SURROGATE_WEIGHTS_FILE}" '
+                      'treePrior="@CoalescentConstant"/>',
+    "learned_fused_t05": '<distribution id="edgeweights" spec="targetedbeast.edgeweights.LearnedWeights" '
+                      'tree="@tree" data="@infB_HA" likelihood="@treeLikelihood" maxWeight="20" '
+                      f'dimension="10" fusedSurrogateWeightsFile="{FUSED_SURROGATE_WEIGHTS_FILE}" '
+                      'treePrior="@CoalescentConstant"/>',
+    # Same weights again, with per-operator exponents instead of one global one -- see
+    # PER_OPERATOR_TARGET_TRANSFORM below for the measured exponents and why they differ.
+    "learned_fused_perop": '<distribution id="edgeweights" spec="targetedbeast.edgeweights.LearnedWeights" '
+                      'tree="@tree" data="@infB_HA" likelihood="@treeLikelihood" maxWeight="20" '
+                      f'dimension="10" fusedSurrogateWeightsFile="{FUSED_SURROGATE_WEIGHTS_FILE}" '
+                      'treePrior="@CoalescentConstant"/>',
     "parsimony": '<distribution id="edgeweights" spec="targetedbeast.edgeweights.ParsimonyWeights2" '
                  'tree="@tree" maxWeight="20" data="@infB_HA"/>',
     "pca": '<distribution id="edgeweights" spec="targetedbeast.edgeweights.PCAWeights2" '
            'tree="@tree" maxWeight="20" data="@infB_HA" dimension="10"/>',
+    # Untrained analytic Brownian-surrogate formulas (no training file, no MLP) -- the
+    # theoretical baseline the "learned_fused" surrogate was trained to approximate/beat.
+    # See src/main/java/targetedbeast/edgeweights/PCAWeightsBrownian.java.
+    "pca_brownian": '<distribution id="edgeweights" spec="targetedbeast.edgeweights.PCAWeightsBrownian" '
+                     'tree="@tree" maxWeight="20" data="@infB_HA" dimension="10"/>',
+    # See src/main/java/targetedbeast/edgeweights/PCAWeightsBrownianFullLikelihood.java --
+    # the runtime formula PCAWeightsMLPLikelihood (and so "learned_fused") extends.
+    "pca_brownian_full": '<distribution id="edgeweights" spec="targetedbeast.edgeweights.PCAWeightsBrownianFullLikelihood" '
+                          'tree="@tree" maxWeight="20" data="@infB_HA" dimension="10"/>',
     # Same PCAWeights2 as "pca", with a GridTuner-adaptive PowerOffsetTransform layered on top
     # (see WEIGHT_TRANSFORM_XML below) - the question this setting exists to answer is whether
     # the transform improves on PCAWeights2 alone, so the edge weights themselves are identical.
@@ -230,6 +266,24 @@ WEIGHT_TRANSFORM_XML = {
         ' targetWeightTransform="@targetWeightTransform"',
         '<log idref="targetWeightTransform"/>',
     ),
+    # exponent=1 leaves the weights as the EdgeWeights returned them, i.e. cancels the SPR
+    # operators' default squaring (TargetedWeightOperator.applyTargetTransform). For a
+    # LearnedWeights model whose scores ARE a calibrated log posterior this is the temperature
+    # the Hastings ratio was trained against; "fixed05" overshoots to flatter still.
+    "fixed1": (
+        '<targetWeightTransform id="targetWeightTransform"'
+        ' spec="targetedbeast.weighttransform.PowerOffsetTransform"'
+        ' exponent="1.0" offset="0.0" optimise="false"/>',
+        ' targetWeightTransform="@targetWeightTransform"',
+        '<log idref="targetWeightTransform"/>',
+    ),
+    "fixed05": (
+        '<targetWeightTransform id="targetWeightTransform"'
+        ' spec="targetedbeast.weighttransform.PowerOffsetTransform"'
+        ' exponent="0.5" offset="0.0" optimise="false"/>',
+        ' targetWeightTransform="@targetWeightTransform"',
+        '<log idref="targetWeightTransform"/>',
+    ),
 }
 
 # Which transform variant each edge-weights setting is rendered with.
@@ -239,6 +293,12 @@ WEIGHT_TRANSFORM_FOR_SETTING = {
     "pca": "none",
     "learned": "none",
     "learned_fused": "none",
+    "learned_fused_perop": "none",
+    "learned_fused_t1": "fixed1",
+    "learned_fused_t05": "fixed05",
+    "learned_fused_simplified": "none",
+    "pca_brownian": "none",
+    "pca_brownian_full": "none",
     "pca_grid": "grid",
     "pca_grid_low": "grid_low",
     "pca_grid_mid": "grid_mid",
@@ -294,6 +354,42 @@ EDGE_WEIGHT_TRANSFORM_FOR_SETTING = {
     "pca_grid_mid_dual": "grid_mid",
     "pca_grid_mid_ratio": "grid_mid_ratio",
 }
+
+# Per-operator target-weight exponents, for settings where different operators want different
+# sharpening. Unlike WEIGHT_TRANSFORM_XML above (one shared, possibly adaptive, transform instance
+# idref'd by every operator), each entry here is a private nested transform on one operator, so
+# they cannot share a tuner - only fixed exponents belong here.
+#
+# The exponent an operator gets when it has NO transform at all is not 1: the three SPR operators
+# square their target weights by default (TargetedWeightOperator.initWeightTransforms's
+# squareTargetsWhenAbsent), RangeSlide does not. So omitting an operator below means exponent 2
+# for the SPR operators and 1 for RangeSlide - which is why only the operators that need a
+# *different* exponent are listed.
+#
+# Measured on the fast tier (see the temperature sweep): with LearnedWeights, whose scores are a
+# calibrated tree log posterior, squaring costs WeightedWideOperator and TWB_FixedHeight ~5x in
+# acceptance (.0061/.0062 -> .0292/.0284 at exponent 0.5), while TargetedWilsonBalding loses
+# acceptance when flattened (.0478 -> .0277) and so keeps its default squaring.
+PER_OPERATOR_TARGET_TRANSFORM = {
+    "learned_fused_perop": {
+        "tw": 0.5,      # WeightedWideOperator
+        "twbfh": 0.5,   # TargetedWilsonBaldingFixedHeight
+    },
+}
+
+PER_OPERATOR_SLOTS = ("tw", "twb", "twbfh", "trs")
+
+
+def _per_operator_transform_slots(setting: str) -> dict[str, str]:
+    exponents = PER_OPERATOR_TARGET_TRANSFORM.get(setting, {})
+    slots = {}
+    for key in PER_OPERATOR_SLOTS:
+        exponent = exponents.get(key)
+        slots[f"{key}_target_weight_transform"] = "" if exponent is None else (
+            f'<targetWeightTransform id="targetWeightTransform_{key}"'
+            ' spec="targetedbeast.weighttransform.PowerOffsetTransform"'
+            f' exponent="{exponent}" offset="0.0" optimise="false"/>')
+    return slots
 
 
 def _learned_edge_weights_xml(out_dir: Path) -> str:
@@ -363,6 +459,7 @@ def render_run_xml(template_text: str, setting: str, chain_length: int, out_dir:
         edge_weight_transform=edge_transform_element,
         edge_weight_transform_ref=edge_transform_ref,
         edge_weight_transform_log=edge_transform_log,
+        **_per_operator_transform_slots(setting),
     )
 
     run_needle = '<run id="mcmc" spec="MCMC" chainLength='

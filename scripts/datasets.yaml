@@ -56,7 +56,7 @@ infb:
   states_per_sec: 1900
   site_patterns: 489
   taxa: 141
-  settings: [constant, pca, learned, learned_fused]
+  settings: [constant, pca, learned, learned_fused, pca_brownian, pca_brownian_full, learned_fused_simplified, learned_fused_t1, learned_fused_t05, learned_fused_perop]
   reference_tier: thorough
   notes: >
     Primary fast/thorough dataset (Phase 3a). +7.3% PCAWeights2-vs-ConstantWeights effect (CI

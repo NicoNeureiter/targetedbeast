@@ -70,6 +70,11 @@ public class PCAWeightsMLPLikelihood extends PCAWeightsBrownianFullLikelihood {
     private AxisReweightedFusedSurrogate fusedSurrogate;
     private LearnedWeightsTreeTrainer fusedTreeTrainer;
 
+    /** Cross-check the incremental scale statistics against a materialized candidate tree. */
+    private static final boolean verifyFusedScaleStatistics =
+            Boolean.getBoolean("targetedbeast.surrogate.fusedscale.verify");
+    private static final AtomicInteger verifiedCandidates = new AtomicInteger(0);
+
     /** Wire the loaded surrogate.  Called from LearnedWeights after JSON load. */
     public void setSurrogate(EmbeddingMLPSurrogate surrogate) {
         this.surrogate = surrogate;
@@ -177,15 +182,16 @@ public class PCAWeightsMLPLikelihood extends PCAWeightsBrownianFullLikelihood {
     /**
      * Scores one proposal with {@link #fusedSurrogate}. Needs rootHeight/
      * totalBranchLength/totalDiffusionLength of the *proposed* tree, which
-     * message-passing does not materialize -- so this builds the candidate
-     * tree exactly as {@link ProposalExporter#buildCandidateTree} does (deep
-     * copy the live tree + apply the SPR move), then reads scale statistics
-     * off it via {@link LearnedWeightsTreeTrainer#computeTreeScaleStatistics}.
+     * message-passing does not materialize.
      *
-     * <p><b>Performance note:</b> this adds a full tree deep-copy per scored
-     * proposal, which the message-passing design in the parent class exists
-     * specifically to avoid. Accepted here as the cost of a correctness/
-     * go-no-go real-MCMC check for the fused surrogate -- not optimized away.
+     * <p>All three are sums over branches, and the SPR the candidate represents
+     * changes exactly four of them, so they are obtained as a delta on the live
+     * tree's own statistics rather than by materializing the candidate -- see
+     * {@link #proposedTreeScaleStatistics}. The straightforward version (deep
+     * copy the live tree via {@link ProposalExporter#buildCandidateTree}, then
+     * rescan it) cost ~40us per scored candidate, which dominated the runtime
+     * of every SPR operator; set {@code targetedbeast.surrogate.fusedscale.verify}
+     * to run both and cross-check them.
      *
      * <p>{@code qf}/{@code logDet} are reused as-is from the caller (the same
      * root-free message-passing values used by the {@link #surrogate} path)
@@ -195,15 +201,117 @@ public class PCAWeightsMLPLikelihood extends PCAWeightsBrownianFullLikelihood {
     private double computeFusedPrediction(Node fromNode, Node toNode, double toHeight,
                                            double[] qf, double logDet) {
         Tree liveTree = (Tree) treeInput.get();
-        Tree candidate = ProposalExporter.buildCandidateTree(liveTree, fromNode, toNode, toHeight);
-        if (candidate == null) {
+        LearnedWeightsTreeTrainer.TreeScaleStatistics stats =
+                proposedTreeScaleStatistics(liveTree, fromNode, toNode, toHeight);
+        if (stats == null) {
             // SPR pre-conditions failed / invalid heights -- fall back to the plain
             // surrogate if available, else propagate a very poor score so this
             // candidate is effectively never chosen.
             return surrogate != null ? surrogate.predictFromQfAndLogDet(qf, logDet) : Double.NEGATIVE_INFINITY;
         }
-        LearnedWeightsTreeTrainer.TreeScaleStatistics stats = fusedTreeTrainer.computeTreeScaleStatistics(candidate);
+        if (verifyFusedScaleStatistics) {
+            verifyAgainstMaterializedCandidate(liveTree, fromNode, toNode, toHeight, stats);
+        }
         return fusedSurrogate.predict(qf, logDet, stats.rootHeight(), stats.totalBranchLength(), stats.totalDiffusionLength());
+    }
+
+    /**
+     * Scale statistics of the tree that {@link ProposalExporter#buildCandidateTree} would
+     * build, computed as a delta on {@code liveTree} instead of by building it. Returns
+     * null on exactly the inputs for which that method returns null.
+     *
+     * <p>The move detaches {@code fromNode}'s parent {@code p} (regrafting {@code p}'s
+     * other child {@code CiP} onto {@code p}'s parent {@code PiP}) and reinserts it above
+     * {@code toNode} at {@code toHeight}. Only the branches above {@code p}, {@code CiP},
+     * {@code fromNode} and {@code toNode} change length; the root is never moved, so
+     * rootHeight is untouched. Branch rates are per node and node identity survives the
+     * move, so each changed branch contributes {@code rate * (newLength - oldLength)} to
+     * totalDiffusionLength.
+     */
+    private LearnedWeightsTreeTrainer.TreeScaleStatistics proposedTreeScaleStatistics(
+            Tree liveTree, Node fromNode, Node toNode, double toHeight) {
+        // Pre-conditions, mirroring buildCandidateTree exactly.
+        Node p = fromNode.getParent();
+        if (p == null || p.isRoot()) return null;
+        Node PiP = p.getParent();
+        if (PiP == null) return null;
+        Node jP = toNode.getParent();
+        if (jP == null) return null;
+        if (jP == p || toNode == p || jP == fromNode) return null;
+        Node CiP = otherChild(p, fromNode);
+        if (CiP == null) return null;
+
+        // Post-move height validity, mirroring buildCandidateTree's heightsValid checks on
+        // the three nodes whose parent/child sets it changes. p's new parent is jP and its
+        // new children are fromNode and toNode; PiP gains CiP; jP gains p.
+        if (jP.getHeight() <= toHeight) return null;
+        if (toHeight <= fromNode.getHeight() || toHeight <= toNode.getHeight()) return null;
+        if (PiP.getHeight() <= CiP.getHeight()) return null;
+
+        LearnedWeightsTreeTrainer.TreeScaleStatistics live =
+                fusedTreeTrainer.computeTreeScaleStatistics(liveTree);
+
+        double pHeight = p.getHeight();
+        double deltaBranchLength = 0.0;
+        double deltaDiffusionLength = 0.0;
+
+        Node[] changed = {p, CiP, fromNode, toNode};
+        double[] oldLength = {
+            PiP.getHeight() - pHeight,
+            pHeight - CiP.getHeight(),
+            pHeight - fromNode.getHeight(),
+            jP.getHeight() - toNode.getHeight(),
+        };
+        double[] newLength = {
+            jP.getHeight() - toHeight,
+            PiP.getHeight() - CiP.getHeight(),
+            toHeight - fromNode.getHeight(),
+            toHeight - toNode.getHeight(),
+        };
+        for (int i = 0; i < changed.length; i++) {
+            double delta = newLength[i] - oldLength[i];
+            deltaBranchLength += delta;
+            deltaDiffusionLength += fusedTreeTrainer.branchRateFor(changed[i]) * delta;
+        }
+
+        return new LearnedWeightsTreeTrainer.TreeScaleStatistics(
+                live.rootHeight(),
+                live.totalBranchLength() + deltaBranchLength,
+                live.totalDiffusionLength() + deltaDiffusionLength);
+    }
+
+    private static Node otherChild(Node parent, Node child) {
+        if (parent.getChildCount() != 2) return null;
+        Node left = parent.getChild(0);
+        Node right = parent.getChild(1);
+        return left == child ? right : left;
+    }
+
+    /** Cross-check {@link #proposedTreeScaleStatistics} against the materialized candidate. */
+    private void verifyAgainstMaterializedCandidate(Tree liveTree, Node fromNode, Node toNode,
+            double toHeight, LearnedWeightsTreeTrainer.TreeScaleStatistics fast) {
+        Tree candidate = ProposalExporter.buildCandidateTree(liveTree, fromNode, toNode, toHeight);
+        if (candidate == null) {
+            throw new IllegalStateException("fusedscale verify: incremental path accepted a move "
+                    + "buildCandidateTree rejects (from=" + fromNode.getNr() + " to=" + toNode.getNr()
+                    + " toHeight=" + toHeight + ")");
+        }
+        LearnedWeightsTreeTrainer.TreeScaleStatistics slow = fusedTreeTrainer.computeTreeScaleStatistics(candidate);
+        double tol = 1e-8 * Math.max(1.0, Math.abs(slow.totalBranchLength()));
+        if (Math.abs(fast.rootHeight() - slow.rootHeight()) > tol
+                || Math.abs(fast.totalBranchLength() - slow.totalBranchLength()) > tol
+                || Math.abs(fast.totalDiffusionLength() - slow.totalDiffusionLength()) > tol) {
+            throw new IllegalStateException("fusedscale verify: mismatch (from=" + fromNode.getNr()
+                    + " to=" + toNode.getNr() + " toHeight=" + toHeight + ")"
+                    + " fast=[" + fast.rootHeight() + ", " + fast.totalBranchLength() + ", "
+                    + fast.totalDiffusionLength() + "]"
+                    + " slow=[" + slow.rootHeight() + ", " + slow.totalBranchLength() + ", "
+                    + slow.totalDiffusionLength() + "]");
+        }
+        int n = verifiedCandidates.incrementAndGet();
+        if (Integer.bitCount(n) == 1 && n >= 1024) {
+            Log.info.println("PCAWeightsMLPLikelihood: fusedscale verify OK for " + n + " candidates.");
+        }
     }
 
     // ------------------------------------------------------------------
