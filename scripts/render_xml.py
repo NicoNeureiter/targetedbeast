@@ -128,7 +128,8 @@ def render(dataset: str, tier: str, setting: str, rep: int, out_dir: Path,
     known = entry["settings"] + entry.get("extra_settings", [])
     if setting not in known:
         raise SystemExit(f"Dataset {dataset!r} has no setting {setting!r}; known: {known}")
-    cfg = tier_config(registry, dataset, tier)
+    # "burnin-speed" is not a tier: its chain shape is the dataset's burnin_speed entry.
+    cfg = entry["burnin_speed"] if tier == "burnin-speed" else tier_config(registry, dataset, tier)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     template_path = PROJECT_ROOT / entry["template"]

@@ -446,13 +446,10 @@ rule render_burnin_speed:
         extra=render_inputs,
     output:
         xml=BURNIN_SPEED_CELL_DIR + "/run.xml",
-    params:
-        tier=lambda wc: reference_tier_of(wc.dataset),
     shell:
-        # Same chain shape (pre_burnin/chain_length/jump_interval) as the dataset's reference_tier
-        # cell above - a fresh naive random start at that shape, not a resumed checkpoint (Phase
-        # 3c item 1 is separate, out of scope here) - with the reference band wired in.
-        "{PYTHON_BIN} {SCRIPT_DIR}/render_xml.py --dataset {wildcards.dataset} --tier {params.tier} "
+        # A fresh start at the dataset's burnin_speed chain shape (pre_burnin 0, so the tracker
+        # sees the whole burn-in), with the reference band wired in.
+        "{PYTHON_BIN} {SCRIPT_DIR}/render_xml.py --dataset {wildcards.dataset} --tier burnin-speed "
         "--setting {wildcards.setting} --rep {wildcards.rep} "
         '--out-dir "$(dirname {output.xml})" --reference-band "{input.band}"'
 
@@ -495,8 +492,8 @@ def burnin_speed_cell_summaries(wildcards):
     return expand(
         BURNIN_SPEED_CELL_DIR + "/cell.burnin_summary.tsv",
         dataset=wildcards.dataset,
-        setting=settings_for(wildcards.dataset),
-        rep=reps_for(wildcards.dataset, reference_tier_of(wildcards.dataset)),
+        setting=REGISTRY[wildcards.dataset]["burnin_speed"]["settings"],
+        rep=range(REGISTRY[wildcards.dataset]["burnin_speed"]["reps"]),
     )
 
 

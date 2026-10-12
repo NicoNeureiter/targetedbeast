@@ -64,6 +64,14 @@ infb:
   targeted_operators: [TargetedWide, targetedWilsonBalding, targetedWilsonBaldingFixedHeight,
                        targetedRangeSlide]
   reference_tier: thorough
+  # Fresh-start cells for the Snakefile's burnin_speed target. pre_burnin must stay 0:
+  # BenchmarkMCMC's burn-in tracker only sees proposals after preBurnin.
+  burnin_speed:
+    settings: [constant, pca, pca_fixed1, pca_fixed8]
+    pre_burnin: 0
+    chain_length: 300000
+    jump_interval: 20
+    reps: 8
   notes: >
     Primary fast/thorough dataset (Phase 3a). +7.3% PCAWeights2-vs-ConstantWeights effect (CI
     excludes zero) confirmed at the thorough chain length; not confirmed at the fast chain
