@@ -365,11 +365,13 @@ rule collect_cell:
         summary=CELL_DIR + "/cell.summary.tsv",
     params:
         ess_flag=lambda wc, input: f'--ess-table "{input.ess}"' if input.ess else "",
+        targeted=lambda wc: " ".join(REGISTRY[wc.dataset].get("targeted_operators", [])),
     shell:
         "{PYTHON_BIN} {SCRIPT_DIR}/collect_stats.py "
         '--opstats "{input.opstats}" --runtime "{input.runtime}" {params.ess_flag} '
         "--dataset {wildcards.dataset} --tier {wildcards.tier} --setting {wildcards.setting} "
-        '--rep {wildcards.rep} --summary-out "{output.summary}"'
+        '--rep {wildcards.rep} --summary-out "{output.summary}" '
+        "--targeted-operators {params.targeted}"
 
 
 def cell_summaries(wildcards):

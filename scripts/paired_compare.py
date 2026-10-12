@@ -2,7 +2,8 @@
 
 Prints the ESS gate per cell, then for each metric and each setting against the baseline: mean
 difference, its t-based 90% CI (df = n - 1) and the difference relative to the baseline mean.
-Defaults to ESJD per step (choice quality, blind to cost) and per second (net of cost).
+Defaults to ESJD over the targeted operators only, per step and per second, then chain-level ESJD
+per step. A weight transform acts only on the targeted operators; chain level dilutes its effect.
 
 Usage:
     python scripts/paired_compare.py runs/infb/thorough/aos_baseline.summary.tsv \
@@ -43,7 +44,7 @@ def main() -> None:
     parser.add_argument("summary", type=Path)
     parser.add_argument("--baseline", required=True)
     parser.add_argument("--settings", nargs="+", required=True)
-    parser.add_argument("--metrics", nargs="+", default=["esjd_rnni", "esjdPerSec_rnni"])
+    parser.add_argument("--metrics", nargs="+", default=["esjd_rnni_targeted", "esjdPerSec_rnni_targeted", "esjd_rnni"])
     args = parser.parse_args()
 
     cells = read_cells(args.summary, args.metrics)

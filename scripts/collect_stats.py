@@ -88,6 +88,36 @@ def chain_row(opstats_rows: list[dict[str, str]]) -> dict[str, str]:
     raise ValueError(f"No {CHAIN_ROW_NAME} row found in opstats")
 
 
+def operator_id(name: str) -> str:
+    """`pkg.Class(id)` -> `id`."""
+    return name[name.rfind("(") + 1:-1] if name.endswith(")") else name
+
+
+def targeted_metrics(opstats_rows: list[dict[str, str]], targeted: set[str]) -> dict[str, float]:
+    """ESJD per proposal and per second over the targeted operators only, for each metric.
+
+    A weight transform only changes these operators' proposals, and on infB they contribute ~13%
+    of chain-level ESJD, so the chain-level figure dilutes their effect. An operator counts if its
+    id, or the part before its first '.', is listed - `targetedWilsonBalding.e2`, a candidate
+    inside an AdaptableOperatorSampler, counts as `targetedWilsonBalding`.
+    """
+    rows = [r for r in opstats_rows if r.get("operator") != CHAIN_ROW_NAME
+            and operator_id(r["operator"]).split(".")[0] in targeted]
+    if not rows:
+        raise ValueError(f"No opstats rows for targeted operators {sorted(targeted)}")
+    proposals = sum(float(r["proposals"]) for r in rows)
+    seconds = sum(float(r["proposals"]) * float(r["meanTimeMs"]) for r in rows) / 1000.0
+    out = {}
+    for col in rows[0]:
+        if col.startswith("esjd_"):
+            total = sum(float(r["proposals"]) * float(r[col]) for r in rows
+                        if math.isfinite(float(r[col])))
+            metric = col[len("esjd_"):]
+            out[f"esjd_{metric}_targeted"] = total / proposals
+            out[f"esjdPerSec_{metric}_targeted"] = total / seconds
+    return out
+
+
 def fmt(x) -> str:
     if x is None:
         return "NA"
@@ -107,12 +137,15 @@ def main() -> None:
     parser.add_argument("--setting", required=True)
     parser.add_argument("--rep", required=True)
     parser.add_argument("--summary-out", type=Path, required=True)
+    parser.add_argument("--targeted-operators", nargs="*", default=[],
+                         help="operator ids for the *_targeted columns (datasets.yaml)")
     args = parser.parse_args()
 
     runtime_sec = read_runtime_seconds(args.runtime)
     runtime_hours = runtime_sec / 3600.0
 
-    chain = chain_row(read_tsv(args.opstats))
+    opstats = read_tsv(args.opstats)
+    chain = chain_row(opstats)
 
     row = {
         "dataset": args.dataset,
@@ -132,6 +165,9 @@ def main() -> None:
     for col, val in chain.items():
         if col.startswith("esjdPerSec_") or col.startswith("esjd_"):
             row[col] = val
+    if args.targeted_operators:
+        for col, val in targeted_metrics(opstats, set(args.targeted_operators)).items():
+            row[col] = fmt(val)
 
     if args.ess_table is not None:
         log_row = read_loganalyser_oneline(args.ess_table)
