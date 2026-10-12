@@ -1301,3 +1301,104 @@ whether this specific combination is worth keeping: it is not.
 
 `mvn -o test`: 134 run, 2 failures, 0 errors, 1 skipped — unchanged from baseline, confirmed after
 these runs and before committing.
+
+---
+
+# `AdaptableOperatorSampler` baseline, and ESJD per step as a second metric
+
+## Setup
+
+`pca_aos_mid` replaces each of the four transform-bearing operators (`TargetedWide`,
+`targetedWilsonBalding`, `targetedWilsonBaldingFixedHeight`, `targetedRangeSlide`) with an
+`AdaptableOperatorSampler` over four copies of itself, target-weight exponent pinned at 2/3/4/6
+(`pca_grid_mid`'s grid), scored by squared RNNI jump, `burnin=5000`, `uniformp=0.1` (matching
+`GridTuner`'s burnin and `explorationProb`). Operators are literal XML in
+`examples/infb_HA_141/template_aos.xml`; `render_infb_benchmark_xml.load_template` refuses it if it
+differs from `template.xml` outside the `targeted-operators` markers. Unlike `pca_grid_mid`, each
+operator learns its own exponent rather than sharing one.
+
+`snakemake aos_baseline` runs `pca`, `pca_grid_mid` and `pca_aos_mid` at the `thorough` tier
+(4 reps, seeds 1000–1003, shared checkpoint) in one invocation, so all three share timing
+conditions; `scripts/paired_compare.py` does the paired analysis. Run with `-j4`.
+
+## Why ESJD per step
+
+Earlier verdicts paired cells from different sessions on `esjdPerSec_rnni`. The same
+`pca_grid_mid` seeds differ by up to 18% between `eval6` and `eval7` (rep 3: 25,140 vs 20,588), so
+timing drift is comparable to the effects measured. `esjd_rnni` (squared RNNI jump per proposal,
+chain level) is unaffected by it, and a pinned or grid-tuned exponent costs the same per proposal,
+so for weight transforms it is the cleaner headline. It does not see the sampler's own per-call
+overhead (tree copy and RNNI distance), so `esjdPerSec_rnni` stays alongside it.
+
+Re-analysing the existing `thorough` cells per step (vs `eval7_dual`'s `pca_grid_mid`, n=4):
+
+| setting | per second | per step |
+|---|---|---|
+| `pca_grid_mid_rnni` | −9.8%, CI excludes 0 | −5.6%, CI (−1.62, +0.38) |
+| `pca_grid_mid_dual` | −6.3%, CI includes 0 | −9.6%, CI (−2.93, +0.80) |
+| `pca_grid_mid_ratio` | −17.2%, CI excludes 0 | −9.9%, CI (−2.62, +0.42) |
+
+None is detectably worse per step; "no better than `pca_grid_mid`" stands, "detectably worse"
+does not. (`pca_grid_mid_rnni` was originally paired with `eval6`'s reps, not `eval7`'s.)
+
+## Result
+
+ESS gate: 11 of 12 cells pass; `pca_aos_mid` rep 2 has `posterior.ESS` 87.8. Excluding it does not
+change the conclusions. Runtimes per cell: `pca` 312–325 s, `pca_grid_mid` 321–325 s,
+`pca_aos_mid` 330–339 s.
+
+Paired against `pca`, t-based 90% CI, n=4:
+
+| setting | `esjd_rnni` | `esjdPerSec_rnni` |
+|---|---|---|
+| `pca_grid_mid` | +4.8%, (+0.19, +0.84), excludes 0 | +3.4%, (−361, +2194) |
+| `pca_aos_mid` | +0.0%, (−0.73, +0.73) | −5.6%, (−2798, −214), excludes 0 |
+
+- **`GridTuner` helps.** The per-step gain over `pca` reproduces the earlier +4.9% per-second
+  result, now from cells run together.
+- **`AdaptableOperatorSampler` does not.** Per step it equals `pca`; per second it loses its
+  per-call overhead. Its learned weights (exponents 2/3/4/6, min–max over reps) never commit:
+
+  | operator | 2 | 3 | 4 | 6 |
+  |---|---|---|---|---|
+  | `TargetedWide` | 0.24–0.26 | 0.24–0.27 | 0.24–0.26 | 0.23–0.26 |
+  | `targetedWilsonBalding` | 0.28–0.29 | 0.25–0.27 | 0.22–0.26 | 0.21–0.23 |
+  | `targetedWilsonBaldingFixedHeight` | 0.24–0.26 | 0.25–0.28 | 0.25–0.26 | 0.22–0.24 |
+  | `targetedRangeSlide` | 0.27–0.31 | 0.24–0.31 | 0.17–0.24 | 0.19–0.25 |
+
+  A near-uniform mixture of exponents is no better than exponent 2 alone.
+- **`GridTuner` now leads at the grid edge.** Share of the chain each exponent led, per rep:
+
+  | rep | 2 | 3 | 4 | 6 |
+  |---:|---:|---:|---:|---:|
+  | 0 | 14% | 24% | 15% | 47% |
+  | 1 | 2% | 0% | 1% | 97% |
+  | 2 | 2% | 24% | 73% | 1% |
+  | 3 | 7% | 1% | 2% | 90% |
+
+  `eval6` led at 4 in 3 of 4 reps. A leader at the top of the grid means the optimum may be at or
+  above 6; `pca_grid` (8–24) was rejected only on cross-session per-second numbers.
+
+The two adaptive mechanisms disagree in direction: per-operator RNNI jump (the sampler's score)
+leans flat, likelihood-jump reward (`GridTuner`) leans sharp, and sharp wins on chain-level RNNI
+ESJD. Per-operator RNNI jump looks like a poor guide to chain-level mixing, consistent with
+`pca_grid_mid_rnni` not beating `pca_grid_mid`. Not tested further.
+
+## Follow-up: fixed exponents (set up, not yet run)
+
+`pca_fixed4`, `pca_fixed6`, `pca_fixed8`: one shared `PowerOffsetTransform` pinned at that
+exponent, no tuner (`pca_fixed2`'s wiring). `snakemake fixed_exponents` runs them at the
+`thorough` tier and reuses `aos_baseline`'s `pca`/`pca_grid_mid` cells. Questions: where the
+optimum sits, and whether `GridTuner` beats fixing the exponent there. Judged primarily per step,
+since the reused cells come from another session.
+
+```bash
+snakemake -s scripts/Snakefile -j4 fixed_exponents
+python3 scripts/paired_compare.py runs/infb/thorough/fixed_exponents.summary.tsv \
+    --baseline pca_grid_mid --settings pca pca_fixed4 pca_fixed6 pca_fixed8
+```
+
+Editing `datasets.yaml` or the renderer makes Snakemake treat existing cells, including the shared
+checkpoint, as out of date. If their rendered XML is unchanged, mark them current with
+`snakemake <target> --touch` rather than rerunning; a rerun checkpoint changes every cell's
+starting state.
