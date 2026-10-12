@@ -176,6 +176,23 @@ rule aos_baseline:
 FIXED_EXPONENT_SETTINGS = ["pca", "pca_grid_mid", "pca_fixed4", "pca_fixed6", "pca_fixed8"]
 
 
+# The reference curve for the tuner: every pinned exponent, plus pca_grid_mid, at 8 reps (the
+# thorough tier's 4 plus 4 more, same seed scheme, so existing cells are reused). Explicit target.
+EXPONENT_SWEEP_SETTINGS = ["pca_fixed1", "pca_fixed1p5", "pca", "pca_fixed3", "pca_fixed4",
+                           "pca_fixed6", "pca_fixed8", "pca_grid_mid"]
+EXPONENT_SWEEP_REPS = range(8)
+
+
+rule exponent_sweep:
+    input:
+        expand(CELL_DIR + "/cell.summary.tsv", dataset="infb", tier="thorough",
+               setting=EXPONENT_SWEEP_SETTINGS, rep=EXPONENT_SWEEP_REPS),
+    output:
+        summary=str(RUNS_ROOT / "infb" / "thorough" / "exponent_sweep.summary.tsv"),
+    run:
+        concat_tsv(input, output.summary)
+
+
 rule fixed_exponents:
     input:
         expand(CELL_DIR + "/cell.summary.tsv", dataset="infb", tier="thorough",

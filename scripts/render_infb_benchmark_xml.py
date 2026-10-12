@@ -45,6 +45,9 @@ def load_template(setting: str) -> str:
     return variant
 
 
+# Pinned target-weight exponents, by setting-name suffix ("1p5" -> pca_fixed1p5).
+FIXED_EXPONENTS = {"1": 1.0, "1p5": 1.5, "2": 2.0, "3": 3.0, "4": 4.0, "6": 6.0, "8": 8.0}
+
 EDGE_WEIGHTS_PCA = ('<distribution id="edgeweights" spec="targetedbeast.edgeweights.PCAWeights2" '
                     'tree="@tree" maxWeight="20" data="@infB_HA" dimension="10"/>')
 
@@ -90,7 +93,7 @@ EDGE_WEIGHTS_XML = {
                     'tree="@tree" maxWeight="20" data="@infB_HA" dimension="10"/>',
     # Same PCAWeights2 with the exponent pinned (fixed2's wiring): where is the optimum, and does
     # GridTuner beat simply fixing it there?
-    **{f"pca_fixed{b}": EDGE_WEIGHTS_PCA for b in (4, 6, 8)},
+    **{f"pca_fixed{k}": EDGE_WEIGHTS_PCA for k in FIXED_EXPONENTS if k != "2"},
 }
 
 # Grid points and burnin below mirror scripts/generate_xmls.py's _grid_transform (the lassaL
@@ -245,13 +248,13 @@ WEIGHT_TRANSFORM_XML = {
     # Pinned exponents, no tuner: optimise="false" makes startProposal()/optimize() no-ops. fixed2
     # is the reference point (see "pca_fixed2" above) - w^2 with zero offset, identical to the
     # no-transform path.
-    **{f"fixed{b}": (
+    **{f"fixed{k}": (
         '<targetWeightTransform id="targetWeightTransform"'
         ' spec="targetedbeast.weighttransform.PowerOffsetTransform"'
-        f' exponent="{b}.0" offset="0.0" optimise="false"/>',
+        f' exponent="{b}" offset="0.0" optimise="false"/>',
         ' targetWeightTransform="@targetWeightTransform"',
         '<log idref="targetWeightTransform"/>',
-    ) for b in (2, 4, 6, 8)},
+    ) for k, b in FIXED_EXPONENTS.items()},
 }
 
 # Which transform variant each edge-weights setting is rendered with.
@@ -262,7 +265,7 @@ WEIGHT_TRANSFORM_FOR_SETTING = {
     "pca_grid": "grid",
     "pca_grid_low": "grid_low",
     "pca_grid_mid": "grid_mid",
-    **{f"pca_fixed{b}": f"fixed{b}" for b in (2, 4, 6, 8)},
+    **{f"pca_fixed{k}": f"fixed{k}" for k in FIXED_EXPONENTS},
     "pca_grid_mid_rnni": "grid_mid_rnni",
     "pca_grid_mid_dual": "grid_mid_dual",
     "pca_grid_mid_ratio": "grid_mid_ratio",

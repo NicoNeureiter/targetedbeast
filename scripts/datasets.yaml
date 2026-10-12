@@ -58,7 +58,8 @@ infb:
   taxa: 141
   settings: [constant, pca]
   # Renderable on explicit request (e.g. the Snakefile's aos_baseline target), never part of `all`.
-  extra_settings: [pca_grid_mid, pca_aos_mid, pca_fixed4, pca_fixed6, pca_fixed8]
+  extra_settings: [pca_grid_mid, pca_aos_mid, pca_fixed1, pca_fixed1p5, pca_fixed3, pca_fixed4,
+                   pca_fixed6, pca_fixed8]
   # Operators a weight transform acts on; collect_stats.py's *_targeted columns cover only these.
   targeted_operators: [TargetedWide, targetedWilsonBalding, targetedWilsonBaldingFixedHeight,
                        targetedRangeSlide]
