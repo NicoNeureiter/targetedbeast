@@ -5,6 +5,8 @@ difference, its t-based 90% CI (df = n - 1) and the difference relative to the b
 Defaults to ESJD over the targeted operators only, per step and per second, then chain-level ESJD
 per step. A weight transform acts only on the targeted operators; chain level dilutes its effect.
 
+Burn-in speed: pass runs/<dataset>/burnin_speed_summary.tsv with --metrics proposalsToTarget.
+
 Usage:
     python scripts/paired_compare.py runs/infb/thorough/aos_baseline.summary.tsv \
         --baseline pca_grid_mid --settings pca pca_aos_mid
@@ -55,11 +57,13 @@ def main() -> None:
     print("setting\trep\tseed\t" + "\t".join((*ESS_COLUMNS, *args.metrics)) + "\tgate")
     for setting in [args.baseline, *args.settings]:
         for rep, cell in sorted(cells[setting].items()):
-            ok = all(cell[c] >= ESS_GATE for c in ESS_COLUMNS)
+            ess = [cell[c] for c in ESS_COLUMNS]
+            gate = "n/a" if any(math.isnan(e) for e in ess) else (
+                "ok" if all(e >= ESS_GATE for e in ess) else "FAIL")
             print(f"{setting}\t{rep}\t{cell['seed']}\t"
                   + "\t".join(f"{cell[c]:.1f}" for c in ESS_COLUMNS)
                   + "".join(f"\t{cell[m]:.4g}" for m in args.metrics)
-                  + f"\t{'ok' if ok else 'FAIL'}")
+                  + f"\t{gate}")
 
     base = cells[args.baseline]
     for metric in args.metrics:
