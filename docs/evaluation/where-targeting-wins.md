@@ -1354,10 +1354,12 @@ Paired against `pca`, t-based 90% CI, n=4:
 | `pca_grid_mid` | +4.8%, (+0.19, +0.84), excludes 0 | +3.4%, (−361, +2194) |
 | `pca_aos_mid` | +0.0%, (−0.73, +0.73) | −5.6%, (−2798, −214), excludes 0 |
 
-- **`pca_grid_mid` beats `pca`.** The per-step gain reproduces the earlier +4.9% per-second
-  result, now from cells run together. Fixed exponents do not explain it; see below.
-- **`AdaptableOperatorSampler` does not.** Per step it equals `pca`; per second it loses its
-  per-call overhead. Its learned weights (exponents 2/3/4/6, min–max over reps) never commit:
+- **`pca_grid_mid` beats `pca` on chain-level ESJD, but not through the transform.** See "Where
+  chain-level ESJD comes from" below: the gain sits entirely in operators the transform does not
+  touch. On the targeted operators it is −4.1%, CI includes 0.
+- **`AdaptableOperatorSampler` adds nothing.** Per step it equals `pca` at chain level and is
+  −9.7% (CI includes 0) on the targeted operators; per second it also pays its per-call overhead.
+  Its learned weights (exponents 2/3/4/6, min–max over reps) never commit:
 
   | operator | 2 | 3 | 4 | 6 |
   |---|---|---|---|---|
@@ -1366,7 +1368,8 @@ Paired against `pca`, t-based 90% CI, n=4:
   | `targetedWilsonBaldingFixedHeight` | 0.24–0.26 | 0.25–0.28 | 0.25–0.26 | 0.22–0.24 |
   | `targetedRangeSlide` | 0.27–0.31 | 0.24–0.31 | 0.17–0.24 | 0.19–0.25 |
 
-  A near-uniform mixture of exponents is no better than exponent 2 alone.
+  A near-uniform mixture of exponents is no better than exponent 2 alone; the slight lean to 2
+  matches the targeted-operator result below.
 - **`GridTuner` is effectively a uniform mixture.** It draws each proposal's exponent in
   proportion to the mean reward per grid point, and those means are nearly equal (final values
   0.106–0.121 across all points and reps). Each exponent is therefore drawn about a quarter of the
@@ -1396,24 +1399,75 @@ python3 scripts/paired_compare.py runs/infb/thorough/fixed_exponents.summary.tsv
 | `pca_fixed8` | 10.99 | +2.4%, (−0.11, +0.62) | −2.3%, (−0.81, +0.29) |
 | `pca_grid_mid` | 11.25 | +4.8%, (+0.19, +0.84) | — |
 
-- **ESJD per step is flat in the exponent.** No fixed exponent from 2 to 8 differs detectably
-  from exponent 2; the spread is within ±2.5%.
-- **`pca_grid_mid` beats every fixed exponent except 8, and that is unexplained.** Its kernel is
-  a state-independent mixture of exponents 2/3/4/6 (each operator redraws the exponent at the start
-  of every proposal), and the expected squared jump of such a mixture is the weighted mean of its
-  components' expected squared jumps. With components at 10.53–10.74 (3 not measured), a mixture at
-  11.25 needs exponent 3 alone near 13 — implausible on a curve this flat. `pca_aos_mid`, also a
-  near-uniform mixture of the same components, lands at 10.74, where linearity says it should.
-- **Posterior summaries agree across all six settings** (likelihood, prior, tree height and
-  length, clock rate, popSize, kappa, gammaShape: means within 0.3%), so there is no gross bias.
-  This is too coarse to rule out a small one: reps share the checkpoint, so their spread
-  understates the error.
+Chain level shows no exponent effect, yet puts `pca_grid_mid` above every fixed exponent except 8.
+A state-independent mixture of exponents 2/3/4/6 (each operator redraws the exponent at the start
+of every proposal) cannot do that: its expected squared jump is the weighted mean of its
+components'. The next section resolves this.
 
-Either `pca_grid_mid`'s gain is a fluke of n=4 (it is significant against `pca`, `pca_fixed4` and
-`pca_fixed6`, and reproduces at ≈11.1 per step in `eval7`), or the `GridTuner` path differs from a
-plain mixture of fixed kernels in some way not yet identified. Two runs separate these: `pca_fixed3`
-(the missing component) and `GridTuner` with `explorationProb=1.0` (an exactly uniform,
-non-adaptive mixture of the same grid). Not run yet.
+Posterior summaries agree across all six settings (likelihood, prior, tree height and length,
+clock rate, popSize, kappa, gammaShape: means within 0.3%). This is too coarse to rule out a small
+bias: reps share the checkpoint, so their spread understates the error.
+
+## Where chain-level ESJD comes from
+
+Chain-level `esjd_rnni` is Σᵢ nᵢ·ESJDᵢ / N over all operators. Split into the four operators a
+weight transform acts on (`targeted_operators` in `datasets.yaml`) and the rest, mean over reps:
+
+| setting | targeted | rest | chain |
+|---|---:|---:|---:|
+| `pca` (exponent 2) | 1.49 | 9.25 | 10.74 |
+| `pca_fixed4` | 1.45 | 9.09 | 10.54 |
+| `pca_fixed6` | 1.24 | 9.33 | 10.57 |
+| `pca_fixed8` | 1.34 | 9.65 | 10.99 |
+| `pca_grid_mid` | 1.43 | 9.83 | 11.25 |
+| `pca_aos_mid` | 1.35 | 9.39 | 10.74 |
+
+The targeted operators supply ~13% of chain-level ESJD. Most of the rest comes from height
+operators (`strictClockUpDownOperatorX` ≈3.4, `ScaleIntervalsRandomly` ≈2.7, `ScaleAll` ≈1.9):
+RNNI distance is defined on ranked trees, so reordering node heights counts as a jump. Chain level
+therefore dilutes a transform's effect about eightfold and adds the noise of operators the
+transform does not touch. `pca_grid_mid`'s chain-level gain is entirely in the "rest" column.
+
+`collect_stats.py` now writes `esjd_<metric>_targeted` (Σ nᵢ·ESJDᵢ / Σ nᵢ over the targeted
+operators, i.e. per targeted proposal) and `esjdPerSec_<metric>_targeted`;
+`paired_compare.py` reports them first. Paired against `pca`, n=4, 90% CI:
+
+| setting | mean | per step | per second |
+|---|---:|---|---|
+| `pca` | 3.24 | — | — |
+| `pca_fixed4` | 3.16 | −2.7%, (−0.46, +0.29) | −5.6%, CI includes 0 |
+| `pca_fixed6` | 2.69 | −17.1%, (−1.10, −0.003) | −19.2%, CI excludes 0 |
+| `pca_fixed8` | 2.93 | −9.8%, (−0.72, +0.09) | −12.7%, CI excludes 0 |
+| `pca_grid_mid` | 3.11 | −4.1%, (−0.54, +0.28) | −4.8%, CI includes 0 |
+| `pca_aos_mid` | 2.93 | −9.7%, (−0.94, +0.31) | −19.7%, CI excludes 0 |
+
+- **Exponent 2, the operators' default, is best measured so far**; 6 is detectably worse.
+- **Both mixtures are consistent with linearity** on this metric: `pca_grid_mid` (3.11) and
+  `pca_aos_mid` (2.93) lie within their components' range.
+- **`GridTuner` has nothing to learn.** Its selection probabilities (mean rewards normalised) are
+  scattered at 2% of the chain, within 0.21–0.30 by 10% and 0.23–0.27 from 50% on, in every rep:
+  adaptation finishes within ~75k steps, at "no preference", because squared likelihood change per
+  proposal is nearly flat across 2–6.
+
+RNNI still counts height reorderings within topology moves; a height-free topology metric would
+isolate topology mixing further. ESS remains the final arbiter, since the targeted metric ignores
+indirect effects on the rest of the chain.
+
+## Next: exponent sweep below 2
+
+The optimum may lie at or below 2. `pca_fixed1`, `pca_fixed1p5` and `pca_fixed3` complete the
+curve; `snakemake exponent_sweep` runs exponents 1, 1.5, 2, 3, 4, 6, 8 and `pca_grid_mid` at
+8 reps (the existing 4 plus 4 more; 44 new cells). Judge on `esjd_rnni_targeted`.
+
+```bash
+snakemake -s scripts/Snakefile -j4 exponent_sweep
+python3 scripts/paired_compare.py runs/infb/thorough/exponent_sweep.summary.tsv --baseline pca \
+    --settings pca_fixed1 pca_fixed1p5 pca_fixed3 pca_fixed4 pca_fixed6 pca_fixed8 pca_grid_mid
+```
+
+Then: burn-in speed (`burnin_speed`, fresh starts) for `constant`, `pca` and the best fixed
+exponent; then `PCAWeights2` with `useOneNorm="false"` (Euclidean distance, the metric PCA
+preserves), judged on the targeted metric.
 
 Editing `datasets.yaml` or the renderer makes Snakemake treat existing cells, including the shared
 checkpoint, as out of date. If their rendered XML is unchanged, mark them current with
