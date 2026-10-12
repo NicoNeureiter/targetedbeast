@@ -23,11 +23,11 @@
 # Usage (from this scripts/ directory, or anywhere with -s scripts/Snakefile):
 #   snakemake -j1                          # smoke + fast + thorough, everything except cross-check
 #   snakemake -j4                          # reps/settings/datasets run in parallel up to 4 cores
-#   snakemake -j1 runs/primates/smoke/summary.tsv
-#   snakemake -j2 runs/infb/fast/summary.tsv
-#   snakemake -j4 runs/infb/thorough/summary.tsv
+#   snakemake -j1 "$PWD/runs/primates/smoke/summary.tsv"   # file targets must be absolute paths
+#   snakemake -j2 "$PWD/runs/infb/fast/summary.tsv"
+#   snakemake -j4 "$PWD/runs/infb/thorough/summary.tsv"
 #   snakemake -j4 cross_check              # iecor cross-check tier - NEVER part of `all`
-#   snakemake -j4 runs/infb/burnin_speed_summary.tsv   # burn-in speed - NEVER part of `all`
+#   snakemake -j4 burnin_speed             # burn-in speed - NEVER part of `all`
 #   snakemake --config loganalyser=/path/to/loganalyser burnin=10
 #
 # Burn-in-speed (Phase 3c, item 2 - fresh naive random starts, paired by seed) is wired in below:
@@ -425,8 +425,8 @@ rule aggregate:
 
 
 # ---------------------------------------------------------------------------------------------
-# Burn-in speed (Phase 3c, item 2). Explicit target only - `snakemake burnin_speed_<dataset>`,
-# never part of `rule all` (see the module docstring above for why).
+# Burn-in speed (Phase 3c, item 2). Explicit target only - `snakemake burnin_speed` - never part
+# of `rule all` (see the module docstring above for why).
 # ---------------------------------------------------------------------------------------------
 
 
@@ -511,9 +511,6 @@ def burnin_speed_cell_summaries(wildcards):
     )
 
 
-# No `all`-swept target: request runs/<dataset>/burnin_speed_summary.tsv directly (it is never
-# in tier_targets(), so `snakemake -j4` alone will not build it), e.g.:
-#   snakemake -j4 runs/infb/burnin_speed_summary.tsv
 rule burnin_speed_summary:
     input:
         burnin_speed_cell_summaries,
@@ -521,3 +518,11 @@ rule burnin_speed_summary:
         summary=str(RUNS_ROOT / "{dataset}" / "burnin_speed_summary.tsv"),
     run:
         concat_tsv(input, output.summary)
+
+
+# Every dataset with a burnin_speed entry in datasets.yaml. Output paths are absolute, so a
+# relative path such as runs/infb/burnin_speed_summary.tsv does not match as a target.
+rule burnin_speed:
+    input:
+        [str(RUNS_ROOT / d / "burnin_speed_summary.tsv") for d, e in REGISTRY.items()
+         if "burnin_speed" in e],

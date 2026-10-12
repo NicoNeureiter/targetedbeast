@@ -1505,7 +1505,7 @@ log-posterior) after 8,707 proposals from the UPGMA start: burn-in on infB is sh
 `thorough` chain.
 
 ```bash
-snakemake -s scripts/Snakefile -j4 runs/infb/burnin_speed_summary.tsv
+snakemake -s scripts/Snakefile -j4 burnin_speed
 python3 scripts/paired_compare.py runs/infb/burnin_speed_summary.tsv --baseline pca \
     --settings constant pca_fixed1 pca_fixed8 --metrics proposalsToTarget
 ```
