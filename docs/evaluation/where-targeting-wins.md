@@ -1354,8 +1354,8 @@ Paired against `pca`, t-based 90% CI, n=4:
 | `pca_grid_mid` | +4.8%, (+0.19, +0.84), excludes 0 | +3.4%, (−361, +2194) |
 | `pca_aos_mid` | +0.0%, (−0.73, +0.73) | −5.6%, (−2798, −214), excludes 0 |
 
-- **`GridTuner` helps.** The per-step gain over `pca` reproduces the earlier +4.9% per-second
-  result, now from cells run together.
+- **`pca_grid_mid` beats `pca`.** The per-step gain reproduces the earlier +4.9% per-second
+  result, now from cells run together. Fixed exponents do not explain it; see below.
 - **`AdaptableOperatorSampler` does not.** Per step it equals `pca`; per second it loses its
   per-call overhead. Its learned weights (exponents 2/3/4/6, min–max over reps) never commit:
 
@@ -1367,36 +1367,53 @@ Paired against `pca`, t-based 90% CI, n=4:
   | `targetedRangeSlide` | 0.27–0.31 | 0.24–0.31 | 0.17–0.24 | 0.19–0.25 |
 
   A near-uniform mixture of exponents is no better than exponent 2 alone.
-- **`GridTuner` now leads at the grid edge.** Share of the chain each exponent led, per rep:
+- **`GridTuner` is effectively a uniform mixture.** It draws each proposal's exponent in
+  proportion to the mean reward per grid point, and those means are nearly equal (final values
+  0.106–0.121 across all points and reps). Each exponent is therefore drawn about a quarter of the
+  time. The logged `leadingExponent` is the argmax of four near-ties and says nothing about an
+  optimum; `eval6`'s "leader at 3–4" and this run's "leader at 6" are both noise.
 
-  | rep | 2 | 3 | 4 | 6 |
-  |---:|---:|---:|---:|---:|
-  | 0 | 14% | 24% | 15% | 47% |
-  | 1 | 2% | 0% | 1% | 97% |
-  | 2 | 2% | 24% | 73% | 1% |
-  | 3 | 7% | 1% | 2% | 90% |
-
-  `eval6` led at 4 in 3 of 4 reps. A leader at the top of the grid means the optimum may be at or
-  above 6; `pca_grid` (8–24) was rejected only on cross-session per-second numbers.
-
-The two adaptive mechanisms disagree in direction: per-operator RNNI jump (the sampler's score)
-leans flat, likelihood-jump reward (`GridTuner`) leans sharp, and sharp wins on chain-level RNNI
-ESJD. Per-operator RNNI jump looks like a poor guide to chain-level mixing, consistent with
-`pca_grid_mid_rnni` not beating `pca_grid_mid`. Not tested further.
-
-## Follow-up: fixed exponents (set up, not yet run)
+## Fixed exponents
 
 `pca_fixed4`, `pca_fixed6`, `pca_fixed8`: one shared `PowerOffsetTransform` pinned at that
-exponent, no tuner (`pca_fixed2`'s wiring). `snakemake fixed_exponents` runs them at the
-`thorough` tier and reuses `aos_baseline`'s `pca`/`pca_grid_mid` cells. Questions: where the
-optimum sits, and whether `GridTuner` beats fixing the exponent there. Judged primarily per step,
-since the reused cells come from another session.
+exponent, no tuner (`pca_fixed2`'s wiring). `snakemake fixed_exponents` ran them at the `thorough`
+tier, reusing `aos_baseline`'s `pca`/`pca_grid_mid` cells (so judged per step). All 20 cells pass
+the ESS gate.
 
 ```bash
 snakemake -s scripts/Snakefile -j4 fixed_exponents
 python3 scripts/paired_compare.py runs/infb/thorough/fixed_exponents.summary.tsv \
-    --baseline pca_grid_mid --settings pca pca_fixed4 pca_fixed6 pca_fixed8
+    --baseline pca --settings pca_fixed4 pca_fixed6 pca_fixed8 pca_grid_mid
 ```
+
+`esjd_rnni`, paired, t-based 90% CI, n=4:
+
+| setting | mean | vs `pca` (exponent 2) | vs `pca_grid_mid` |
+|---|---:|---|---|
+| `pca` | 10.74 | — | −4.6%, (−0.84, −0.19) |
+| `pca_fixed4` | 10.53 | −1.9%, (−0.71, +0.31) | −6.4%, (−1.08, −0.35) |
+| `pca_fixed6` | 10.57 | −1.6%, (−0.90, +0.56) | −6.1%, (−1.22, −0.15) |
+| `pca_fixed8` | 10.99 | +2.4%, (−0.11, +0.62) | −2.3%, (−0.81, +0.29) |
+| `pca_grid_mid` | 11.25 | +4.8%, (+0.19, +0.84) | — |
+
+- **ESJD per step is flat in the exponent.** No fixed exponent from 2 to 8 differs detectably
+  from exponent 2; the spread is within ±2.5%.
+- **`pca_grid_mid` beats every fixed exponent except 8, and that is unexplained.** Its kernel is
+  a state-independent mixture of exponents 2/3/4/6 (each operator redraws the exponent at the start
+  of every proposal), and the expected squared jump of such a mixture is the weighted mean of its
+  components' expected squared jumps. With components at 10.53–10.74 (3 not measured), a mixture at
+  11.25 needs exponent 3 alone near 13 — implausible on a curve this flat. `pca_aos_mid`, also a
+  near-uniform mixture of the same components, lands at 10.74, where linearity says it should.
+- **Posterior summaries agree across all six settings** (likelihood, prior, tree height and
+  length, clock rate, popSize, kappa, gammaShape: means within 0.3%), so there is no gross bias.
+  This is too coarse to rule out a small one: reps share the checkpoint, so their spread
+  understates the error.
+
+Either `pca_grid_mid`'s gain is a fluke of n=4 (it is significant against `pca`, `pca_fixed4` and
+`pca_fixed6`, and reproduces at ≈11.1 per step in `eval7`), or the `GridTuner` path differs from a
+plain mixture of fixed kernels in some way not yet identified. Two runs separate these: `pca_fixed3`
+(the missing component) and `GridTuner` with `explorationProb=1.0` (an exactly uniform,
+non-adaptive mixture of the same grid). Not run yet.
 
 Editing `datasets.yaml` or the renderer makes Snakemake treat existing cells, including the shared
 checkpoint, as out of date. If their rendered XML is unchanged, mark them current with
