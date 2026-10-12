@@ -1453,11 +1453,11 @@ RNNI still counts height reorderings within topology moves; a height-free topolo
 isolate topology mixing further. ESS remains the final arbiter, since the targeted metric ignores
 indirect effects on the rest of the chain.
 
-## Next: exponent sweep below 2
+## Exponent sweep, 8 reps
 
-The optimum may lie at or below 2. `pca_fixed1`, `pca_fixed1p5` and `pca_fixed3` complete the
-curve; `snakemake exponent_sweep` runs exponents 1, 1.5, 2, 3, 4, 6, 8 and `pca_grid_mid` at
-8 reps (the existing 4 plus 4 more; 44 new cells). Judge on `esjd_rnni_targeted`.
+`pca_fixed1`, `pca_fixed1p5`, `pca_fixed3` added; `snakemake exponent_sweep` ran exponents 1, 1.5, 2,
+3, 4, 6, 8 and `pca_grid_mid` at the `thorough` tier, 8 reps (seeds 1000–1007; reps 0–3 reused from
+the runs above). All 64 cells pass the ESS gate.
 
 ```bash
 snakemake -s scripts/Snakefile -j4 exponent_sweep
@@ -1465,9 +1465,63 @@ python3 scripts/paired_compare.py runs/infb/thorough/exponent_sweep.summary.tsv 
     --settings pca_fixed1 pca_fixed1p5 pca_fixed3 pca_fixed4 pca_fixed6 pca_fixed8 pca_grid_mid
 ```
 
-Then: burn-in speed (`burnin_speed`, fresh starts) for `constant`, `pca` and the best fixed
-exponent; then `PCAWeights2` with `useOneNorm="false"` (Euclidean distance, the metric PCA
-preserves), judged on the targeted metric.
+Paired against `pca` (exponent 2), t-based 90% CI, n=8:
+
+| exponent | `esjd_rnni_targeted` (mean, sd) | per step | per second | chain-level per step |
+|---|---|---|---|---|
+| 1 | 3.05, 0.23 | −7.6%, (−0.58, +0.08) | −6.5% | −2.3% |
+| 1.5 | 3.23, 0.34 | −2.2%, (−0.40, +0.26) | −4.0% | −1.4% |
+| 2 (`pca`) | 3.30, 0.39 | — | — | — |
+| 3 | 3.27, 0.15 | −1.1%, (−0.31, +0.24) | −3.5% | −1.1% |
+| 4 | 3.24, 0.22 | −2.0%, (−0.30, +0.17) | −0.2% | +0.5% |
+| 6 | 2.88, 0.33 | −12.8%, (−0.78, −0.06), excludes 0 | −10.1% | −0.2% |
+| 8 | 2.84, 0.17 | −14.0%, (−0.71, −0.22), excludes 0 | −14.7%, excludes 0 | −0.9% |
+| `pca_grid_mid` | 3.10, 0.15 | −6.0%, (−0.44, +0.05) | −5.1% | +0.7% |
+
+- **A plateau from 1.5 to 4, centred on the default.** Nothing in it differs detectably from
+  exponent 2; 1 tends lower, and 6 and above are clearly worse. There is no better fixed exponent
+  for a tuner to find on infB.
+- **`pca_grid_mid` is what its mixture predicts.** Its grid is 2/3/4/6 drawn about uniformly; the
+  mean of those components' effects is about −4%, and it measures −6%. Including 6 costs it.
+- **The chain-level +4.8% for `pca_grid_mid` was a 4-rep fluke**: at 8 reps it is +0.7%, CI
+  (−0.50, +0.65).
+- **Noise:** rep-to-rep sd of the targeted metric is 0.15–0.39, i.e. 5–12% of the mean. At n=8 the
+  CI half-width is about ±8%, so effects under ~5% remain unresolved.
+
+For the target exponent on infB, the transform feature has nothing to offer over the operators'
+built-in squaring: a tuner can at best avoid exponents ≥6, which the default already does.
+
+## Burn-in speed (set up)
+
+The `burnin_speed` target was unusable as built. `BenchmarkMCMC`'s burn-in tracker only counts
+proposals after `preBurnin`, and the cells were rendered with the `thorough` tier's
+`preBurnin=100000`, so the chain had converged before counting began. Burn-in cells now take their
+chain shape from the dataset's `burnin_speed` entry in `datasets.yaml` (`pre_burnin: 0`,
+`chain_length: 300000`, 8 reps), which also lists their settings: `constant`, `pca`, and exponents
+1 and 8 as the flat and sharp extremes (2 is `pca`).
+
+One `pca` cell reached the reference band (the reference chain's 5th–95th percentile of
+log-posterior) after 8,707 proposals from the UPGMA start: burn-in on infB is short, about 1% of a
+`thorough` chain.
+
+```bash
+snakemake -s scripts/Snakefile -j4 runs/infb/burnin_speed_summary.tsv
+python3 scripts/paired_compare.py runs/infb/burnin_speed_summary.tsv --baseline pca \
+    --settings constant pca_fixed1 pca_fixed8 --metrics proposalsToTarget
+```
+
+## Distance norm (set up)
+
+`pca_l2`: `PCAWeights2` with `useOneNorm="false"`, i.e. Euclidean distance in PCA space (the
+geometry PCA preserves) instead of the 1-norm, which depends on the rotation of the PCA axes.
+`snakemake norm_compare` runs it at the `thorough` tier, 8 reps, against `pca`'s 8 existing reps.
+Judge on `esjd_rnni_targeted`.
+
+```bash
+snakemake -s scripts/Snakefile -j4 norm_compare
+python3 scripts/paired_compare.py runs/infb/thorough/norm_compare.summary.tsv --baseline pca \
+    --settings pca_l2
+```
 
 Editing `datasets.yaml` or the renderer makes Snakemake treat existing cells, including the shared
 checkpoint, as out of date. If their rendered XML is unchanged, mark them current with
