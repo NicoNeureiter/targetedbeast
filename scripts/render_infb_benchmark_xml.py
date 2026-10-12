@@ -94,6 +94,9 @@ EDGE_WEIGHTS_XML = {
     # Same PCAWeights2 with the exponent pinned (fixed2's wiring): where is the optimum, and does
     # GridTuner beat simply fixing it there?
     **{f"pca_fixed{k}": EDGE_WEIGHTS_PCA for k in FIXED_EXPONENTS if k != "2"},
+    # PCAWeights2 on Euclidean rather than 1-norm distance in PCA space.
+    "pca_l2": '<distribution id="edgeweights" spec="targetedbeast.edgeweights.PCAWeights2" '
+              'tree="@tree" maxWeight="20" data="@infB_HA" dimension="10" useOneNorm="false"/>',
 }
 
 # Grid points and burnin below mirror scripts/generate_xmls.py's _grid_transform (the lassaL
@@ -270,6 +273,7 @@ WEIGHT_TRANSFORM_FOR_SETTING = {
     "pca_grid_mid_dual": "grid_mid_dual",
     "pca_grid_mid_ratio": "grid_mid_ratio",
     "pca_aos_mid": "none",
+    "pca_l2": "none",
 }
 
 # edgeWeightTransform (source-edge weights, see targetedbeast.operators.TargetedWeightOperator) is
@@ -318,6 +322,7 @@ EDGE_WEIGHT_TRANSFORM_FOR_SETTING = {
     "pca_grid_mid_dual": "grid_mid",
     "pca_grid_mid_ratio": "grid_mid_ratio",
     "pca_aos_mid": "none",
+    "pca_l2": "none",
 }
 
 
