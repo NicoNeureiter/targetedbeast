@@ -147,6 +147,30 @@ rule cross_check:
         str(RUNS_ROOT / "iecor" / "cross-check" / "summary.tsv"),
 
 
+def concat_tsv(paths, out_path) -> None:
+    """Concatenate TSVs that share a header, keeping the first header only."""
+    with open(out_path, "w") as out:
+        for i, path in enumerate(paths):
+            lines = Path(path).read_text().splitlines()
+            out.write("\n".join(lines if i == 0 else lines[1:]) + "\n")
+
+
+# AdaptableOperatorSampler vs GridTuner over the same exponent grid, both against plain pca.
+# Explicit target only. All three settings run in one invocation so timing conditions match;
+# compare with scripts/paired_compare.py.
+AOS_BASELINE_SETTINGS = ["pca", "pca_grid_mid", "pca_aos_mid"]
+
+
+rule aos_baseline:
+    input:
+        expand(CELL_DIR + "/cell.summary.tsv", dataset="infb", tier="thorough",
+               setting=AOS_BASELINE_SETTINGS, rep=reps_for("infb", "thorough")),
+    output:
+        summary=str(RUNS_ROOT / "infb" / "thorough" / "aos_baseline.summary.tsv"),
+    run:
+        concat_tsv(input, output.summary)
+
+
 rule build:
     input:
         JAVA_SOURCES,
@@ -163,8 +187,10 @@ rule build:
 
 def render_inputs(wildcards):
     entry = REGISTRY[wildcards.dataset]
+    template = PROJECT_ROOT / entry["template"]
+    # template*.xml: per-setting variant templates (e.g. infB's template_aos.xml) sit beside it.
     inputs = [str(SCRIPT_DIR / "render_xml.py"), str(SCRIPT_DIR / "datasets.yaml"),
-              str(PROJECT_ROOT / entry["template"])]
+              *sorted(str(p) for p in template.parent.glob("template*.xml"))]
     if entry["renderer"]:
         inputs.append(str(SCRIPT_DIR / f"{entry['renderer']}.py"))
     return inputs
@@ -347,11 +373,7 @@ rule aggregate:
     output:
         summary=str(RUNS_ROOT / "{dataset}" / "{tier}" / "summary.tsv"),
     run:
-        with open(output.summary, "w") as out:
-            for i, path in enumerate(input):
-                lines = Path(path).read_text().splitlines()
-                rows = lines if i == 0 else lines[1:]
-                out.write("\n".join(rows) + "\n")
+        concat_tsv(input, output.summary)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -453,8 +475,4 @@ rule burnin_speed_summary:
     output:
         summary=str(RUNS_ROOT / "{dataset}" / "burnin_speed_summary.tsv"),
     run:
-        with open(output.summary, "w") as out:
-            for i, path in enumerate(input):
-                lines = Path(path).read_text().splitlines()
-                rows = lines if i == 0 else lines[1:]
-                out.write("\n".join(rows) + "\n")
+        concat_tsv(input, output.summary)

@@ -15,6 +15,35 @@ import argparse
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 TEMPLATE_PATH = PROJECT_ROOT / "examples" / "infb_HA_141" / "template.xml"
 
+# Settings whose targeted operators differ structurally from template.xml's. Such a template may
+# differ from template.xml only between the targeted-operators markers - load_template enforces it.
+TEMPLATE_FOR_SETTING = {
+    "pca_aos_mid": TEMPLATE_PATH.with_name("template_aos.xml"),
+}
+OPERATORS_BEGIN = "<!-- targeted-operators:begin -->"
+OPERATORS_END = "<!-- targeted-operators:end -->"
+
+
+def _outside_operators(text: str, path: Path) -> tuple[str, str]:
+    begin, end = text.find(OPERATORS_BEGIN), text.find(OPERATORS_END)
+    if begin == -1 or end < begin:
+        raise SystemExit(f"{path} lacks the {OPERATORS_BEGIN} ... {OPERATORS_END} markers")
+    return text[:begin], text[end:]
+
+
+def load_template(setting: str) -> str:
+    """The template text for one setting, refusing a variant template that has drifted from
+    template.xml outside the targeted-operators block."""
+    base = TEMPLATE_PATH.read_text(encoding="utf-8")
+    path = TEMPLATE_FOR_SETTING.get(setting)
+    if path is None:
+        return base
+    variant = path.read_text(encoding="utf-8")
+    if _outside_operators(variant, path) != _outside_operators(base, TEMPLATE_PATH):
+        raise SystemExit(f"{path.name} differs from {TEMPLATE_PATH.name} outside the targeted "
+                         "operators; re-copy the shared parts")
+    return variant
+
 EDGE_WEIGHTS_XML = {
     "constant": '<distribution id="edgeweights" spec="targetedbeast.edgeweights.ConstantWeights" tree="@tree"/>',
     "parsimony": '<distribution id="edgeweights" spec="targetedbeast.edgeweights.ParsimonyWeights2" '
@@ -51,6 +80,10 @@ EDGE_WEIGHTS_XML = {
     # is lowered to OFFSET_MIXTURE_0_05 - see "grid_mid_ratio" below.
     "pca_grid_mid_ratio": '<distribution id="edgeweights" spec="targetedbeast.edgeweights.PCAWeights2" '
                            'tree="@tree" maxWeight="20" data="@infB_HA" dimension="10"/>',
+    # Same PCAWeights2; pca_grid_mid's exponents chosen by AdaptableOperatorSampler instead of
+    # GridTuner - the operators live in TEMPLATE_FOR_SETTING's template_aos.xml.
+    "pca_aos_mid": '<distribution id="edgeweights" spec="targetedbeast.edgeweights.PCAWeights2" '
+                    'tree="@tree" maxWeight="20" data="@infB_HA" dimension="10"/>',
 }
 
 # Grid points and burnin below mirror scripts/generate_xmls.py's _grid_transform (the lassaL
@@ -226,6 +259,7 @@ WEIGHT_TRANSFORM_FOR_SETTING = {
     "pca_grid_mid_rnni": "grid_mid_rnni",
     "pca_grid_mid_dual": "grid_mid_dual",
     "pca_grid_mid_ratio": "grid_mid_ratio",
+    "pca_aos_mid": "none",
 }
 
 # edgeWeightTransform (source-edge weights, see targetedbeast.operators.TargetedWeightOperator) is
@@ -273,6 +307,7 @@ EDGE_WEIGHT_TRANSFORM_XML = {
 EDGE_WEIGHT_TRANSFORM_FOR_SETTING = {
     "pca_grid_mid_dual": "grid_mid",
     "pca_grid_mid_ratio": "grid_mid_ratio",
+    "pca_aos_mid": "none",
 }
 
 
@@ -331,9 +366,8 @@ def main() -> None:
     parser.add_argument("--out-root", type=Path, required=True)
     args = parser.parse_args()
 
-    template_text = TEMPLATE_PATH.read_text(encoding="utf-8")
-
     for setting in args.settings:
+        template_text = load_template(setting)
         for rep in range(args.reps):
             out_dir = args.out_root / setting / f"rep{rep}"
             out_dir.mkdir(parents=True, exist_ok=True)

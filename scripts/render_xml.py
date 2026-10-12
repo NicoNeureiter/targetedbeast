@@ -125,10 +125,9 @@ def render(dataset: str, tier: str, setting: str, rep: int, out_dir: Path,
     """
     registry = registry or load_registry()
     entry = registry[dataset]
-    if setting not in entry["settings"]:
-        raise SystemExit(
-            f"Dataset {dataset!r} has no setting {setting!r}; known: {entry['settings']}"
-        )
+    known = entry["settings"] + entry.get("extra_settings", [])
+    if setting not in known:
+        raise SystemExit(f"Dataset {dataset!r} has no setting {setting!r}; known: {known}")
     cfg = tier_config(registry, dataset, tier)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -142,6 +141,8 @@ def render(dataset: str, tier: str, setting: str, rep: int, out_dir: Path,
                                cfg["pre_burnin"])
     else:
         module = importlib.import_module(entry["renderer"])
+        if hasattr(module, "load_template"):
+            template_text = module.load_template(setting)
         xml = module.render_run_xml(template_text, setting, cfg["chain_length"], out_dir,
                                      cfg["jump_interval"], cfg["pre_burnin"])
 
