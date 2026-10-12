@@ -44,6 +44,10 @@ def load_template(setting: str) -> str:
                          "operators; re-copy the shared parts")
     return variant
 
+
+EDGE_WEIGHTS_PCA = ('<distribution id="edgeweights" spec="targetedbeast.edgeweights.PCAWeights2" '
+                    'tree="@tree" maxWeight="20" data="@infB_HA" dimension="10"/>')
+
 EDGE_WEIGHTS_XML = {
     "constant": '<distribution id="edgeweights" spec="targetedbeast.edgeweights.ConstantWeights" tree="@tree"/>',
     "parsimony": '<distribution id="edgeweights" spec="targetedbeast.edgeweights.ParsimonyWeights2" '
@@ -84,6 +88,9 @@ EDGE_WEIGHTS_XML = {
     # GridTuner - the operators live in TEMPLATE_FOR_SETTING's template_aos.xml.
     "pca_aos_mid": '<distribution id="edgeweights" spec="targetedbeast.edgeweights.PCAWeights2" '
                     'tree="@tree" maxWeight="20" data="@infB_HA" dimension="10"/>',
+    # Same PCAWeights2 with the exponent pinned (fixed2's wiring): where is the optimum, and does
+    # GridTuner beat simply fixing it there?
+    **{f"pca_fixed{b}": EDGE_WEIGHTS_PCA for b in (4, 6, 8)},
 }
 
 # Grid points and burnin below mirror scripts/generate_xmls.py's _grid_transform (the lassaL
@@ -235,16 +242,16 @@ WEIGHT_TRANSFORM_XML = {
         ' targetWeightTransform="@targetWeightTransform"',
         '<log idref="targetWeightTransform"/>',
     ),
-    # Reference point (see "pca_fixed2" above): no tuner, pinned at the operators' own hardcoded
-    # default. optimise="false" means startProposal()/optimize() are no-ops - the transform is
-    # mathematically w^2 with zero offset on every proposal, identical to the no-transform path.
-    "fixed2": (
+    # Pinned exponents, no tuner: optimise="false" makes startProposal()/optimize() no-ops. fixed2
+    # is the reference point (see "pca_fixed2" above) - w^2 with zero offset, identical to the
+    # no-transform path.
+    **{f"fixed{b}": (
         '<targetWeightTransform id="targetWeightTransform"'
         ' spec="targetedbeast.weighttransform.PowerOffsetTransform"'
-        ' exponent="2.0" offset="0.0" optimise="false"/>',
+        f' exponent="{b}.0" offset="0.0" optimise="false"/>',
         ' targetWeightTransform="@targetWeightTransform"',
         '<log idref="targetWeightTransform"/>',
-    ),
+    ) for b in (2, 4, 6, 8)},
 }
 
 # Which transform variant each edge-weights setting is rendered with.
@@ -255,7 +262,7 @@ WEIGHT_TRANSFORM_FOR_SETTING = {
     "pca_grid": "grid",
     "pca_grid_low": "grid_low",
     "pca_grid_mid": "grid_mid",
-    "pca_fixed2": "fixed2",
+    **{f"pca_fixed{b}": f"fixed{b}" for b in (2, 4, 6, 8)},
     "pca_grid_mid_rnni": "grid_mid_rnni",
     "pca_grid_mid_dual": "grid_mid_dual",
     "pca_grid_mid_ratio": "grid_mid_ratio",

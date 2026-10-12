@@ -171,6 +171,21 @@ rule aos_baseline:
         concat_tsv(input, output.summary)
 
 
+# Pinned exponents around GridTuner's leader (4-6, at the grid edge), against pca and pca_grid_mid.
+# Explicit target only; reuses aos_baseline's pca/pca_grid_mid cells.
+FIXED_EXPONENT_SETTINGS = ["pca", "pca_grid_mid", "pca_fixed4", "pca_fixed6", "pca_fixed8"]
+
+
+rule fixed_exponents:
+    input:
+        expand(CELL_DIR + "/cell.summary.tsv", dataset="infb", tier="thorough",
+               setting=FIXED_EXPONENT_SETTINGS, rep=reps_for("infb", "thorough")),
+    output:
+        summary=str(RUNS_ROOT / "infb" / "thorough" / "fixed_exponents.summary.tsv"),
+    run:
+        concat_tsv(input, output.summary)
+
+
 rule build:
     input:
         JAVA_SOURCES,
