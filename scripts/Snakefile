@@ -52,6 +52,7 @@
 # (rule run_beast, unchanged, still fresh-starts every cell - Phase 3c item 2's burn-in-speed axis).
 
 import re
+import sys
 from pathlib import Path
 
 import yaml
@@ -59,6 +60,8 @@ import yaml
 SCRIPT_DIR = Path(workflow.basedir).resolve()
 PROJECT_ROOT = SCRIPT_DIR.parent
 RUNS_ROOT = PROJECT_ROOT / "runs"
+# Snakemake's own interpreter: it has PyYAML, which a bare `python3` on PATH may not.
+PYTHON_BIN = sys.executable
 
 with open(SCRIPT_DIR / "datasets.yaml", encoding="utf-8") as f:
     REGISTRY = yaml.safe_load(f)
@@ -175,7 +178,7 @@ rule render:
     wildcard_constraints:
         tier=TIER_PATTERN,
     shell:
-        "python3 {SCRIPT_DIR}/render_xml.py --dataset {wildcards.dataset} --tier {wildcards.tier} "
+        "{PYTHON_BIN} {SCRIPT_DIR}/render_xml.py --dataset {wildcards.dataset} --tier {wildcards.tier} "
         "--setting {wildcards.setting} --rep {wildcards.rep} "
         '--out-dir "$(dirname {output.xml})"'
 
@@ -232,7 +235,7 @@ rule render_reference_checkpoint:
         # deriving its input from a thorough/cross-check tier cell, which - now that those cells
         # resume from this checkpoint by default - would otherwise be circular (that cell would
         # need the checkpoint this run produces).
-        "python3 {SCRIPT_DIR}/render_xml.py --dataset {wildcards.dataset} --tier {params.tier} "
+        "{PYTHON_BIN} {SCRIPT_DIR}/render_xml.py --dataset {wildcards.dataset} --tier {params.tier} "
         "--setting {params.setting} --rep 0 "
         '--out-dir "$(dirname {output.xml})" '
         '--checkpoint-out "$(dirname {output.xml})/checkpoint.state"'
@@ -322,7 +325,7 @@ rule collect_cell:
     params:
         ess_flag=lambda wc, input: f'--ess-table "{input.ess}"' if input.ess else "",
     shell:
-        "python3 {SCRIPT_DIR}/collect_stats.py "
+        "{PYTHON_BIN} {SCRIPT_DIR}/collect_stats.py "
         '--opstats "{input.opstats}" --runtime "{input.runtime}" {params.ess_flag} '
         "--dataset {wildcards.dataset} --tier {wildcards.tier} --setting {wildcards.setting} "
         '--rep {wildcards.rep} --summary-out "{output.summary}"'
@@ -377,7 +380,7 @@ rule reference_band:
     output:
         band=str(RUNS_ROOT / "{dataset}" / "reference_band.json"),
     shell:
-        "python3 {SCRIPT_DIR}/compute_reference_band.py --log {input.log} --burnin {BURNIN} "
+        "{PYTHON_BIN} {SCRIPT_DIR}/compute_reference_band.py --log {input.log} --burnin {BURNIN} "
         '--out "{output.band}"'
 
 
@@ -393,7 +396,7 @@ rule render_burnin_speed:
         # Same chain shape (pre_burnin/chain_length/jump_interval) as the dataset's reference_tier
         # cell above - a fresh naive random start at that shape, not a resumed checkpoint (Phase
         # 3c item 1 is separate, out of scope here) - with the reference band wired in.
-        "python3 {SCRIPT_DIR}/render_xml.py --dataset {wildcards.dataset} --tier {params.tier} "
+        "{PYTHON_BIN} {SCRIPT_DIR}/render_xml.py --dataset {wildcards.dataset} --tier {params.tier} "
         "--setting {wildcards.setting} --rep {wildcards.rep} "
         '--out-dir "$(dirname {output.xml})" --reference-band "{input.band}"'
 
@@ -427,7 +430,7 @@ rule collect_burnin_speed_cell:
     output:
         summary=BURNIN_SPEED_CELL_DIR + "/cell.burnin_summary.tsv",
     shell:
-        "python3 {SCRIPT_DIR}/collect_burnin_speed.py --burnin {input.burnin} "
+        "{PYTHON_BIN} {SCRIPT_DIR}/collect_burnin_speed.py --burnin {input.burnin} "
         "--dataset {wildcards.dataset} --setting {wildcards.setting} --rep {wildcards.rep} "
         '--summary-out "{output.summary}"'
 
