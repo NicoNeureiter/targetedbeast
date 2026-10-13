@@ -148,11 +148,23 @@ rule cross_check:
 
 
 def concat_tsv(paths, out_path) -> None:
-    """Concatenate TSVs that share a header, keeping the first header only."""
+    """Concatenate TSVs by column name; a column a file lacks is written as NA. Cells' columns
+    differ (a transform setting logs extra ESS columns), so concatenating by position would shift
+    every column after the first difference."""
+    tables = []
+    for path in paths:
+        lines = Path(path).read_text().splitlines()
+        header = lines[0].split("\t")
+        tables.append([dict(zip(header, ln.split("\t"))) for ln in lines[1:]])
+        if len(tables) == 1:
+            columns = list(header)
+        else:
+            columns += [c for c in header if c not in columns]
     with open(out_path, "w") as out:
-        for i, path in enumerate(paths):
-            lines = Path(path).read_text().splitlines()
-            out.write("\n".join(lines if i == 0 else lines[1:]) + "\n")
+        out.write("\t".join(columns) + "\n")
+        for rows in tables:
+            for row in rows:
+                out.write("\t".join(row.get(c, "NA") for c in columns) + "\n")
 
 
 # AdaptableOperatorSampler vs GridTuner over the same exponent grid, both against plain pca.

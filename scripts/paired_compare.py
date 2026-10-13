@@ -28,14 +28,21 @@ ESS_GATE = 100.0
 ESS_COLUMNS = ("posterior.ESS", "tree.height.ESS")
 
 
+def as_float(value: str | None) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float("nan")
+
+
 def read_cells(path: Path, metrics: list[str]) -> dict[str, dict[int, dict]]:
     cells: dict[str, dict[int, dict]] = defaultdict(dict)
     with open(path, newline="", encoding="utf-8") as f:
         for row in csv.DictReader(f, delimiter="\t"):
             cells[row["setting"]][int(row["rep"])] = {
                 "seed": row["seed"],
-                **{m: float(row[m]) for m in metrics},
-                **{c: float(row.get(c) or "nan") for c in ESS_COLUMNS},
+                **{m: as_float(row.get(m)) for m in metrics},
+                **{c: as_float(row.get(c)) for c in ESS_COLUMNS},
             }
     return cells
 
