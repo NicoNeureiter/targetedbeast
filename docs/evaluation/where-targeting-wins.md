@@ -1567,7 +1567,7 @@ Per targeted operator (mean over reps), `pca` → `pca_l2`:
   the one operator that accepts more often under the 2-norm. ESS at 150–700 is noisy and four ESS
   columns were tested, so treat this as a flag, not a result: ESJD over RNNI distance is not a
   faithful proxy for every ESS dimension.
-- Per second the loss is smaller (−10%) because `pca_l2`'s targeted proposals are 15–20% cheaper,
+- Per second the loss is smaller (−10%) because `pca_l2`'s targeted proposals are 12–22% cheaper,
   consistent with fewer accepted moves.
 
 Editing `datasets.yaml` or the renderer makes Snakemake treat existing cells, including the shared
