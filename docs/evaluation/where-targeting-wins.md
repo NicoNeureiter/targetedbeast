@@ -1596,10 +1596,54 @@ pass the ESS gate). Paired against `pca` (1-norm, exponent 2), n=8, 90% CI:
   280 s to 1,000 s, i.e. the machine was heavily loaded for part of the batch. Per-step figures
   are unaffected.
 
-So which norm is better depends on the metric: the 1-norm on targeted ESJD over RNNI distance, the
-2-norm on root-height mixing. Settling it needs a metric closer to the final target than either —
-ESS on more of the tree (a topology-only jump metric, or ESS of tree statistics beyond root
-height) — rather than more runs on the current metric.
+## Tree-space ESS
+
+Ported from the learned-weights branch: `scripts/tree_pseudo_ess.py` computes Lanfear et al.'s
+(2016) pseudo-ESS from `run.trees` — distance from every sampled tree (10% burn-in) to 100 random
+reference trees, univariate ESS of each resulting trace — for two distances: Robinson–Foulds (RF,
+topology only) and Kuhner–Felsenstein (KF, branch-score, so branch lengths over matched clades).
+`collect_stats.py --trees` adds `treeESS_{min,p10,median,max}_{rf,kf}`; the Snakefile passes it for
+ESS-gated tiers, and `paired_compare.py` reports the p10 columns by default. It runs under
+TreeTracer's venv (`/Users/nneureiter/Projects/treetracer`, for its compiled `rapidtrees`), about
+5 s per cell.
+
+Building it exposed a bug in the summary aggregation: `concat_tsv` concatenated cells by position
+under the first file's header, but transform settings log extra `targetWeightTransform.*` ESS
+columns, so every column after them was shifted. It now aligns by column name. Every column used
+in the conclusions above (the ESJD metrics and `posterior`/`tree.height`/`tree.treeLength` ESS)
+precedes those extra columns, so those results are unaffected.
+
+`pca` levels (8 reps, mean ± sd): RF p10 157 ± 15, median 218 ± 15; KF p10 424 ± 40, median
+521 ± 39. Topology mixes 2–3× more slowly than branch lengths.
+
+Paired against `pca`, n=8, 90% CI (n=4 for `pca_aos_mid`):
+
+| setting | `treeESS_p10_rf` | `treeESS_p10_kf` |
+|---|---|---|
+| exponent 1 | −5.8% | −4.2% |
+| exponent 1.5 | −3.9% | −8.2% |
+| exponent 3 | +1.4% | +3.2% |
+| exponent 4 | −0.3% | −0.9% |
+| exponent 6 | **−18.7%**, excludes 0 | +2.0% |
+| exponent 8 | **−12.5%**, excludes 0 | −3.5% |
+| `pca_grid_mid` | +0.1% | −0.9% |
+| `pca_aos_mid` (n=4) | −1.9% | −9.1% |
+| 2-norm, exponent 1 | **−38.7%**, excludes 0 | **+21.4%**, excludes 0 |
+| 2-norm, exponent 1.5 | **−30.1%**, excludes 0 | **+14.6%**, excludes 0 |
+| 2-norm, exponent 2 | **−38.6%**, excludes 0 | **+14.6%**, excludes 0 |
+| 2-norm, exponent 3 | **−17.7%**, excludes 0 | **+20.8%**, excludes 0 |
+
+(Unmarked entries: CI includes 0. Medians give the same picture.)
+
+- **RF tree ESS agrees with targeted ESJD on the exponent**: a plateau from 1 to 4, with 6 and 8
+  worse. KF shows no exponent effect. `GridTuner` and AOS are indistinguishable from `pca`.
+- **The 2-norm trades topology mixing for branch-length mixing.** RF tree ESS falls 18–39% and KF
+  rises 15–21% at every exponent. This resolves the apparent conflict above: targeted ESJD over
+  RNNI distance tracks topology, `tree.height` ESS tracks branch lengths, and the two norms are
+  better at different things.
+- **Since topology is the bottleneck** (its ESS is 2–3× lower than KF's) and is what the targeted
+  operators exist for, the 1-norm at exponent 2 stays the default. The 2-norm's KF gain would
+  matter only where branch-length mixing limits a run.
 
 Editing `datasets.yaml` or the renderer makes Snakemake treat existing cells, including the shared
 checkpoint, as out of date. If their rendered XML is unchanged, mark them current with
