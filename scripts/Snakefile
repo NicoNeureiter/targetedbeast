@@ -400,19 +400,29 @@ def collect_ess_input(wildcards):
     return []
 
 
+def collect_trees_input(wildcards):
+    # Tree-space pseudo-ESS (collect_stats.py --trees) is only meaningful at ESS-gated chain lengths.
+    if ess_gated(wildcards.dataset, wildcards.tier):
+        return CELL_DIR.format(**wildcards) + "/run.trees"
+    return []
+
+
 rule collect_cell:
     input:
         opstats=CELL_DIR + "/run.opstats.tsv",
         runtime=CELL_DIR + "/run.runtime",
         ess=collect_ess_input,
+        trees=collect_trees_input,
     output:
         summary=CELL_DIR + "/cell.summary.tsv",
     params:
         ess_flag=lambda wc, input: f'--ess-table "{input.ess}"' if input.ess else "",
+        trees_flag=lambda wc, input: f'--trees "{input.trees}"' if input.trees else "",
         targeted=lambda wc: " ".join(REGISTRY[wc.dataset].get("targeted_operators", [])),
     shell:
         "{PYTHON_BIN} {SCRIPT_DIR}/collect_stats.py "
         '--opstats "{input.opstats}" --runtime "{input.runtime}" {params.ess_flag} '
+        "{params.trees_flag} "
         "--dataset {wildcards.dataset} --tier {wildcards.tier} --setting {wildcards.setting} "
         '--rep {wildcards.rep} --summary-out "{output.summary}" '
         "--targeted-operators {params.targeted}"

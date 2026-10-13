@@ -3,7 +3,8 @@
 Prints the ESS gate per cell, then for each metric and each setting against the baseline: mean
 difference, its t-based 90% CI (df = n - 1) and the difference relative to the baseline mean.
 Defaults to ESJD over the targeted operators only, per step and per second, then chain-level ESJD
-per step. A weight transform acts only on the targeted operators; chain level dilutes its effect.
+per step (a weight transform acts only on the targeted operators; chain level dilutes its effect),
+then tree-space pseudo-ESS (p10 over reference trees, RF and KF distance) where the summary has it.
 
 Burn-in speed: pass runs/<dataset>/burnin_speed_summary.tsv with --metrics proposalsToTarget.
 
@@ -23,6 +24,9 @@ from pathlib import Path
 # Two-sided 90% (upper 0.95 quantile) Student t critical values; no scipy in this environment.
 T_95 = {1: 6.314, 2: 2.920, 3: 2.353, 4: 2.132, 5: 2.015, 6: 1.943, 7: 1.895, 8: 1.860,
         9: 1.833, 10: 1.812}
+
+DEFAULT_METRICS = ["esjd_rnni_targeted", "esjdPerSec_rnni_targeted", "esjd_rnni",
+                   "treeESS_p10_rf", "treeESS_p10_kf"]
 
 ESS_GATE = 100.0
 ESS_COLUMNS = ("posterior.ESS", "tree.height.ESS")
@@ -53,9 +57,14 @@ def main() -> None:
     parser.add_argument("summary", type=Path)
     parser.add_argument("--baseline", required=True)
     parser.add_argument("--settings", nargs="+", required=True)
-    parser.add_argument("--metrics", nargs="+", default=["esjd_rnni_targeted", "esjdPerSec_rnni_targeted", "esjd_rnni"])
+    parser.add_argument("--metrics", nargs="+", default=None,
+                        help="summary columns to compare; default: those of DEFAULT_METRICS present")
     args = parser.parse_args()
 
+    if args.metrics is None:
+        with open(args.summary, encoding="utf-8") as f:
+            header = f.readline().rstrip("\n").split("\t")
+        args.metrics = [m for m in DEFAULT_METRICS if m in header]
     cells = read_cells(args.summary, args.metrics)
     for setting in [args.baseline, *args.settings]:
         if setting not in cells:

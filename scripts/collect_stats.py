@@ -11,6 +11,8 @@ Combines:
   * loganalyser `-oneline` output (optional - only present for ESS-gated tiers) -> per-parameter
     ESS, reused via the same lowest-ESS-among-model-parameters logic as before.
   * a `run.runtime` file -> wall-clock runtime in seconds.
+  * (optional) the cell's `run.trees` -> tree-space pseudo-ESS (Lanfear et al. 2016) for RF and
+    KF distance, via `tree_pseudo_ess.py`.
 
 and writes one summary row per cell: dataset/tier/setting/rep/seed, the chain-level headline
 columns from opstats.tsv, and (if given) the ESS columns.
@@ -18,10 +20,26 @@ columns from opstats.tsv, and (if given) the ESS columns.
 from __future__ import annotations
 
 import argparse
+import json
 import math
+import subprocess
 from pathlib import Path
 
 CHAIN_ROW_NAME = "__CHAIN__"
+
+# tree_pseudo_ess.py needs TreeTracer's venv: rapidtrees is a compiled extension installed there.
+TREETRACER_PYTHON = Path("/Users/nneureiter/Projects/treetracer/.venv/bin/python")
+TREE_PSEUDO_ESS_SCRIPT = Path(__file__).resolve().parent / "tree_pseudo_ess.py"
+
+
+def compute_tree_pseudo_ess(trees_path: Path, burnin_percent: float) -> dict:
+    """Run tree_pseudo_ess.py under TreeTracer's venv and parse its JSON line."""
+    out = subprocess.run(
+        [str(TREETRACER_PYTHON), str(TREE_PSEUDO_ESS_SCRIPT), str(trees_path),
+         "--burnin-percent", str(burnin_percent)],
+        capture_output=True, text=True, check=True,
+    )
+    return json.loads(out.stdout.strip().splitlines()[-1])
 
 
 def read_runtime_seconds(path: Path) -> float:
@@ -132,6 +150,11 @@ def main() -> None:
     parser.add_argument("--runtime", type=Path, required=True, help="run.runtime file (seconds)")
     parser.add_argument("--ess-table", type=Path, default=None,
                          help="loganalyser -oneline output; omitted for non-ESS-gated tiers")
+    parser.add_argument("--trees", type=Path, default=None,
+                         help="run.trees file; when given, adds tree-space pseudo-ESS columns "
+                              "treeESS_{min,p10,median,max}_{rf,kf}")
+    parser.add_argument("--tree-burnin-percent", type=float, default=10.0,
+                         help="burn-in percent for --trees, by tree count (matches loganalyser -b)")
     parser.add_argument("--dataset", required=True)
     parser.add_argument("--tier", required=True)
     parser.add_argument("--setting", required=True)
@@ -180,6 +203,13 @@ def main() -> None:
             if col.endswith(".ESS"):
                 row[col] = val
 
+    if args.trees is not None:
+        tree_ess = compute_tree_pseudo_ess(args.trees, args.tree_burnin_percent)
+        for metric in ("rf", "kf"):
+            for stat in ("min", "p10", "median", "max"):
+                row[f"treeESS_{stat}_{metric}"] = fmt(tree_ess[metric][stat])
+        row["treeESS_n_trees_used"] = fmt(tree_ess["n_trees_used"])
+
     header = list(row.keys())
     values = [row[k] for k in header]
     args.summary_out.write_text("\t".join(header) + "\n" + "\t".join(values) + "\n")
@@ -190,6 +220,8 @@ def main() -> None:
         f"meanJumpGivenAccepted={row['meanJumpGivenAccepted']}"
         + (f" lowest_ESS={row.get('lowest_ESS')} ({row.get('lowest_ESS_param')})"
            if args.ess_table is not None else "")
+        + (f" treeESS_p10_rf={row.get('treeESS_p10_rf')} treeESS_p10_kf={row.get('treeESS_p10_kf')}"
+           if args.trees is not None else "")
     )
 
 
