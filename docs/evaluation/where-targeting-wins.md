@@ -1491,7 +1491,7 @@ Paired against `pca` (exponent 2), t-based 90% CI, n=8:
 For the target exponent on infB, the transform feature has nothing to offer over the operators'
 built-in squaring: a tuner can at best avoid exponents ≥6, which the default already does.
 
-## Burn-in speed (set up)
+## Burn-in speed
 
 The `burnin_speed` target was unusable as built. `BenchmarkMCMC`'s burn-in tracker only counts
 proposals after `preBurnin`, and the cells were rendered with the `thorough` tier's
@@ -1500,9 +1500,9 @@ chain shape from the dataset's `burnin_speed` entry in `datasets.yaml` (`pre_bur
 `chain_length: 300000`, 8 reps), which also lists their settings: `constant`, `pca`, and exponents
 1 and 8 as the flat and sharp extremes (2 is `pca`).
 
-One `pca` cell reached the reference band (the reference chain's 5th–95th percentile of
-log-posterior) after 8,707 proposals from the UPGMA start: burn-in on infB is short, about 1% of a
-`thorough` chain.
+Metric: proposals from the UPGMA start until the log-posterior enters, and stays in for 5
+proposals, the reference band (5th–95th percentile of the reference chain's post-burn-in
+log-posterior). All 32 cells reached it.
 
 ```bash
 snakemake -s scripts/Snakefile -j4 burnin_speed
@@ -1510,18 +1510,65 @@ python3 scripts/paired_compare.py runs/infb/burnin_speed_summary.tsv --baseline 
     --settings constant pca_fixed1 pca_fixed8 --metrics proposalsToTarget
 ```
 
-## Distance norm (set up)
+Paired against `pca`, t-based 90% CI, n=8:
 
-`pca_l2`: `PCAWeights2` with `useOneNorm="false"`, i.e. Euclidean distance in PCA space (the
-geometry PCA preserves) instead of the 1-norm, which depends on the rotation of the PCA axes.
-`snakemake norm_compare` runs it at the `thorough` tier, 8 reps, against `pca`'s 8 existing reps.
-Judge on `esjd_rnni_targeted`.
+| setting | proposals to target (range) | vs `pca` |
+|---|---|---|
+| `pca` (exponent 2) | 4,686–10,150, mean 6,824 | — |
+| `constant` | 6,823–16,390 | +68.9%, (+1,738, +7,671), excludes 0 |
+| `pca_fixed1` | 5,516–10,560 | +12.6%, (−900, +2,624) |
+| `pca_fixed8` | 6,080–9,444 | +14.3%, (−614, +2,568) |
+
+- **Targeting speeds up burn-in substantially**: `constant` needs ~1.7× the proposals `pca` does.
+- **The exponent matters little here too**; 1 and 8 are both slower than 2 but not detectably.
+- In absolute terms infB burns in within ~1% of a `thorough` chain (a few seconds), so on this
+  dataset the gain is real but cheap either way.
+
+## Distance norm
+
+`pca_l2`: `PCAWeights2` with `useOneNorm="false"`, i.e. Euclidean distance in PCA space instead of
+the 1-norm. `snakemake norm_compare` ran it at the `thorough` tier, 8 reps, against `pca`'s 8 reps.
+All 16 cells pass the ESS gate.
 
 ```bash
 snakemake -s scripts/Snakefile -j4 norm_compare
 python3 scripts/paired_compare.py runs/infb/thorough/norm_compare.summary.tsv --baseline pca \
     --settings pca_l2
+python3 scripts/paired_compare.py runs/infb/thorough/norm_compare.summary.tsv --baseline pca \
+    --settings pca_l2 --metrics tree.height.ESS posterior.ESS tree.treeLength.ESS likelihood.ESS
 ```
+
+Paired `pca_l2` − `pca`, t-based 90% CI, n=8:
+
+| metric | difference |
+|---|---|
+| `esjd_rnni_targeted` | −23.2%, (−1.10, −0.44), excludes 0 |
+| `esjdPerSec_rnni_targeted` | −10.2%, excludes 0 |
+| `esjd_rnni` (chain) | −6.7%, excludes 0 |
+| `tree.height.ESS` | **+25.7%**, (+61, +179), excludes 0 |
+| `tree.treeLength.ESS` | −17.1%, (−128, −0.05), excludes 0 |
+| `posterior.ESS` | −5.8%, CI includes 0 |
+| `likelihood.ESS` | −6.7%, CI includes 0 |
+
+Per targeted operator (mean over reps), `pca` → `pca_l2`:
+
+| operator | acceptance | jump given accepted |
+|---|---|---|
+| `TargetedWide` | 0.105 → 0.066 | 4.23 → 4.81 |
+| `targetedWilsonBalding` | 0.065 → 0.041 | 4.87 → 5.56 |
+| `targetedWilsonBaldingFixedHeight` | 0.105 → 0.066 | 4.35 → 4.82 |
+| `targetedRangeSlide` | 0.047 → 0.069 | 3.11 → 2.07 |
+
+- **On the target metric the 1-norm is clearly better.** With the 2-norm the three topology
+  operators lose about 37% of their acceptances, and slightly larger accepted jumps do not make
+  up for it.
+- **ESS disagrees in part.** `tree.height` ESS rises 26% while `tree.treeLength` ESS falls 17%
+  (posterior and likelihood unchanged). The height gain plausibly comes from `targetedRangeSlide`,
+  the one operator that accepts more often under the 2-norm. ESS at 150–700 is noisy and four ESS
+  columns were tested, so treat this as a flag, not a result: ESJD over RNNI distance is not a
+  faithful proxy for every ESS dimension.
+- Per second the loss is smaller (−10%) because `pca_l2`'s targeted proposals are 15–20% cheaper,
+  consistent with fewer accepted moves.
 
 Editing `datasets.yaml` or the renderer makes Snakemake treat existing cells, including the shared
 checkpoint, as out of date. If their rendered XML is unchanged, mark them current with
