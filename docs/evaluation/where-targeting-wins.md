@@ -1567,11 +1567,39 @@ Per targeted operator (mean over reps), `pca` → `pca_l2`:
   the one operator that accepts more often under the 2-norm. ESS at 150–700 is noisy and four ESS
   columns were tested, so treat this as a flag, not a result: ESJD over RNNI distance is not a
   faithful proxy for every ESS dimension.
-- Not yet tested at other exponents. The acceptance drop suggests the 2-norm weights are
-  effectively sharper, so its best exponent may lie lower; `norm_compare` now also runs
-  `pca_l2_fixed1`, `pca_l2_fixed1p5` and `pca_l2_fixed3` (24 new cells).
 - Per second the loss is smaller (−10%) because `pca_l2`'s targeted proposals are 12–22% cheaper,
   consistent with fewer accepted moves.
+
+### 2-norm at other exponents
+
+`norm_compare` also runs `pca_l2_fixed1`, `pca_l2_fixed1p5` and `pca_l2_fixed3` (8 reps each, all
+pass the ESS gate). Paired against `pca` (1-norm, exponent 2), n=8, 90% CI:
+
+| 2-norm exponent | `esjd_rnni_targeted` | `tree.height.ESS` | `tree.treeLength.ESS` | `posterior.ESS` |
+|---|---|---|---|---|
+| 1 | −30.5%, excludes 0 | +42.8%, excludes 0 | −3.2% | −8.4% |
+| 1.5 | −23.7%, excludes 0 | +34.7%, excludes 0 | −13.4% | −25.7%, excludes 0 |
+| 2 | −23.2%, excludes 0 | +25.7%, excludes 0 | −17.1%, excludes 0 | −5.8% |
+| 3 | −18.5%, excludes 0 | +33.5%, excludes 0 | −2.7% | +10.0% |
+
+- **The 2-norm wants a sharper exponent, not a flatter one**: per-step ESJD improves steadily from
+  1 to 3. That contradicts the guess that its acceptance drop came from over-sharp weights. A
+  plausible reading: a 1-norm sum over 10 PCA axes spreads distances out more than the Euclidean
+  norm, which is dominated by the largest axis, so 2-norm weights are flatter at equal exponent.
+  Even at 3 it is 18.5% below the 1-norm; the curve may keep rising above 3, but closing that gap
+  would take a 20%+ gain.
+- **`tree.height` ESS is 26–43% higher at every 2-norm exponent**, each CI excluding zero, while
+  the 1-norm exponent sweep shows no such shift. Four independent settings agreeing makes this the
+  most consistent ESS signal so far, and it runs opposite to ESJD over RNNI distance. Other ESS
+  columns show no consistent direction.
+- **Per-second figures for these 24 cells are unusable.** Runtimes for identical work ranged from
+  280 s to 1,000 s, i.e. the machine was heavily loaded for part of the batch. Per-step figures
+  are unaffected.
+
+So which norm is better depends on the metric: the 1-norm on targeted ESJD over RNNI distance, the
+2-norm on root-height mixing. Settling it needs a metric closer to the final target than either —
+ESS on more of the tree (a topology-only jump metric, or ESS of tree statistics beyond root
+height) — rather than more runs on the current metric.
 
 Editing `datasets.yaml` or the renderer makes Snakemake treat existing cells, including the shared
 checkpoint, as out of date. If their rendered XML is unchanged, mark them current with
