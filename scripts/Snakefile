@@ -193,8 +193,9 @@ rule exponent_sweep:
         concat_tsv(input, output.summary)
 
 
-# PCAWeights2's distance norm: 1-norm (pca) vs Euclidean (pca_l2), 8 reps. Explicit target.
-NORM_COMPARE_SETTINGS = ["pca", "pca_l2"]
+# PCAWeights2's distance norm: 1-norm (pca) vs Euclidean (pca_l2) at exponents 1, 1.5, 2, 3,
+# 8 reps. Explicit target.
+NORM_COMPARE_SETTINGS = ["pca", "pca_l2_fixed1", "pca_l2_fixed1p5", "pca_l2", "pca_l2_fixed3"]
 
 
 rule norm_compare:

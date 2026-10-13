@@ -1567,6 +1567,9 @@ Per targeted operator (mean over reps), `pca` → `pca_l2`:
   the one operator that accepts more often under the 2-norm. ESS at 150–700 is noisy and four ESS
   columns were tested, so treat this as a flag, not a result: ESJD over RNNI distance is not a
   faithful proxy for every ESS dimension.
+- Not yet tested at other exponents. The acceptance drop suggests the 2-norm weights are
+  effectively sharper, so its best exponent may lie lower; `norm_compare` now also runs
+  `pca_l2_fixed1`, `pca_l2_fixed1p5` and `pca_l2_fixed3` (24 new cells).
 - Per second the loss is smaller (−10%) because `pca_l2`'s targeted proposals are 12–22% cheaper,
   consistent with fewer accepted moves.
 
