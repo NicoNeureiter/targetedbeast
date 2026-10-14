@@ -120,6 +120,11 @@ def ess_gated(dataset: str, tier: str) -> bool:
     return bool(tier_cfg(dataset, tier).get("ess_gate", False))
 
 
+def beast_flags(wildcards) -> str:
+    """-java (no native BEAGLE) for settings that need the Java likelihood core, e.g. PartialWeights."""
+    return "-java" if wildcards.setting in REGISTRY[wildcards.dataset].get("java_only_settings", []) else ""
+
+
 def beast_seed(wildcards) -> int:
     """1000 + rep, shared across settings at a given rep for paired comparisons. Never
     hash(setting, rep) - that was the bug in the pre-rewrite Snakefile (see git history)."""
@@ -205,6 +210,22 @@ rule exponent_sweep:
         concat_tsv(input, output.summary)
 
 
+# PartialWeights at its default and pinned (flattening) exponents, against pca on the same
+# non-threaded TreeLikelihood. Explicit target.
+PARTIAL_SWEEP_SETTINGS = ["pca_nt", "partial", "partial_fixed1", "partial_fixed0p5",
+                          "partial_fixed0p2", "partial_fixed0p1"]
+
+
+rule partial_sweep:
+    input:
+        expand(CELL_DIR + "/cell.summary.tsv", dataset="infb", tier="thorough",
+               setting=PARTIAL_SWEEP_SETTINGS, rep=reps_for("infb", "thorough")),
+    output:
+        summary=str(RUNS_ROOT / "infb" / "thorough" / "partial_sweep.summary.tsv"),
+    run:
+        concat_tsv(input, output.summary)
+
+
 # PCAWeights2's distance norm: 1-norm (pca) vs Euclidean (pca_l2) at exponents 1, 1.5, 2, 3,
 # 8 reps. Explicit target.
 NORM_COMPARE_SETTINGS = ["pca", "pca_l2_fixed1", "pca_l2_fixed1p5", "pca_l2", "pca_l2_fixed3"]
@@ -274,6 +295,7 @@ rule run_beast:
         build=BUILD_MARKER,
     params:
         seed=beast_seed,
+        flags=beast_flags,
     output:
         log=CELL_DIR + "/run.log",
         trees=CELL_DIR + "/run.trees",
@@ -296,7 +318,7 @@ rule run_beast:
         # this flag and finding the state file in the project root, not the cell directory.
         'cd "{PROJECT_ROOT}" && SECONDS=0 && '
         "mvn -o exec:exec -Dbeast.main=beast.base.minimal.BeastMain "
-        '-Dbeast.args="-overwrite -seed {params.seed} -statefile {output.state} {input.xml}" && '
+        '-Dbeast.args="-overwrite -seed {params.seed} {params.flags} -statefile {output.state} {input.xml}" && '
         'echo $SECONDS > "{output.runtime}"'
 
 
@@ -359,6 +381,7 @@ rule run_beast_checkpointed:
         donor_checkpoint=checkpoint_donor_state,
     params:
         seed=beast_seed,
+        flags=beast_flags,
     output:
         log=CELL_DIR + "/run.log",
         trees=CELL_DIR + "/run.trees",
@@ -381,7 +404,7 @@ rule run_beast_checkpointed:
         'cd "{PROJECT_ROOT}" && SECONDS=0 && '
         'cp "{input.donor_checkpoint}" "{output.state}" && '
         "mvn -o exec:exec -Dbeast.main=beast.base.minimal.BeastMain "
-        '-Dbeast.args="-resume -seed {params.seed} -statefile {output.state} {input.xml}" && '
+        '-Dbeast.args="-resume -seed {params.seed} {params.flags} -statefile {output.state} {input.xml}" && '
         'echo $SECONDS > "{output.runtime}"'
 
 
@@ -497,6 +520,7 @@ rule run_beast_burnin_speed:
         build=BUILD_MARKER,
     params:
         seed=beast_seed,
+        flags=beast_flags,
     output:
         log=BURNIN_SPEED_CELL_DIR + "/run.log",
         trees=BURNIN_SPEED_CELL_DIR + "/run.trees",
@@ -510,7 +534,7 @@ rule run_beast_burnin_speed:
         # this cell's XML (see BenchmarkMCMC.writeBurnInSpeedFile).
         'cd "{PROJECT_ROOT}" && SECONDS=0 && '
         "mvn -o exec:exec -Dbeast.main=beast.base.minimal.BeastMain "
-        '-Dbeast.args="-overwrite -seed {params.seed} -statefile {output.state} {input.xml}" && '
+        '-Dbeast.args="-overwrite -seed {params.seed} {params.flags} -statefile {output.state} {input.xml}" && '
         'echo $SECONDS > "{output.runtime}"'
 
 

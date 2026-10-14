@@ -196,7 +196,7 @@
             
             </distribution>
             <distribution id="likelihood" spec="CompoundDistribution" useThreads="true">
-                <distribution id="treeLikelihood" spec="beast.base.spec.evolution.likelihood.ThreadedTreeLikelihood" data="@infB_HA" tree="@tree">
+                <distribution id="treeLikelihood" spec="{likelihood_spec}" data="@infB_HA" tree="@tree">
                 <!-- <distribution id="treeLikelihood" spec="TreeLikelihood" data="@infB_HA" tree="@tree" implementation="BeerLikelihoodCore4"> -->
                     <siteModel id="SiteModel.s:infB_HA" spec="beast.base.spec.evolution.sitemodel.SiteModel" gammaCategoryCount="4" shape="@gammaShape">
                         <parameter id="mutationRate.s:infB_HA" estimate="false" name="mutationRate" spec="beast.base.spec.inference.parameter.RealScalarParam" domain="PositiveReal">1.0</parameter>

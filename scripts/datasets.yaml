@@ -59,7 +59,13 @@ infb:
   settings: [constant, pca]
   # Renderable on explicit request (e.g. the Snakefile's aos_baseline target), never part of `all`.
   extra_settings: [pca_grid_mid, pca_aos_mid, pca_fixed1, pca_fixed1p5, pca_fixed3, pca_fixed4,
-                   pca_fixed6, pca_fixed8, pca_l2, pca_l2_fixed1, pca_l2_fixed1p5, pca_l2_fixed3]
+                   pca_fixed6, pca_fixed8, pca_l2, pca_l2_fixed1, pca_l2_fixed1p5, pca_l2_fixed3,
+                   pca_nt, partial, partial_fixed0p1, partial_fixed0p2, partial_fixed0p5,
+                   partial_fixed1]
+  # Run with BEAST's -java flag: PartialWeights needs the Java likelihood core, which BEAGLE replaces;
+  # pca_nt gets the same so its timing is comparable.
+  java_only_settings: [pca_nt, partial, partial_fixed0p1, partial_fixed0p2, partial_fixed0p5,
+                       partial_fixed1]
   # Operators a weight transform acts on; collect_stats.py's *_targeted columns cover only these.
   targeted_operators: [TargetedWide, targetedWilsonBalding, targetedWilsonBaldingFixedHeight,
                        targetedRangeSlide]

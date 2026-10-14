@@ -46,7 +46,21 @@ def load_template(setting: str) -> str:
 
 
 # Pinned target-weight exponents, by setting-name suffix ("1p5" -> pca_fixed1p5).
-FIXED_EXPONENTS = {"1": 1.0, "1p5": 1.5, "2": 2.0, "3": 3.0, "4": 4.0, "6": 6.0, "8": 8.0}
+FIXED_EXPONENTS = {"0p1": 0.1, "0p2": 0.2, "0p5": 0.5, "1": 1.0, "1p5": 1.5, "2": 2.0, "3": 3.0,
+                   "4": 4.0, "6": 6.0, "8": 8.0}
+PCA_FIXED_EXPONENTS = ("1", "1p5", "3", "4", "6", "8")
+
+# PartialWeights returns a softmax over candidate log-likelihoods, so a pinned exponent b acts as an
+# inverse temperature: softmax(b * loglik). It is already sharply peaked, so the sweep flattens
+# (b < 1); 0.1 is WeightTransform's lower bound on the exponent.
+PARTIAL_FIXED_EXPONENTS = ("0p1", "0p2", "0p5", "1")
+EDGE_WEIGHTS_PARTIAL = ('<distribution id="edgeweights" spec="targetedbeast.edgeweights.PartialWeights" '
+                        'tree="@tree" maxWeight="20" data="@infB_HA" likelihood="@treeLikelihood"/>')
+
+# treeLikelihood's spec, by setting. PartialWeights needs TreeLikelihood.getLikelihoodCore(), which
+# ThreadedTreeLikelihood does not have; pca_nt is pca on the same likelihood, for comparable timing.
+DEFAULT_LIKELIHOOD_SPEC = "beast.base.spec.evolution.likelihood.ThreadedTreeLikelihood"
+NON_THREADED_LIKELIHOOD_SPEC = "beast.base.spec.evolution.likelihood.TreeLikelihood"
 
 EDGE_WEIGHTS_PCA = ('<distribution id="edgeweights" spec="targetedbeast.edgeweights.PCAWeights2" '
                     'tree="@tree" maxWeight="20" data="@infB_HA" dimension="10"/>')
@@ -96,7 +110,10 @@ EDGE_WEIGHTS_XML = {
                     'tree="@tree" maxWeight="20" data="@infB_HA" dimension="10"/>',
     # Same PCAWeights2 with the exponent pinned (fixed2's wiring): where is the optimum, and does
     # GridTuner beat simply fixing it there?
-    **{f"pca_fixed{k}": EDGE_WEIGHTS_PCA for k in FIXED_EXPONENTS if k != "2"},
+    **{f"pca_fixed{k}": EDGE_WEIGHTS_PCA for k in PCA_FIXED_EXPONENTS},
+    "pca_nt": EDGE_WEIGHTS_PCA,
+    "partial": EDGE_WEIGHTS_PARTIAL,
+    **{f"partial_fixed{k}": EDGE_WEIGHTS_PARTIAL for k in PARTIAL_FIXED_EXPONENTS},
     # PCAWeights2 on Euclidean rather than 1-norm distance in PCA space, at the default exponent
     # and pinned at L2_EXPONENTS.
     "pca_l2": EDGE_WEIGHTS_PCA_L2,
@@ -272,7 +289,10 @@ WEIGHT_TRANSFORM_FOR_SETTING = {
     "pca_grid": "grid",
     "pca_grid_low": "grid_low",
     "pca_grid_mid": "grid_mid",
-    **{f"pca_fixed{k}": f"fixed{k}" for k in FIXED_EXPONENTS},
+    **{f"pca_fixed{k}": f"fixed{k}" for k in FIXED_EXPONENTS if k in PCA_FIXED_EXPONENTS + ("2",)},
+    "pca_nt": "none",
+    "partial": "none",
+    **{f"partial_fixed{k}": f"fixed{k}" for k in PARTIAL_FIXED_EXPONENTS},
     "pca_grid_mid_rnni": "grid_mid_rnni",
     "pca_grid_mid_dual": "grid_mid_dual",
     "pca_grid_mid_ratio": "grid_mid_ratio",
@@ -323,6 +343,12 @@ EDGE_WEIGHT_TRANSFORM_XML = {
 
 # Which edge-transform variant each edge-weights setting is rendered with. Defaults to "none"
 # (source-edge weights untransformed) unless overridden below.
+LIKELIHOOD_SPEC_FOR_SETTING = {
+    "pca_nt": NON_THREADED_LIKELIHOOD_SPEC,
+    "partial": NON_THREADED_LIKELIHOOD_SPEC,
+    **{f"partial_fixed{k}": NON_THREADED_LIKELIHOOD_SPEC for k in PARTIAL_FIXED_EXPONENTS},
+}
+
 EDGE_WEIGHT_TRANSFORM_FOR_SETTING = {
     "pca_grid_mid_dual": "grid_mid",
     "pca_grid_mid_ratio": "grid_mid_ratio",
@@ -346,6 +372,7 @@ def render_run_xml(template_text: str, setting: str, chain_length: int, out_dir:
         edge_weight_transform=edge_transform_element,
         edge_weight_transform_ref=edge_transform_ref,
         edge_weight_transform_log=edge_transform_log,
+        likelihood_spec=LIKELIHOOD_SPEC_FOR_SETTING.get(setting, DEFAULT_LIKELIHOOD_SPEC),
     )
 
     run_needle = '<run id="mcmc" spec="MCMC" chainLength='
