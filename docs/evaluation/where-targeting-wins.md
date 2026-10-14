@@ -1677,6 +1677,53 @@ across settings within 0.3%, so the bias is small, but the effect sizes for `pca
 kernel. The fix also changes `PCAWeights2`'s proposal distribution in `RangeSlide` (all ancestors
 now exclude i), so old and new cells must not be paired.
 
+## `PartialWeights` exponent sweep (fixed kernel)
+
+First `PartialWeights` results on a valid kernel (`3a79c17`, `d3bdfe9`, `76fc1e7`); the
+`beast2.8-felsenstein-weights` branch's `partial`/`partial_grid` numbers ran on the broken one.
+`PartialWeights` returns a softmax over candidate log-likelihoods, so a pinned exponent b is an
+inverse temperature, softmax(b · loglik); the sweep flattens (b ≤ 1, 0.1 being the transform's
+lower bound). `partial` is the operators' default: squared for `TargetedWide` and both Wilson–
+Balding operators, as-is for `targetedRangeSlide`. `pca_nt` is `pca` on the same likelihood.
+
+`PartialWeights` needs `TreeLikelihood.getLikelihoodCore()`, which is null whenever BEAGLE is in
+use (BEAGLE 4.0.0 is now installed and active), so these settings run with BEAST's `-java` flag
+(`java_only_settings` in `datasets.yaml`) on a non-threaded `TreeLikelihood`.
+
+```bash
+snakemake -s scripts/Snakefile -j4 --rerun-incomplete partial_sweep
+python3 scripts/paired_compare.py runs/infb/thorough/partial_sweep.summary.tsv --baseline pca_nt \
+    --settings partial partial_fixed1 partial_fixed0p5 partial_fixed0p2 partial_fixed0p1
+```
+
+`thorough` tier, 4 reps; all 24 cells pass the ESS gate. Paired, t-based 90% CI, n=4:
+
+| setting | targeted ESJD/step vs `pca_nt` | vs `partial` | RF tree ESS p10 vs `partial` | KF tree ESS p10 vs `pca_nt` |
+|---|---|---|---|---|
+| `partial` (default) | −16.5%, excl. 0 | — | — | +21.2% |
+| b = 1 | −5.5%, excl. 0 | +13.2%, excl. 0 | +13.2% | +33.4%, excl. 0 |
+| b = 0.5 | **+14.8%**, excl. 0 | **+37.6%**, excl. 0 | **+42.1%**, excl. 0 | +36.9%, excl. 0 |
+| b = 0.2 | **+20.9%**, excl. 0 | **+44.8%**, excl. 0 | **+38.4%**, excl. 0 | +14.9% |
+| b = 0.1 | +10.9%, excl. 0 | +32.8%, excl. 0 | +37.8%, excl. 0 | +31.8%, excl. 0 |
+
+(Unmarked: CI includes 0. RF tree ESS of every `partial` setting vs `pca_nt` has a CI including 0,
+from −21% for the default to +12% for b = 0.5.)
+
+- **Unlike `PCAWeights2`, the exponent matters a lot here.** The default is far too sharp:
+  flattening to b ≈ 0.2–0.5 raises targeted ESJD per step by 38–45% and RF (topology) tree ESS by
+  ~40%. The optimum is interior (0.1 is worse than 0.2), consistent with the branch's ~0.2.
+- **Per step, flattened `PartialWeights` beats `PCAWeights2`** on targeted ESJD (+15–21%) and on
+  KF tree ESS; RF tree ESS is not distinguishable from `pca_nt` at n=4.
+- **Per second it loses by 81–86%.** A targeted proposal costs far more: `targetedWilsonBalding`
+  14 ms vs 0.35 ms, `targetedRangeSlide` 4.1 ms vs 0.30 ms, `TargetedWide` 1.6 ms vs 0.31 ms. No
+  per-step gain here comes close to paying for that. (Per-second values are wall-clock and some
+  cells ran under contention, e.g. `pca_nt` rep 1 at 2,322 against 3,900–5,100 for the others;
+  the gap is far larger than that noise.)
+
+On infB, `PartialWeights` is a better proposal per step once flattened, but not a better sampler:
+`PCAWeights2` at its default delivers several times more topology movement per CPU-second. If
+`PartialWeights` is pursued, b ≈ 0.2–0.5 should be its default, and the work is in its cost.
+
 Editing `datasets.yaml` or the renderer makes Snakemake treat existing cells, including the shared
 checkpoint, as out of date. If their rendered XML is unchanged, mark them current with
 `snakemake <target> --touch` rather than rerunning; a rerun checkpoint changes every cell's
