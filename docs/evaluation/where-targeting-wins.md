@@ -1724,6 +1724,39 @@ On infB, `PartialWeights` is a better proposal per step once flattened, but not 
 `PCAWeights2` at its default delivers several times more topology movement per CPU-second. If
 `PartialWeights` is pursued, b ≈ 0.2–0.5 should be its default, and the work is in its cost.
 
+## `PCAWeights2` vs `ConstantWeights` on the fixed kernel
+
+The project's headline comparison, rerun after the `RangeSlide` fix (`76fc1e7`) at the operators'
+defaults: `snakemake pca_vs_constant`, `thorough` tier, 8 reps (seeds 1000–1007), from a shared
+checkpoint rebuilt on the fixed code. All 16 cells pass the ESS gate. This replaces the earlier
++7.3% (`esjdPerSec_rnni`, 4 reps, broken kernel, cells from different sessions).
+
+```bash
+snakemake -s scripts/Snakefile -j4 pca_vs_constant
+python3 scripts/paired_compare.py runs/infb/thorough/pca_vs_constant.summary.tsv \
+    --baseline constant --settings pca
+```
+
+`pca` − `constant`, paired, t-based 90% CI, n=8:
+
+| metric | difference |
+|---|---|
+| `treeESS_p10_rf` (topology) | **+46.8%**, (+35, +72), excludes 0 |
+| `treeESS_median_rf` | +44.5%, excludes 0 |
+| `treeESS_p10_kf` (branch lengths) | **+37.7%**, (+80, +140), excludes 0 |
+| `tree.height.ESS` | +28.1%, excludes 0 |
+| `posterior.ESS` | +22.4%, (−19, +121), CI includes 0 |
+| `esjd_rnni_targeted` | +7.9%, excludes 0 |
+| `esjdPerSec_rnni_targeted` | +11.4%, excludes 0 |
+| `esjd_rnni` (chain) | +4.8%, excludes 0 |
+| `esjdPerSec_rnni` (chain) | +5.3%, excludes 0 |
+
+Targeting with `PCAWeights2` improves mixing clearly, and tree-space ESS shows it far more
+strongly than ESJD: topology ESS rises by nearly half. RNNI ESJD understates the effect for the
+reason found above — it is dominated by height reorderings the targeted operators barely touch.
+The ESS-type metrics agree in direction everywhere, which makes this the most solid result in the
+document. Per CPU-second the gain holds (`PCAWeights2` costs little per proposal).
+
 Editing `datasets.yaml` or the renderer makes Snakemake treat existing cells, including the shared
 checkpoint, as out of date. If their rendered XML is unchanged, mark them current with
 `snakemake <target> --touch` rather than rerunning; a rerun checkpoint changes every cell's
