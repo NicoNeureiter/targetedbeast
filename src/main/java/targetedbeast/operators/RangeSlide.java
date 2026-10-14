@@ -55,6 +55,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import beast.base.core.Description;
 import beast.base.core.Input;
@@ -318,15 +319,7 @@ public class RangeSlide extends TargetedWeightOperator {
 			return Double.NEGATIVE_INFINITY;
 		}
 
-		// All of i's ancestors, not just those among the targets: an ancestor's "without i" value
-		// is built from its children's, and the slide passes over ancestors without making them
-		// targets. Leaving those out rebuilds the targets above them from cached values that
-		// still reflect the tree before the move, so the reverse weights below would not match
-		// the forward weights of a proposal from the moved tree.
-		List<Integer> ancestors = new ArrayList<>();
-		for (Node ancestor = i.getParent(); ancestor != null; ancestor = ancestor.getParent()) {
-			ancestors.add(ancestor.getNr());
-		}
+		List<Integer> ancestors = ancestorsUpToHighestTarget(i, targets.keySet());
 
 		// calculate the consensus sequences without the node i
 		edgeWeights.prestore();
@@ -422,12 +415,9 @@ public class RangeSlide extends TargetedWeightOperator {
 			return logHastingsRatio;
 		}
 
-		// Recompute the "without node i" cache against the moved tree T', over all of i's new
-		// ancestors (see above): the cached values from the forward pass describe i's old position.
-		List<Integer> newAncestors = new ArrayList<>();
-		for (Node ancestor = i.getParent(); ancestor != null; ancestor = ancestor.getParent()) {
-			newAncestors.add(ancestor.getNr());
-		}
+		// Recompute the "without node i" cache against the moved tree T': the cached values from
+		// the forward pass describe i's old position.
+		List<Integer> newAncestors = ancestorsUpToHighestTarget(i, newTargets.keySet());
 		edgeWeights.prestore();
 		edgeWeights.updateByOperatorWithoutNode(i.getNr(), newAncestors);
 
@@ -487,6 +477,25 @@ public class RangeSlide extends TargetedWeightOperator {
 		}
 		logHastingsRatio += Math.log(reverseWeight / reverseSourceWeights.total);
 		return logHastingsRatio;
+	}
+
+	/**
+	 * i's ancestors from its parent up to the highest one that is a target, whose "without i"
+	 * values the target weights need. Every ancestor in between is included even if it is not a
+	 * target, since a target's value is built from its children's: leaving one out rebuilds the
+	 * targets above it from values that still reflect the tree before the move. Ancestors above
+	 * the highest target are never read.
+	 */
+	private static List<Integer> ancestorsUpToHighestTarget(Node i, Set<Node> targets) {
+		List<Integer> path = new ArrayList<>();
+		int needed = 0;
+		for (Node ancestor = i.getParent(); ancestor != null; ancestor = ancestor.getParent()) {
+			path.add(ancestor.getNr());
+			if (targets.contains(ancestor)) {
+				needed = path.size();
+			}
+		}
+		return new ArrayList<>(path.subList(0, needed));
 	}
 
 	private Map<Node, Double> collectTargets(Node start, double distanceLeft, boolean isUp) {
