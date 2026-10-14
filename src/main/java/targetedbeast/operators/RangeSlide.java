@@ -356,6 +356,9 @@ public class RangeSlide extends TargetedWeightOperator {
 		
 		// pick a random node
 		logHastingsRatio -= Math.log(distance[targetIndex] / totalDistance);
+		// Roll back the forward "without i" values before the move: the reverse pass below takes
+		// its own prestore(), which must record the pre-proposal state for reset() to return to.
+		edgeWeights.reset();
 
 		Node target = targets.keySet().toArray(new Node[0])[targetIndex];
 		
