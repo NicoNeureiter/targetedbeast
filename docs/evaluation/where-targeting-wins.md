@@ -1645,6 +1645,38 @@ Paired against `pca`, n=8, 90% CI (n=4 for `pca_aos_mid`):
   operators exist for, the 1-norm at exponent 2 stays the default. The 2-norm's KF gain would
   matter only where branch-length mixing limits a run.
 
+## `RangeSlide` detailed-balance bug: all `PCAWeights2` results above are affected
+
+`targetedRangeSlide` (`useWeightedStep="true"`) did not satisfy detailed balance with
+`PCAWeights2`, with or without a transform. Fixed in `76fc1e7`; the plain `Range` operator
+(`useWeightedStep` false: uniform targets) was not affected.
+
+**Cause.** `RangeSlide` rebuilt the "without i" cache only for ancestors of the moved node i that
+were also slide targets. A `PCAWeights2` node's point is a branch-length-weighted average of its
+children's, so the targets above a skipped ancestor were rebuilt from cached values that still
+described the tree before the move. The reverse target weights therefore differed from the
+forward weights a proposal from the moved tree computes: in ~10% of proposals, by up to 10× for
+single candidates. Forward weights were always correct. It now rebuilds all of i's ancestors.
+
+**How it surfaced.** `testRangeSlideTargetTransform` failed intermittently (4 of 6 runs on the
+unfixed code, at 4.2–4.7σ against a 4σ threshold): a sharper exponent magnifies the weight error
+enough to cross the threshold, which is why only transform runs showed it. A new deterministic
+test, `testRangeSlideTargetWeightsMatchFreshCache`, checks every target-weight vector against a
+freshly built `PCAWeights2`; it fails on the unfixed code within one proposal batch. After the fix,
+the statistical `RangeSlide` tests (including temporary exponent-3 and -6 variants that failed 2/4
+and 3/4 before) passed 5 of 5 runs each.
+
+The same commit series brings `PartialWeights`' detailed-balance fix (`3a79c17`, from
+`beast2.8-felsenstein-weights`) and `RangeSlide`'s stale-cache fix for live-tree weightings
+(`d3bdfe9`).
+
+**Consequence.** Every `PCAWeights2` cell in this document, including the `pca` baselines, ran a
+slightly wrong `targetedRangeSlide` kernel (~10% of all proposals). Posterior summaries agreed
+across settings within 0.3%, so the bias is small, but the effect sizes for `pca`-family settings
+(exponent sweep, norms, tuners, AOS) should be treated as provisional until rerun on the fixed
+kernel. The fix also changes `PCAWeights2`'s proposal distribution in `RangeSlide` (all ancestors
+now exclude i), so old and new cells must not be paired.
+
 Editing `datasets.yaml` or the renderer makes Snakemake treat existing cells, including the shared
 checkpoint, as out of date. If their rendered XML is unchanged, mark them current with
 `snakemake <target> --touch` rather than rerunning; a rerun checkpoint changes every cell's
