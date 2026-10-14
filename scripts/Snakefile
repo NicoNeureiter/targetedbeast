@@ -210,6 +210,20 @@ rule exponent_sweep:
         concat_tsv(input, output.summary)
 
 
+# The headline comparison, PCAWeights2 vs ConstantWeights at their defaults, 8 reps. Explicit target.
+BASELINE_SETTINGS = ["constant", "pca"]
+
+
+rule pca_vs_constant:
+    input:
+        expand(CELL_DIR + "/cell.summary.tsv", dataset="infb", tier="thorough",
+               setting=BASELINE_SETTINGS, rep=EXPONENT_SWEEP_REPS),
+    output:
+        summary=str(RUNS_ROOT / "infb" / "thorough" / "pca_vs_constant.summary.tsv"),
+    run:
+        concat_tsv(input, output.summary)
+
+
 # PartialWeights at its default and pinned (flattening) exponents, against pca on the same
 # non-threaded TreeLikelihood. Explicit target.
 PARTIAL_SWEEP_SETTINGS = ["pca_nt", "partial", "partial_fixed1", "partial_fixed0p5",
