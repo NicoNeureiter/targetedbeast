@@ -834,4 +834,75 @@ public class TargetedOperatorDetailedBalanceTest extends DetailedBalanceTest<Tre
         }));
     }
 
+
+    /**
+     * RangeSlide's target weights must be a function of the current tree and the without-node
+     * set alone, never of what its cache held before the move: otherwise the reverse weights
+     * differ from the forward weights a proposal from the moved tree would compute. Checked
+     * directly against a freshly built PCAWeights2 on every call, rather than statistically.
+     */
+    @Test
+    public void testRangeSlideTargetWeightsMatchFreshCache() throws Exception {
+        TreeTrial trial = new TreeTrial(tree -> {
+            RangeSlide operator = new RangeSlide();
+            operator.initByName(
+                    "tree", tree,
+                    "weight", 1.0,
+                    "edgeWeights", new FreshCheckingWeights(tree),
+                    "useWeightedStep", true,
+                    "size", 0.25,
+                    "optimise", false);
+            return operator;
+        });
+        FreshCheckingWeights weights = (FreshCheckingWeights) trial.edgeWeights.get(0);
+        for (int k = 0; k < 2000; k++) {
+            trial.nextSample();
+            trial.proposal();
+        }
+        org.junit.Assert.assertTrue("no target weights were checked", weights.checks > 0);
+    }
+
+    /** Delegates to PCAWeights2 and checks every target-weight vector against a fresh instance. */
+    static class FreshCheckingWeights extends beast.base.core.BEASTObject implements EdgeWeights {
+        final Tree tree;
+        final PCAWeights2 delegate = new PCAWeights2();
+        int ignore = -1;
+        List<Integer> withoutNode = List.of();
+        int checks = 0;
+
+        FreshCheckingWeights(Tree tree) {
+            this.tree = tree;
+            delegate.initByName("tree", tree, "data", alignment, "dimension", 3);
+        }
+
+        @Override public void initAndValidate() {}
+        @Override public void updateByOperator() { delegate.updateByOperator(); }
+        @Override public void updateByOperatorWithoutNode(int ignore, List<Integer> nodes) {
+            this.ignore = ignore;
+            this.withoutNode = new ArrayList<>(nodes);
+            delegate.updateByOperatorWithoutNode(ignore, nodes);
+        }
+        @Override public void fakeUpdateByOperator() { delegate.fakeUpdateByOperator(); }
+        @Override public void prestore() { delegate.prestore(); }
+        @Override public void reset() { delegate.reset(); }
+        @Override public double getEdgeWeights(int nodeNr) { return delegate.getEdgeWeights(nodeNr); }
+        @Override public double[] getTargetWeightsInteger(int fromNodeNr, List<Integer> toNodeNrs) {
+            return delegate.getTargetWeightsInteger(fromNodeNr, toNodeNrs);
+        }
+        @Override public double minEdgeWeight() { return delegate.minEdgeWeight(); }
+
+        @Override
+        public double[] getTargetWeights(int fromNodeNr, List<Node> toNodes) {
+            double[] actual = delegate.getTargetWeights(fromNodeNr, toNodes);
+            PCAWeights2 fresh = new PCAWeights2();
+            fresh.initByName("tree", tree, "data", alignment, "dimension", 3);
+            fresh.prestore();
+            fresh.updateByOperatorWithoutNode(ignore, withoutNode);
+            org.junit.Assert.assertArrayEquals(
+                    "target weights differ from a fresh cache on the same tree",
+                    fresh.getTargetWeights(fromNodeNr, toNodes), actual, 1e-9);
+            checks++;
+            return actual;
+        }
+    }
 }

@@ -318,16 +318,14 @@ public class RangeSlide extends TargetedWeightOperator {
 			return Double.NEGATIVE_INFINITY;
 		}
 
-		// get all nodes in target that are ancestors to p
+		// All of i's ancestors, not just those among the targets: an ancestor's "without i" value
+		// is built from its children's, and the slide passes over ancestors without making them
+		// targets. Leaving those out rebuilds the targets above them from cached values that
+		// still reflect the tree before the move, so the reverse weights below would not match
+		// the forward weights of a proposal from the moved tree.
 		List<Integer> ancestors = new ArrayList<>();
-		// make a copy of p
-		Node ancestor = i.getParent();
-		while (ancestor != null) {
-			// check if p is in the target
-			if (targets.containsKey(ancestor)) {
-				ancestors.add(ancestor.getNr());
-			}
-			ancestor = ancestor.getParent();
+		for (Node ancestor = i.getParent(); ancestor != null; ancestor = ancestor.getParent()) {
+			ancestors.add(ancestor.getNr());
 		}
 
 		// calculate the consensus sequences without the node i
@@ -421,19 +419,11 @@ public class RangeSlide extends TargetedWeightOperator {
 			return logHastingsRatio;
 		}
 
-		// Recompute the "without node i" cache against the moved tree T': edgeWeights
-		// implementations that look up cached per-node values (ConstantWeights, PCAWeights2) don't
-		// need this, but ones that walk live tree pointers at getTargetWeights time
-		// (FelsensteinWeights, PartialWeights) do - their partialsWithoutNode were computed relative
-		// to i's old position, which is now stale after the topology change above. Mirrors
-		// TargetedWilsonBalding's reverseAncestors/second updateByOperatorWithoutNode call.
+		// Recompute the "without node i" cache against the moved tree T', over all of i's new
+		// ancestors (see above): the cached values from the forward pass describe i's old position.
 		List<Integer> newAncestors = new ArrayList<>();
-		Node newAncestor = i.getParent();
-		while (newAncestor != null) {
-			if (newTargets.containsKey(newAncestor)) {
-				newAncestors.add(newAncestor.getNr());
-			}
-			newAncestor = newAncestor.getParent();
+		for (Node ancestor = i.getParent(); ancestor != null; ancestor = ancestor.getParent()) {
+			newAncestors.add(ancestor.getNr());
 		}
 		edgeWeights.prestore();
 		edgeWeights.updateByOperatorWithoutNode(i.getNr(), newAncestors);
