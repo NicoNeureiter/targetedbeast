@@ -71,6 +71,8 @@ public class PartialWeights extends Distribution implements EdgeWeights {
     double[] _probabilities;
     double[] _targetPartials;
     double[] _patternLogLikelihoods;
+    private double[] _fromAtParent;
+    private double[] _toAtParent;
     
 	private static final double EPS = 1E-8;
 
@@ -166,6 +168,10 @@ public class PartialWeights extends Distribution implements EdgeWeights {
             _targetPartials = new double[patternCount * stateCount];
         if (_patternLogLikelihoods == null)
             _patternLogLikelihoods = new double[patternCount];
+        if (_fromAtParent == null) {
+            _fromAtParent = new double[stateCount];
+            _toAtParent = new double[stateCount];
+        }
 		
         assert partialsSize == patternCount * stateCount * matrixCount;
 
@@ -703,76 +709,97 @@ public class PartialWeights extends Distribution implements EdgeWeights {
     public double computePartialsAgreement(Node fromNode, Node toNode, double[] fromPartials, double[] toPartials, double toHeight) {
         calculateTransitionMatrix(fromNode, toHeight, _fromMatrix);
         calculateTransitionMatrix(toNode, toHeight, _toMatrix);
+        double[] proportions = getSiteModel().getCategoryProportions(toNode);
 
-        // Calculate partials at the potential new parent node
-        double[] fromPartialsAtParent = applyTransitionMatrix(_fromMatrix, fromPartials);
-        double[] toPartialsAtParent = applyTransitionMatrix(_toMatrix, toPartials);
-
-        double[] targetPartialsPerCat = new double[toPartials.length];
-        for (int i = 0; i < matrixCount * patternCount; i++) {
-            int offset = i * stateCount;
-            // double toPartialSum = 1E-6;
-            // double fromPartialSum = 1E-6;
-            double toPartialSum = 0;
-            double fromPartialSum = 0;
-            for (int j = offset; j < offset + stateCount; j++) {
-                toPartialSum += toPartialsAtParent[j];
-                fromPartialSum += fromPartialsAtParent[j];
+        // One pass per (category, pattern): propagate both partials to the new parent, normalise
+        // each, multiply, and accumulate over categories weighted by their proportions. This is
+        // the hot loop of every targeted proposal, so it avoids intermediate arrays.
+        java.util.Arrays.fill(_targetPartials, 0.0);
+        final double uniform = 1.0 / stateCount / stateCount;
+        for (int category = 0; category < matrixCount; category++) {
+            final int m = category * matrixSize;
+            final double proportion = proportions[category];
+            for (int pattern = 0; pattern < patternCount; pattern++) {
+                final int in = getPartialOffset(pattern, category);
+                final int out = pattern * stateCount;
+                if (stateCount == 4) {
+                    accumulateAgreement4(m, in, out, fromPartials, toPartials, proportion, uniform);
+                } else {
+                    accumulateAgreement(m, in, out, fromPartials, toPartials, proportion, uniform);
+                }
             }
-            if (toPartialSum <= EPS || fromPartialSum <= EPS)
-                for (int j = offset; j < offset + stateCount; j++)
-                    targetPartialsPerCat[j] = 1.0 / stateCount / stateCount;
-            else
-                for (int j = offset; j < offset + stateCount; j++)
-                    targetPartialsPerCat[j] = (toPartialsAtParent[j] / toPartialSum) * (fromPartialsAtParent[j] / fromPartialSum);
         }
 
-        return computeLikelihoodFromPartials(toNode, targetPartialsPerCat);
+        double[] freqs = getSubstitutionModel().getFrequencies();
+        likelihoodCore.calculateLogLikelihoods(_targetPartials, freqs, _patternLogLikelihoods);
+        double weightedSum = 0.0;
+        for (int p = 0; p < patternCount; p++) {
+            weightedSum += alignment.getPatternWeight(p) * _patternLogLikelihoods[p];
+        }
+        return weightedSum;
     }
 
+    /** Nucleotide case of {@link #accumulateAgreement}, unrolled. */
+    private void accumulateAgreement4(int m, int in, int out, double[] fromPartials, double[] toPartials,
+            double proportion, double uniform) {
+        final double[] fm = _fromMatrix, tm = _toMatrix;
+        final double x0 = fromPartials[in], x1 = fromPartials[in + 1], x2 = fromPartials[in + 2], x3 = fromPartials[in + 3];
+        final double y0 = toPartials[in], y1 = toPartials[in + 1], y2 = toPartials[in + 2], y3 = toPartials[in + 3];
+        final double f0 = fm[m] * x0 + fm[m + 1] * x1 + fm[m + 2] * x2 + fm[m + 3] * x3;
+        final double f1 = fm[m + 4] * x0 + fm[m + 5] * x1 + fm[m + 6] * x2 + fm[m + 7] * x3;
+        final double f2 = fm[m + 8] * x0 + fm[m + 9] * x1 + fm[m + 10] * x2 + fm[m + 11] * x3;
+        final double f3 = fm[m + 12] * x0 + fm[m + 13] * x1 + fm[m + 14] * x2 + fm[m + 15] * x3;
+        final double t0 = tm[m] * y0 + tm[m + 1] * y1 + tm[m + 2] * y2 + tm[m + 3] * y3;
+        final double t1 = tm[m + 4] * y0 + tm[m + 5] * y1 + tm[m + 6] * y2 + tm[m + 7] * y3;
+        final double t2 = tm[m + 8] * y0 + tm[m + 9] * y1 + tm[m + 10] * y2 + tm[m + 11] * y3;
+        final double t3 = tm[m + 12] * y0 + tm[m + 13] * y1 + tm[m + 14] * y2 + tm[m + 15] * y3;
+        final double fromSum = f0 + f1 + f2 + f3;
+        final double toSum = t0 + t1 + t2 + t3;
+        final double[] target = _targetPartials;
+        if (toSum <= EPS || fromSum <= EPS) {
+            target[out] += uniform * proportion;
+            target[out + 1] += uniform * proportion;
+            target[out + 2] += uniform * proportion;
+            target[out + 3] += uniform * proportion;
+        } else {
+            target[out] += (t0 / toSum) * (f0 / fromSum) * proportion;
+            target[out + 1] += (t1 / toSum) * (f1 / fromSum) * proportion;
+            target[out + 2] += (t2 / toSum) * (f2 / fromSum) * proportion;
+            target[out + 3] += (t3 / toSum) * (f3 / fromSum) * proportion;
+        }
+    }
 
     /**
-     * Integrate across rate categories and compute log-likelihood
-     * @param node The node at which the partials are computed (should already incorporate outside partials for data above)
-     * @param combinedPartials Partials at the node, already multiplied by outside partials for data above
-     * @return log-likelihood of the tree given the partials at the specified node (which should already incorporate outside partials for data above)
+     * Adds one (category, pattern) term of the agreement score to {@code _targetPartials}: both
+     * partials propagated to the new parent, each normalised over states, multiplied, and
+     * weighted by the category's proportion.
      */
-    public double computeLikelihoodFromPartials(Node node, double[] combinedPartials) {
-		double[] proportions = getSiteModel().getCategoryProportions(node);
-		integratePartials(combinedPartials, proportions, _targetPartials);
-
-		double[] freqs = getSubstitutionModel().getFrequencies();
-		likelihoodCore.calculateLogLikelihoods(_targetPartials, freqs, _patternLogLikelihoods);
-
-		double weightedSum = 0.0;
-		for (int p = 0; p < patternCount; p++)
-			weightedSum += alignment.getPatternWeight(p) * _patternLogLikelihoods[p];
-
-		return weightedSum;
+    private void accumulateAgreement(int m, int in, int out, double[] fromPartials, double[] toPartials,
+            double proportion, double uniform) {
+        double fromSum = 0.0;
+        double toSum = 0.0;
+        for (int i = 0; i < stateCount; i++) {
+            double f = 0.0;
+            double t = 0.0;
+            for (int j = 0; j < stateCount; j++) {
+                f += _fromMatrix[m + i * stateCount + j] * fromPartials[in + j];
+                t += _toMatrix[m + i * stateCount + j] * toPartials[in + j];
+            }
+            _fromAtParent[i] = f;
+            _toAtParent[i] = t;
+            fromSum += f;
+            toSum += t;
+        }
+        if (toSum <= EPS || fromSum <= EPS) {
+            for (int i = 0; i < stateCount; i++) {
+                _targetPartials[out + i] += uniform * proportion;
+            }
+        } else {
+            for (int i = 0; i < stateCount; i++) {
+                _targetPartials[out + i] += (_toAtParent[i] / toSum) * (_fromAtParent[i] / fromSum) * proportion;
+            }
+        }
     }
-
-	private void integratePartials(double[] inPartials, double[] proportions, double[] outPartials) {
-		int u = 0;
-		int v = 0;
-		for (int k = 0; k < patternCount; k++) {
-			for (int i = 0; i < stateCount; i++) {
-				outPartials[u] = inPartials[v] * proportions[0];
-				u++;
-				v++;
-			}
-		}
-
-		for (int l = 1; l < matrixCount; l++) {
-			u = 0;
-			for (int k = 0; k < patternCount; k++) {
-				for (int i = 0; i < stateCount; i++) {
-					outPartials[u] += inPartials[v] * proportions[l];
-					u++;
-					v++;
-				}
-			}
-		}
-	}
 
 	/**
 	 * Determine the effective parent height for `toNode` when the current ignored node
