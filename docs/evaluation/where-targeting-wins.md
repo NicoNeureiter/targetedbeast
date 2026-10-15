@@ -1809,7 +1809,7 @@ nodes were first hashed. Fast tier, `partial_fixed0p2`: `targetedWilsonBalding` 
 `TargetedWilsonBaldingFixedHeight` and `TargetedWide` already rebuilt only what they read.
 
 **Reruns.** `pca_vs_constant` is being rerun on the fixed code. The `PartialWeights` sweep
-(`partial_sweep`, ~16 CPU-hours) needs rerunning too if its results are still wanted.
+(`partial_sweep`, ~8–10 CPU-hours) needs rerunning too if its results are still wanted.
 
 Editing `datasets.yaml` or the renderer makes Snakemake treat existing cells, including the shared
 checkpoint, as out of date. If their rendered XML is unchanged, mark them current with
