@@ -71,5 +71,6 @@ open module targetedbeast {
         targetedbeast.weighttransform.PowerOffsetTransform,
         targetedbeast.weighttransform.RatioGridTuner,
         targetedbeast.weighttransform.SpsaTuner,
-        targetedbeast.weighttransform.TreeJumpFunction;
+        targetedbeast.weighttransform.TreeJumpFunction,
+        targetedbeast.weighttransform.KuhnerFelsensteinMetric;
 }

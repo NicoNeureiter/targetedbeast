@@ -34,6 +34,7 @@
         <provider classname="targetedbeast.weighttransform.PowerOffsetTransform"/>
         <provider classname="targetedbeast.weighttransform.ExpOffsetTransform"/>
         <provider classname="targetedbeast.weighttransform.TreeJumpFunction"/>
+        <provider classname="targetedbeast.weighttransform.KuhnerFelsensteinMetric"/>
 
         <provider classname="targetedbeast.init.ensureNoZeroEdgeLength"/>
 
