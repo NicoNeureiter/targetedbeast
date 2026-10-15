@@ -46,6 +46,7 @@ open module targetedbeast {
         targetedbeast.edgeweights.PartialWeights,
         targetedbeast.edgeweights.ThreadedPartialWeights,
         targetedbeast.edgeweights.SourceTargetWeights,
+        targetedbeast.edgeweights.BranchLengthWeights,
         targetedbeast.init.ensureNoZeroEdgeLength,
         targetedbeast.likelihood.RapidGenericTreeLikelihood,
         targetedbeast.likelihood.RapidTreeLikelihood,

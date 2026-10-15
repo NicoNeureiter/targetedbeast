@@ -39,6 +39,7 @@ import beast.base.spec.evolution.substitutionmodel.Frequencies;
 import beast.base.spec.evolution.substitutionmodel.HKY;
 import beast.base.spec.inference.operator.ScaleOperator;
 import beast.base.spec.inference.parameter.RealScalarParam;
+import targetedbeast.edgeweights.BranchLengthWeights;
 import targetedbeast.edgeweights.ConstantWeights;
 import targetedbeast.edgeweights.EdgeWeights;
 import targetedbeast.edgeweights.PCAWeights2;
@@ -199,6 +200,22 @@ public class EdgeWeightOracleTest {
 
 		public EdgeWeights fresh(Model m, Tree t) {
 			return PARTIAL.fresh(m, t);
+		}
+	};
+
+	static final WeightsFactory LENGTH = new WeightsFactory() {
+		public Distribution liveLikelihood(Model m, Tree t) {
+			return m.likelihood(t, false);
+		}
+
+		public EdgeWeights live(Model m, Tree t, Distribution l) {
+			return fresh(m, t);
+		}
+
+		public EdgeWeights fresh(Model m, Tree t) {
+			BranchLengthWeights w = new BranchLengthWeights();
+			w.initByName("tree", t);
+			return w;
 		}
 	};
 
@@ -391,6 +408,11 @@ public class EdgeWeightOracleTest {
 	@Test
 	public void testPCASourcePartialTarget() throws Exception {
 		assertClean(sourceTarget(PCA, THREADED_PARTIAL));
+	}
+
+	@Test
+	public void testLengthSourcePCATarget() throws Exception {
+		assertClean(sourceTarget(LENGTH, PCA));
 	}
 
 	@Test

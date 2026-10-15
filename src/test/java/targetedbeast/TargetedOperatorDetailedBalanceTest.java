@@ -897,6 +897,23 @@ public class TargetedOperatorDetailedBalanceTest extends DetailedBalanceTest<Tre
         }));
     }
 
+    /** Source weights length^2 (BranchLengthWeights through the edge transform's exponent), PCA targets. */
+    @Test
+    public void testTargWilsonBaldingLengthSourceExponent() throws Exception {
+        testDetailedBalance(new TreeTrial(tree -> {
+            targetedbeast.edgeweights.BranchLengthWeights lengths = new targetedbeast.edgeweights.BranchLengthWeights();
+            lengths.initByName("tree", tree);
+            targetedbeast.edgeweights.SourceTargetWeights weights = new targetedbeast.edgeweights.SourceTargetWeights();
+            weights.initByName("source", lengths, "target", getPCAWeights(tree));
+            targetedbeast.weighttransform.PowerOffsetTransform transform =
+                    new targetedbeast.weighttransform.PowerOffsetTransform();
+            transform.initByName("exponent", 2.0, "offset", 0.0, "optimise", false);
+            TreeOperator operator = new TargetedWilsonBalding();
+            operator.initByName("tree", tree, "weight", 1.0, "edgeWeights", weights, "edgeWeightTransform", transform);
+            return operator;
+        }));
+    }
+
     @Test
     public void testRangeSlideSourceTransform() throws Exception {
         testDetailedBalance(new TreeTrial(tree -> {
