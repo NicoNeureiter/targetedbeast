@@ -2091,3 +2091,51 @@ height −31.4%*.
 - **With `PartialWeights` targets, c = 0.5 removes the topology cost** that c = 1 had against PCA
   source weights, keeping about two-thirds of the branch-length gain and half the height gain.
 - Posterior means agree with `pca` at every exponent.
+
+## Grid-tuning the source exponent c and the `PartialWeights` exponent b
+
+Two `GridTuner`s, one per transform, with `PartialWeights` targets and `BranchLengthWeights`
+sources: b over 0.1, 0.2, 0.35, 0.5, 0.75, 1 and c over 0.25, 0.5, 0.75, 1, 1.5 (c = 2 collapsed
+topology mixing in the fixed sweep), `explorationProb="0.1"`, burnin 5,000 proposals, and a fixed
+source offset of 0.03 so that zero-length edges keep a positive weight. Two rewards: squared
+likelihood jump (`partial_thr_srclen_grid`) and squared KF distance jump
+(`partial_thr_srclen_grid_kf`, `TreeJumpFunction` over the new in-chain `KuhnerFelsensteinMetric`).
+Target `length_grid_partial`, 4 reps, all cells pass the ESS gate, posterior means agree with
+`pca`. Paired, t-based 90% CI, n=4, vs fixed c = 0.5, b = 0.5 (`partial_thr_srclen0p5`); * = CI
+excludes 0:
+
+| metric | grid, likelihood reward | grid, KF reward | fixed c = 1 |
+|---|---|---|---|
+| runtime | −6.7% * | −1.3% * | −6.8% * |
+| `treeESS_p10_rf` | −4.4% | −9.6% | −15.3% * |
+| `treeESS_median_rf` | −4.3% | −7.4% | −10.0% |
+| `treeESS_p10_kf` | +3.4% | +19.5% * | +10.0% |
+| `tree.height.ESS` | +17.8% | +71.9% * | +35.8% |
+| `posterior.ESS` | −21.0% | −5.6% | −29.4% |
+| `treeESS_p10_rf` per hour | +2.3% | −8.4% | −9.3% |
+| `treeESS_p10_kf` per hour | +10.8% | +21.1% * | +17.9% * |
+| `tree.height.ESS` per hour | +26.3% | +74.3% * | +45.7% * |
+| `posterior.ESS` per hour | −15.4% | −4.3% | −24.4% |
+
+Where the tuners settled (most frequent leader over the second half of each chain), and the final
+mean reward per grid point:
+
+- **Likelihood reward: no signal.** Rewards differ by less than the noise (c: 0.118–0.144, b:
+  0.121–0.164 within each rep), and the leaders scatter across reps (c: 0.25, 1, 0.75, 0.5; b: 0.2,
+  0.35, 0.5, 0.35). The run is in effect a near-uniform mixture over the grid, and lands between
+  fixed c = 0.5 and c = 1.
+- **KF reward: c is driven to the top of the grid.** c = 1.5 leads in all four reps, with the reward
+  rising monotonically in c (≈0.08 at 0.25 to ≈0.37 at 1.5). b stays flat (0.244–0.266) and leads at
+  0.2 in three reps. The result beats fixed c = 1 on branch lengths and tree height, at a topology
+  cost (RF −10%, CI includes 0).
+- **The KF reward rewards branch-length moves without limit.** Its optimum here is the grid's upper
+  edge; with c = 2 allowed it would most likely have chosen the setting that halves topology ESS.
+  A per-proposal jump reward picks a point on the topology-versus-heights trade-off rather than
+  balancing it, so the grid's bounds do much of the work.
+
+**Fixed in the process.** MCMC calls `optimize()` only on some steps (not during pre-burnin, not on
+logging steps, not in debug mode) but `startProposal()` on all, so `TreeJumpFunction`'s
+alternating-call protocol drifted out of phase. Tree-jump rewards now implement `ProposalReward`
+(`beginProposal()` at the start of a proposal, `jump()` when MCMC reports the outcome), so a skipped
+outcome only means a fresh snapshot. `pca_grid_mid_rnni` above ran with the old protocol and its
+rewards are unreliable; the likelihood reward reads a state value and was never affected.
