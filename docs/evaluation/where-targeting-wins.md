@@ -1808,8 +1808,31 @@ nodes were first hashed. Fast tier, `partial_fixed0p2`: `targetedWilsonBalding` 
 `targetedRangeSlide` −46%, whole chain −13%; for `PCAWeights2` the rebuild is too cheap to matter.
 `TargetedWilsonBaldingFixedHeight` and `TargetedWide` already rebuilt only what they read.
 
-**Reruns.** `pca_vs_constant` is being rerun on the fixed code. The `PartialWeights` sweep
-(`partial_sweep`, ~8–10 CPU-hours) needs rerunning too if its results are still wanted.
+**Reruns.** The `PartialWeights` sweep (`partial_sweep`, ~8–10 CPU-hours) needs rerunning if its
+results are still wanted.
+
+## `PCAWeights2` vs `ConstantWeights` on the final code
+
+`snakemake pca_vs_constant` rerun after all three cache fixes and the trimming (through
+`8bbdc3e`), `thorough` tier, 8 reps, from a shared checkpoint rebuilt on that code. All 16 cells
+pass the ESS gate. `pca` − `constant`, paired, t-based 90% CI, n=8:
+
+| metric | difference |
+|---|---|
+| `treeESS_p10_rf` (topology) | **+31.4%**, (+22, +50), excludes 0 |
+| `treeESS_median_rf` | +27.4%, excludes 0 |
+| `treeESS_p10_kf` (branch lengths) | **+53.7%**, (+97, +189), excludes 0 |
+| `tree.height.ESS` | +58.9%, excludes 0 |
+| `posterior.ESS` | +28.6%, (+1, +115), excludes 0 |
+| `esjd_rnni_targeted` | +7.9%, excludes 0 |
+| `esjdPerSec_rnni_targeted` | +11.7%, excludes 0 |
+| `esjd_rnni` (chain) | +2.0%, CI includes 0 |
+| `esjdPerSec_rnni` (chain) | +3.7%, CI includes 0 |
+
+Targeting with `PCAWeights2` improves mixing on every ESS-type metric, posterior ESS included, and
+per CPU-second. The magnitudes moved against the invalidated run (topology ESS +47% → +31%,
+branch-length ESS +38% → +54%), so the bugs shifted the size of the effect, not its direction.
+Chain-level RNNI ESJD barely registers it, for the reason found above.
 
 Editing `datasets.yaml` or the renderer makes Snakemake treat existing cells, including the shared
 checkpoint, as out of date. If their rendered XML is unchanged, mark them current with
