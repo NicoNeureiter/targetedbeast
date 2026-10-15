@@ -527,43 +527,50 @@ public class PartialWeights extends Distribution implements EdgeWeights {
 
 	@Override
 	public double[] getTargetWeightsInteger(int fromNodeNr, List<Integer> toNodeNrs) {
+		return finishWeights(rawScores(fromNodeNr, toNodeNrs));
+	}
 
+	/**
+	 * Agreement log-likelihood of attaching fromNode above each candidate, at the candidate's own
+	 * height without fromNode; negative infinity for candidates whose edge ends below fromNode.
+	 * Scores of disjoint pattern sets add, which is what ThreadedPartialWeights relies on.
+	 */
+	double[] rawScores(int fromNodeNr, List<Integer> toNodeNrs) {
 		// Use conventional partials for the fromNode (the same for all toNodes)
         Node fromNode = treeInput.get().getNode(fromNodeNr);
 		double[] fromPartials = getPartials(fromNodeNr);
 
-        // Compute the potential likelihood for all toNode candidates
-		double[] weights = new double[toNodeNrs.size()];
+		double[] scores = new double[toNodeNrs.size()];
 		for (int k = 0; k < toNodeNrs.size(); k++) {
-			int toNodeNr = toNodeNrs.get(k);
-            Node toNode = resolveScoringNode(treeInput.get().getNode(toNodeNr), fromNode);
+            Node toNode = resolveScoringNode(treeInput.get().getNode(toNodeNrs.get(k)), fromNode);
 
             // Cannot move to edges that end below fromNode
             double parentHeight = toNode.isRoot() ? Double.POSITIVE_INFINITY : toNode.getParent().getHeight();
             if (parentHeight <= fromNode.getHeight()) {
-                weights[k] = Double.NEGATIVE_INFINITY;
+                scores[k] = Double.NEGATIVE_INFINITY;
                 continue;
             }
 
             // Use partialsWithoutNode (excludes fromNodeNr's contribution)
 			double[] toPartials = getPartialsWithoutNode(toNode.getNr());
 			double newHeight = getToHeightWithoutNode(toNode, fromNode);
-
-			// // Compute the full proposed tree log-likelihood
-			double toWeight = computePartialsAgreement(fromNode, toNode, fromPartials, toPartials, newHeight);
-			weights[k] = EPS + toWeight / 2.0; // division by two to counteract squaring of probabilities in the operators
-            // double partialDistance = getAveragePartialDiff(fromPartials, toPartials);
-            // weights[k] = 1. / partialDistance;
+			scores[k] = computePartialsAgreement(fromNode, toNode, fromPartials, toPartials, newHeight);
 		}
+		return scores;
+	}
 
+	/** Raw scores into target weights: halved, clipped, and softmaxed unless in log space. */
+	double[] finishWeights(double[] rawScores) {
+		double[] weights = new double[rawScores.length];
+		for (int k = 0; k < weights.length; k++) {
+			// division by two to counteract squaring of probabilities in the operators
+			weights[k] = rawScores[k] == Double.NEGATIVE_INFINITY ? Double.NEGATIVE_INFINITY : EPS + rawScores[k] / 2.0;
+		}
         weights = clipMaxToSecondMaxDiff(weights, 2.);
         // In log-space mode a WeightTransform performs the exponentiation instead, with an
         // adaptable temperature; normalize(softmax(x)^b) == softmax(b*x), so the two modes
         // differ only in who chooses b.
         return logSpaceInput.get() ? weights : softmax(weights);
-
-        // weights = clipMaxToSecondMaxRatio(weights, 10.);
-        // return weights;
 	}
 
 	/**
@@ -647,7 +654,11 @@ public class PartialWeights extends Distribution implements EdgeWeights {
     }
 
 	public double[] getTargetWeightsInteger(int fromNodeNr, List<Integer> toNodeNrs, double newHeight) {
+		return finishWeights(rawScoresAtHeight(fromNodeNr, toNodeNrs, newHeight));
+	}
 
+	/** {@link #rawScores} with every candidate attached at the same height. */
+	double[] rawScoresAtHeight(int fromNodeNr, List<Integer> toNodeNrs, double newHeight) {
 		// Use conventional partials for the fromNode (the same for all toNodes)
         Node fromNode = treeInput.get().getNode(fromNodeNr);
         double[] fromPartials = getPartials(fromNodeNr);
@@ -660,19 +671,7 @@ public class PartialWeights extends Distribution implements EdgeWeights {
 			toNodes.add(toNode);
 			toPartials.add(getPartialsWithoutNode(toNode.getNr())); // excludes fromNodeNr's contribution
 		}
-		double[] weights = scoreAtSharedHeight(fromNode, fromPartials, toNodes, toPartials, newHeight);
-		for (int k = 0; k < weights.length; k++) {
-			weights[k] = EPS + weights[k] / 2.0; // division by two to counteract squaring of probabilities in the operators
-		}
-
-        weights = clipMaxToSecondMaxDiff(weights, 2.);
-        // In log-space mode a WeightTransform performs the exponentiation instead, with an
-        // adaptable temperature; normalize(softmax(x)^b) == softmax(b*x), so the two modes
-        // differ only in who chooses b.
-        return logSpaceInput.get() ? weights : softmax(weights);
-
-        // weights = clipMaxToSecondMaxRatio(weights, 10.);
-        // return weights;
+		return scoreAtSharedHeight(fromNode, fromPartials, toNodes, toPartials, newHeight);
 	}
 
     public double getAveragePartialDiff(double[] fromPartial, double[] toPartial) {
