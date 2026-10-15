@@ -1987,3 +1987,56 @@ for the rest); by median they are +8–9%.
 - **Partial-informed source weights look unnecessary**: the cheap branch-length weighting is the
   best of the three. The open question is the reverse: whether `pca`'s own source weights should be
   branch lengths too.
+
+## Mixing source weights towards branch lengths
+
+The edge transform's offset can now mix towards branch lengths instead of the uniform
+(`offsetBase="branchLength"`): offset a gives the normalised lengths weight a/(1+a) in the source
+distribution. With `PowerOffsetTransform` at exponent 1, `optimise="false"`: a = 0 (unmixed), 1 (50%
+length) and 100 (the offset's upper bound, 99% length). The plain `Range` slide is not given the
+transform and keeps its raw source weights. 4 reps, same seeds, all cells pass the ESS gate. Paired,
+t-based 90% CI, n=4; * = CI excludes 0.
+
+**`PCAWeights2` targets on BEAGLE** (`source_mix_pca`), vs `pca_srcmix0` (PCA source, a = 0, same
+session):
+
+| metric | 50% length | 99% length |
+|---|---|---|
+| runtime | −2.8% | −4.4% * |
+| `treeESS_p10_rf` | −14.4% | −3.0% |
+| `treeESS_median_rf` | −5.9% | +4.4% * |
+| `treeESS_p10_kf` | +14.5% | +35.5% * |
+| `tree.height.ESS` | +44.2% * | +81.2% * |
+| `posterior.ESS` | −7.3% | +1.3% |
+| `treeESS_p10_rf` per hour | −11.9% | +1.3% |
+| `treeESS_p10_kf` per hour | +18.1% | +41.8% * |
+| `tree.height.ESS` per hour | +48.7% * | +89.6% * |
+| `posterior.ESS` per hour | −4.3% | +6.1% |
+
+**`PartialWeights` targets at b = 0.5** (`source_mix_partial`), vs `partial_thr_src_pca` (PCA
+source, a = 0); `partial_thr_fixed0p5` has branch length + 0.1 as source:
+
+| metric | 50% length | 99% length | length + 0.1 |
+|---|---|---|---|
+| runtime | −7.5% | −12.3% | −12.9% |
+| `treeESS_p10_rf` | −2.4% | −15.7% * | −6.7% |
+| `treeESS_median_rf` | −1.0% | −13.8% * | −5.1% |
+| `treeESS_p10_kf` | +24.1% * | +35.5% * | +36.0% * |
+| `tree.height.ESS` | +67.5% * | +104.3% * | +104.3% * |
+| `posterior.ESS` | +20.4% | −17.7% | +7.8% |
+| `treeESS_p10_rf` per hour | +3.8% | −5.4% | +6.2% |
+| `treeESS_p10_kf` per hour | +31.2% * | +51.0% * | +52.8% * |
+| `tree.height.ESS` per hour | +77.6% * | +128.7% * | +130.3% * |
+| `posterior.ESS` per hour | +30.8% | −6.2% | +24.9% |
+
+(`partial_thr_src_pca` includes one slow cell, 718 s against 550–590 s, which inflates its runtime.)
+
+- **Branch-length source weights help `pca` too**, and per hour: tree-height ESS +90% and KF tree
+  ESS +42% at 99% length, topology unchanged. Pure length beats the even mix on every metric.
+- **The 0.1 offset does not matter.** 99% length (no offset) and length + 0.1 agree within noise
+  for `PartialWeights` targets (KF −0.4%, height +0.0%, RF −10% with CI including 0).
+- **With `PartialWeights` targets there is a mild topology trade-off**: at 99% length RF tree ESS
+  is 14–16% below PCA source (CI excludes 0); the even mix keeps topology (−2%) and still gains
+  KF +24% and height +68%. With `PCAWeights2` targets no such trade-off shows.
+- `pca_srcmix0` (the identity transform) does not reproduce the earlier `pca` cells step for step
+  from the same seeds; posterior means agree. Only same-session cells are compared above.
