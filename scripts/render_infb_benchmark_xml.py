@@ -164,6 +164,7 @@ EDGE_WEIGHTS_XML = {
     **{f"pca_srclen{k}": edge_weights_source_target("length", "pca") for k in LENGTH_EXPONENTS},
     **{f"partial_thr_srclen{k}": edge_weights_source_target("length") for k in LENGTH_EXPONENTS},
     "partial_thr_srclen_grid": edge_weights_source_target("length"),
+    "partial_thr_srclen_grid_kf": edge_weights_source_target("length"),
     # PCA source weights mixed towards branch lengths (EDGE_WEIGHT_TRANSFORM_FOR_SETTING); with
     # PartialWeights targets, mix 0 is partial_thr_src_pca.
     **{f"pca_srcmix{k}": EDGE_WEIGHTS_PCA for k in LENGTH_MIX_OFFSETS},
@@ -222,6 +223,31 @@ OFFSET_MIXTURE_0_1 = 1.0 / 9.0
 GRID_EXPONENTS_LENGTH = [0.25, 0.5, 0.75, 1.0, 1.5]
 GRID_EXPONENTS_PARTIAL = [0.1, 0.2, 0.35, 0.5, 0.75, 1.0]
 LENGTH_GRID_OFFSET = 0.03
+
+# GridTuner rewards: squared likelihood jump, or squared KF (branch score) distance jump across a
+# proposal. Each tuner needs its own TreeJumpFunction, which pairs its before/after calls.
+GRID_REWARDS = {
+    "likelihood": '<reward idref="likelihood"/>',
+    "kf": ('<reward spec="targetedbeast.weighttransform.TreeJumpFunction" tree="@tree">'
+           '<treeMetric spec="targetedbeast.weighttransform.KuhnerFelsensteinMetric"/></reward>'),
+}
+
+
+def grid_partial_transform(reward: str) -> tuple[str, str, str]:
+    """PartialWeights' target exponent b, grid-tuned over the range the fixed sweep found useful."""
+    return (
+        '<targetWeightTransform id="targetWeightTransform"'
+        ' spec="targetedbeast.weighttransform.PowerOffsetTransform"'
+        f' exponent="0.5" offset="0.0" maxExponent="{max(GRID_EXPONENTS_PARTIAL)}">\n'
+        '            <tuner spec="targetedbeast.weighttransform.GridTuner"'
+        f' exponents="{" ".join(str(b) for b in GRID_EXPONENTS_PARTIAL)}"'
+        f' explorationProb="0.1" burnin="{GRID_BURNIN}">\n'
+        f'                {GRID_REWARDS[reward]}\n'
+        '            </tuner>\n'
+        '        </targetWeightTransform>',
+        ' targetWeightTransform="@targetWeightTransform"',
+        '<log idref="targetWeightTransform"/>',
+    )
 
 # Same mixture-weight solve as OFFSET_MIXTURE_0_1, but for a 0.05 floor instead of 0.1: solving
 # a/(1+a) = 0.05 for a. Used by "grid_mid_ratio" below; does not replace OFFSET_MIXTURE_0_1, which
@@ -331,20 +357,8 @@ WEIGHT_TRANSFORM_XML = {
         ' targetWeightTransform="@targetWeightTransform"',
         '<log idref="targetWeightTransform"/>',
     ),
-    # PartialWeights' target exponent b, grid-tuned over the range the fixed sweep found useful.
-    "grid_partial": (
-        '<targetWeightTransform id="targetWeightTransform"'
-        ' spec="targetedbeast.weighttransform.PowerOffsetTransform"'
-        f' exponent="0.5" offset="0.0" maxExponent="{max(GRID_EXPONENTS_PARTIAL)}">\n'
-        '            <tuner spec="targetedbeast.weighttransform.GridTuner"'
-        f' exponents="{" ".join(str(b) for b in GRID_EXPONENTS_PARTIAL)}"'
-        f' explorationProb="0.1" burnin="{GRID_BURNIN}">\n'
-        '                <reward idref="likelihood"/>\n'
-        '            </tuner>\n'
-        '        </targetWeightTransform>',
-        ' targetWeightTransform="@targetWeightTransform"',
-        '<log idref="targetWeightTransform"/>',
-    ),
+    "grid_partial": grid_partial_transform("likelihood"),
+    "grid_partial_kf": grid_partial_transform("kf"),
     # Pinned exponents, no tuner: optimise="false" makes startProposal()/optimize() no-ops. fixed2
     # is the reference point (see "pca_fixed2" above) - w^2 with zero offset, identical to the
     # no-transform path.
@@ -375,6 +389,7 @@ WEIGHT_TRANSFORM_FOR_SETTING = {
     **{f"pca_srclen{k}": "none" for k in LENGTH_EXPONENTS},
     **{f"partial_thr_srclen{k}": "fixed0p5" for k in LENGTH_EXPONENTS},
     "partial_thr_srclen_grid": "grid_partial",
+    "partial_thr_srclen_grid_kf": "grid_partial_kf",
     **{f"pca_srcmix{k}": "none" for k in LENGTH_MIX_OFFSETS},
     **{f"partial_thr_srcmix{k}": "fixed0p5" for k in LENGTH_MIX_OFFSETS if k != "0"},
     "pca_grid_mid_rnni": "grid_mid_rnni",
@@ -402,7 +417,7 @@ def length_exponent_edge_transform(exponent: str) -> tuple[str, str, str]:
     )
 
 
-def length_grid_edge_transform() -> tuple[str, str, str]:
+def length_grid_edge_transform(reward: str = "likelihood") -> tuple[str, str, str]:
     return (
         '<edgeWeightTransform id="edgeWeightTransform"'
         ' spec="targetedbeast.weighttransform.PowerOffsetTransform"'
@@ -410,7 +425,7 @@ def length_grid_edge_transform() -> tuple[str, str, str]:
         '            <tuner spec="targetedbeast.weighttransform.GridTuner"'
         f' exponents="{" ".join(str(c) for c in GRID_EXPONENTS_LENGTH)}"'
         f' explorationProb="0.1" burnin="{GRID_BURNIN}">\n'
-        '                <reward idref="likelihood"/>\n'
+        f'                {GRID_REWARDS[reward]}\n'
         '            </tuner>\n'
         '        </edgeWeightTransform>',
         ' edgeWeightTransform="@edgeWeightTransform"',
@@ -433,6 +448,7 @@ EDGE_WEIGHT_TRANSFORM_XML = {
     **{f"lenmix{k}": length_mix_edge_transform(a) for k, a in LENGTH_MIX_OFFSETS.items()},
     **{f"lenexp{k}": length_exponent_edge_transform(c) for k, c in LENGTH_EXPONENTS.items()},
     "lengrid": length_grid_edge_transform(),
+    "lengrid_kf": length_grid_edge_transform("kf"),
     "grid_mid": (
         '<edgeWeightTransform id="edgeWeightTransform"'
         ' spec="targetedbeast.weighttransform.PowerOffsetTransform"'
@@ -477,6 +493,7 @@ EDGE_WEIGHT_TRANSFORM_FOR_SETTING = {
     **{f"pca_srclen{k}": f"lenexp{k}" for k in LENGTH_EXPONENTS},
     **{f"partial_thr_srclen{k}": f"lenexp{k}" for k in LENGTH_EXPONENTS},
     "partial_thr_srclen_grid": "lengrid",
+    "partial_thr_srclen_grid_kf": "lengrid_kf",
     **{f"partial_thr_srcmix{k}": f"lenmix{k}" for k in LENGTH_MIX_OFFSETS if k != "0"},
     "pca_grid_mid_dual": "grid_mid",
     "pca_grid_mid_ratio": "grid_mid_ratio",

@@ -339,10 +339,10 @@ rule length_exponent_partial:
         concat_tsv(input, output.summary)
 
 
-# Source exponent c and PartialWeights' target exponent b grid-tuned together, against the fixed
-# settings around them. Run with --cores 4.
+# Source exponent c and PartialWeights' target exponent b grid-tuned together, on a likelihood-jump
+# and on a KF-distance-jump reward, against the fixed settings around them. Run with --cores 4.
 LENGTH_GRID_PARTIAL_SETTINGS = ["partial_thr_src_pca", "partial_thr_srcmixlen", "partial_thr_srclen0p5",
-                                "partial_thr_srclen_grid"]
+                                "partial_thr_srclen_grid", "partial_thr_srclen_grid_kf"]
 
 
 rule length_grid_partial:
