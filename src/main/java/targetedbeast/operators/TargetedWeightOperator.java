@@ -93,6 +93,11 @@ public abstract class TargetedWeightOperator extends TreeOperator {
 		// getEdgeWeights is real-space by contract in every implementation, and where the
 		// source weights are branch lengths they are real-space too, so a log-space transform
 		// is never correct on this side.
+		// Target vectors reach the transform without their nodes, so it cannot be given lengths.
+		if (targetWeightTransform != null && targetWeightTransform.offsetTowardsBranchLength()) {
+			throw new IllegalArgumentException(describe() + ": offsetBase='branchLength' is only "
+					+ "supported on edgeWeightTransform");
+		}
 		if (edgeWeightTransform != null && edgeWeightTransform.requiresLogSpace()) {
 			throw new IllegalArgumentException(describe() + ": edgeWeightTransform must be a "
 					+ "real-space transform; source edge weights are never in log space");
@@ -174,7 +179,15 @@ public abstract class TargetedWeightOperator extends TreeOperator {
 	 * @return a new array; {@code raw} is not modified
 	 */
 	protected double[] applyEdgeTransform(double[] raw) {
-		return edgeWeightTransform == null ? raw.clone() : edgeWeightTransform.apply(raw);
+		return applyEdgeTransform(raw, null);
+	}
+
+	/** As {@link #applyEdgeTransform(double[])}, with the candidates' branch lengths for a branch-length offset. */
+	private double[] applyEdgeTransform(double[] raw, double[] lengths) {
+		if (edgeWeightTransform == null) {
+			return raw.clone();
+		}
+		return edgeWeightTransform.apply(raw, edgeWeightTransform.offsetTowardsBranchLength() ? lengths : null);
 	}
 
 	/**
@@ -190,6 +203,8 @@ public abstract class TargetedWeightOperator extends TreeOperator {
 		int[] nodeNrs = new int[nodeCount];
 		double[] raw = new double[nodeCount];
 
+		double[] lengths = new double[nodeCount];
+
 		int m = 0;
 		for (int nodeNr = 0; nodeNr < nodeCount; nodeNr++) {
 			Node node = tree.getNode(nodeNr);
@@ -198,10 +213,12 @@ public abstract class TargetedWeightOperator extends TreeOperator {
 			}
 			nodeNrs[m] = nodeNr;
 			raw[m] = rawWeight.applyAsDouble(node);
+			lengths[m] = node.getLength();
 			m++;
 		}
 
-		return new SourceWeights(Arrays.copyOf(nodeNrs, m), applyEdgeTransform(Arrays.copyOf(raw, m)));
+		return new SourceWeights(Arrays.copyOf(nodeNrs, m),
+				applyEdgeTransform(Arrays.copyOf(raw, m), Arrays.copyOf(lengths, m)));
 	}
 
 	/** A source-weight vector over the feasible nodes only. */

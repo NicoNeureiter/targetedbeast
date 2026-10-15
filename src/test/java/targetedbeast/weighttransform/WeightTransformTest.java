@@ -64,6 +64,30 @@ public class WeightTransformTest {
 	}
 
 	/** apply() must not modify its argument. */
+	/** With offsetBase="branchLength" the offset mixes towards the normalised lengths instead. */
+	@Test
+	public void branchLengthOffsetMixesTowardsLengths() {
+		double[] raw = { 0.4, 1.7, 0.05, 3.0 };
+		double[] lengths = { 2.0, 0.5, 1.0, 0.1 };
+		double a = 0.35;
+		PowerOffsetTransform t = new PowerOffsetTransform();
+		t.initByName("exponent", 1.0, "offset", a, "offsetBase", "branchLength", "optimise", false);
+
+		double[] got = normalize(t.apply(raw, lengths));
+		double[] normU = normalize(raw);
+		double[] normL = normalize(lengths);
+		for (int i = 0; i < raw.length; i++) {
+			Assert.assertEquals((a / (1.0 + a)) * normL[i] + (1.0 / (1.0 + a)) * normU[i], got[i], TOL);
+		}
+	}
+
+	@Test(expected = IllegalStateException.class)
+	public void branchLengthOffsetRequiresLengths() {
+		PowerOffsetTransform t = new PowerOffsetTransform();
+		t.initByName("exponent", 1.0, "offset", 1.0, "offsetBase", "branchLength", "optimise", false);
+		t.apply(new double[] { 1.0, 2.0 });
+	}
+
 	@Test
 	public void applyDoesNotMutateInput() {
 		double[] raw = { 0.4, 1.7, 0.05, 3.0 };

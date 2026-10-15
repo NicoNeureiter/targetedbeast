@@ -40,6 +40,10 @@ public abstract class WeightTransform extends BEASTObject implements Loggable {
 					+ "resulting proposal is a mixture with weight a/(1+a) on the uniform. The "
 					+ "default of 0 means no uniform mixture at all",
 			0.0);
+	final public Input<String> offsetBaseInput = new Input<>("offsetBase",
+			"distribution the offset mixes towards: 'uniform', or 'branchLength' for weights "
+					+ "proportional to the candidate edges' lengths. branchLength needs the operator to "
+					+ "supply the lengths, which only the source-edge side does", "uniform");
 	final public Input<Double> maxExponentInput = new Input<>("maxExponent",
 			"upper bound on the pointiness coefficient b. This is what keeps the family of "
 					+ "fixed-coefficient kernels compact, which the diminishing-adaptation "
@@ -75,6 +79,10 @@ public abstract class WeightTransform extends BEASTObject implements Loggable {
 					+ LOWER_BOUND[EXPONENT] + ", got " + maxExponentInput.get());
 		}
 		upperBound[EXPONENT] = maxExponentInput.get();
+		if (!offsetBaseInput.get().equals("uniform") && !offsetBaseInput.get().equals("branchLength")) {
+			throw new IllegalArgumentException("offsetBase must be 'uniform' or 'branchLength', got '"
+					+ offsetBaseInput.get() + "'");
+		}
 
 		// Must follow the bound assignment, since setCoefficients clamps: a starting exponent
 		// above the default ceiling has to be honoured, not silently pulled back to 20.
@@ -90,6 +98,20 @@ public abstract class WeightTransform extends BEASTObject implements Loggable {
 		tuner.setTransform(this);
 	}
 
+	/** True if the offset mixes towards branch lengths, which the caller must then pass to {@link #apply(double[], double[])}. */
+	public boolean offsetTowardsBranchLength() {
+		return offsetBaseInput.get().equals("branchLength");
+	}
+
+	/**
+	 * Reshape one feasible weight vector, mixing towards the uniform distribution.
+	 *
+	 * @see #apply(double[], double[])
+	 */
+	public final double[] apply(double[] raw) {
+		return apply(raw, null);
+	}
+
 	/**
 	 * Reshape one feasible weight vector.
 	 *
@@ -98,21 +120,37 @@ public abstract class WeightTransform extends BEASTObject implements Loggable {
 	 * entry, so passing an infeasible candidate in as a zero weight would give it positive
 	 * selection probability.
 	 *
+	 * @param base the candidates' branch lengths if {@link #offsetTowardsBranchLength()}, else null
 	 * @return a new array; {@code raw} is not modified
 	 */
-	public final double[] apply(double[] raw) {
+	public final double[] apply(double[] raw, double[] base) {
 		used = true;
+		if (offsetTowardsBranchLength() != (base != null)) {
+			throw new IllegalStateException("offsetBase is '" + offsetBaseInput.get() + "' but branch lengths were "
+					+ (base == null ? "not " : "") + "supplied");
+		}
 		double[] u = pointiness(raw, effective[EXPONENT]);
 
 		double sum = 0.0;
 		for (double x : u) {
 			sum += x;
 		}
-		// Offset relative to the mean, so that it is free of the scale of the raw weights
-		// and invariant to the arbitrary additive constant in log-space weights.
-		double offset = effective[OFFSET] * sum / u.length;
-		for (int k = 0; k < u.length; k++) {
-			u[k] += offset;
+		// Offset relative to the total, so that it is free of the scale of the raw weights
+		// and invariant to the arbitrary additive constant in log-space weights. After
+		// normalisation this is a mixture with weight a/(1+a) on the base distribution.
+		double offset = effective[OFFSET] * sum;
+		if (base == null) {
+			for (int k = 0; k < u.length; k++) {
+				u[k] += offset / u.length;
+			}
+		} else {
+			double baseSum = 0.0;
+			for (double x : base) {
+				baseSum += x;
+			}
+			for (int k = 0; k < u.length; k++) {
+				u[k] += offset * base[k] / baseSum;
+			}
 		}
 		return u;
 	}
