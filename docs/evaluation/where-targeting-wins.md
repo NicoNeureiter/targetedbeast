@@ -1838,3 +1838,48 @@ Editing `datasets.yaml` or the renderer makes Snakemake treat existing cells, in
 checkpoint, as out of date. If their rendered XML is unchanged, mark them current with
 `snakemake <target> --touch` rather than rerunning; a rerun checkpoint changes every cell's
 starting state.
+
+## Threaded `PartialWeights`
+
+`ThreadedPartialWeights` scores each `ThreadedTreeLikelihood` slice in parallel and sums the
+slices' scores, so its weights equal `PartialWeights` on the whole alignment. `snakemake
+partial_threaded` runs it at the sweep's two best exponents (b = 0.2, 0.5) against `pca_thr`
+(`pca` on the same likelihood), all with `-java -threads 2`; `pca` (BEAGLE, one thread) is the
+existing rep 0–3 cells. `thorough` tier, 4 reps, from the shared checkpoint; all 16 cells pass the
+ESS gate. Two threads, because on infB's 489 patterns four gain only 5% more.
+
+```bash
+snakemake -s scripts/Snakefile --cores 4 partial_threaded
+python3 scripts/paired_compare.py runs/infb/thorough/partial_threaded.summary.tsv \
+    --baseline pca_thr --settings partial_thr_fixed0p2 partial_thr_fixed0p5 pca
+```
+
+Per-hour columns are the ESS divided by `runtime_hours`. Paired, t-based 90% CI, n=4, vs `pca_thr`:
+
+| metric | b = 0.2 | b = 0.5 | `pca` (BEAGLE) |
+|---|---|---|---|
+| runtime | +49.5%, excl. 0 | +43.3%, excl. 0 | −17.7%, excl. 0 |
+| `treeESS_p10_rf` (topology) | +4.2% | +4.2% | −4.2%, excl. 0 |
+| `treeESS_p10_kf` (branch lengths) | **+46.7%**, excl. 0 | **+40.1%**, excl. 0 | +5.7% |
+| `tree.height.ESS` | **+94.6%**, excl. 0 | **+119.7%**, excl. 0 | +5.8% |
+| `posterior.ESS` | −13.3% | −18.6% | +28.3%, excl. 0 |
+| `esjd_rnni_targeted` | +11.9% | +7.8% | +1.3% |
+| `treeESS_p10_rf` per hour | −30.6%, excl. 0 | −25.1%, excl. 0 | +16.2%, excl. 0 |
+| `treeESS_p10_kf` per hour | −1.9% | −0.2% | +28.4%, excl. 0 |
+| `tree.height.ESS` per hour | +29.6%, excl. 0 | +56.3%, excl. 0 | +28.3% |
+| `posterior.ESS` per hour | −41.8% | −42.6%, excl. 0 | +56.3%, excl. 0 |
+
+(Unmarked: CI includes 0.)
+
+- **Threading and the earlier optimisations cut the cost from 5–7× to 1.4–1.5×** `pca`'s on the
+  same likelihood (cells of ~9–10 min against ~30–40 min for the unthreaded sweep).
+- **Per step, the gain is in branch lengths and tree height, not topology.** KF tree ESS rises by
+  40–47% and tree-height ESS doubles; RF tree ESS moves by +4%, CI including 0.
+- **Per hour it still loses on topology** (−25–31%) and posterior ESS, breaks even on branch
+  lengths, and wins only on tree height. Against BEAGLE `pca`, the realistic baseline, the gap is
+  larger: BEAGLE alone is 18% faster than the two-thread Java likelihood here. (`pca`'s cells ran
+  in an earlier session, so its runtimes are less comparable than the other three settings'.)
+
+On infB, a BEAGLE PR to expose partials would remove the Java-likelihood penalty but not the
+scoring cost (about a third of `PartialWeights`' time before threading), and the per-step topology
+gain it would have to amplify is not distinguishable from zero.
