@@ -283,6 +283,35 @@ rule source_weights:
         concat_tsv(input, output.summary)
 
 
+# PCA source weights mixed towards branch lengths via the edge transform's offset (0, 50%, 99%).
+# pca_srcmix0 is pca through the same code path, rerun for same-session timing. Run with --cores 4.
+SOURCE_MIX_PCA_SETTINGS = ["pca_srcmix0", "pca_srcmix0p5", "pca_srcmixlen"]
+# The same mixes with PartialWeights targets (b = 0.5); mix 0 is partial_thr_src_pca, and
+# partial_thr_fixed0p5 has branch length + 0.1 as source weights.
+SOURCE_MIX_PARTIAL_SETTINGS = ["partial_thr_fixed0p5", "partial_thr_src_pca", "partial_thr_srcmix0p5",
+                               "partial_thr_srcmixlen"]
+
+
+rule source_mix_pca:
+    input:
+        expand(CELL_DIR + "/cell.summary.tsv", dataset="infb", tier="thorough",
+               setting=SOURCE_MIX_PCA_SETTINGS, rep=reps_for("infb", "thorough")),
+    output:
+        summary=str(RUNS_ROOT / "infb" / "thorough" / "source_mix_pca.summary.tsv"),
+    run:
+        concat_tsv(input, output.summary)
+
+
+rule source_mix_partial:
+    input:
+        expand(CELL_DIR + "/cell.summary.tsv", dataset="infb", tier="thorough",
+               setting=SOURCE_MIX_PARTIAL_SETTINGS, rep=reps_for("infb", "thorough")),
+    output:
+        summary=str(RUNS_ROOT / "infb" / "thorough" / "source_mix_partial.summary.tsv"),
+    run:
+        concat_tsv(input, output.summary)
+
+
 # PCAWeights2's distance norm: 1-norm (pca) vs Euclidean (pca_l2) at exponents 1, 1.5, 2, 3,
 # 8 reps. Explicit target.
 NORM_COMPARE_SETTINGS = ["pca", "pca_l2_fixed1", "pca_l2_fixed1p5", "pca_l2", "pca_l2_fixed3"]

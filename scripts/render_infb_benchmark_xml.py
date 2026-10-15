@@ -72,6 +72,12 @@ SOURCE_WEIGHTS_XML = {
 }
 
 
+# Source weights mixed towards branch lengths through the edge transform's offset: offset a gives
+# weight a/(1+a) to the normalised branch lengths. 0 reproduces the unmixed weights through the same
+# code path, 1 is an even mix, 100 (the offset's upper bound) is 99% branch length.
+LENGTH_MIX_OFFSETS = {"0": "0.0", "0p5": "1.0", "len": "100.0"}
+
+
 def edge_weights_source_target(source: str) -> str:
     return "\n".join([
         SOURCE_WEIGHTS_XML[source],
@@ -143,6 +149,10 @@ EDGE_WEIGHTS_XML = {
     "pca_thr": EDGE_WEIGHTS_PCA,
     **{f"partial_thr_fixed{k}": EDGE_WEIGHTS_PARTIAL_THREADED for k in PARTIAL_THREADED_EXPONENTS},
     **{f"partial_thr_src_{src}": edge_weights_source_target(src) for src in SOURCE_WEIGHTS_XML},
+    # PCA source weights mixed towards branch lengths (EDGE_WEIGHT_TRANSFORM_FOR_SETTING); with
+    # PartialWeights targets, mix 0 is partial_thr_src_pca.
+    **{f"pca_srcmix{k}": EDGE_WEIGHTS_PCA for k in LENGTH_MIX_OFFSETS},
+    **{f"partial_thr_srcmix{k}": edge_weights_source_target("pca") for k in LENGTH_MIX_OFFSETS if k != "0"},
     # PCAWeights2 on Euclidean rather than 1-norm distance in PCA space, at the default exponent
     # and pinned at L2_EXPONENTS.
     "pca_l2": EDGE_WEIGHTS_PCA_L2,
@@ -325,6 +335,8 @@ WEIGHT_TRANSFORM_FOR_SETTING = {
     "pca_thr": "none",
     **{f"partial_thr_fixed{k}": f"fixed{k}" for k in PARTIAL_THREADED_EXPONENTS},
     **{f"partial_thr_src_{src}": "fixed0p5" for src in SOURCE_WEIGHTS_XML},
+    **{f"pca_srcmix{k}": "none" for k in LENGTH_MIX_OFFSETS},
+    **{f"partial_thr_srcmix{k}": "fixed0p5" for k in LENGTH_MIX_OFFSETS if k != "0"},
     "pca_grid_mid_rnni": "grid_mid_rnni",
     "pca_grid_mid_dual": "grid_mid_dual",
     "pca_grid_mid_ratio": "grid_mid_ratio",
@@ -340,8 +352,19 @@ WEIGHT_TRANSFORM_FOR_SETTING = {
 # independent of (not shared with) targetWeightTransform's - same grid and reward as
 # WEIGHT_TRANSFORM_XML's "grid_mid_dual" target transform, but its own id, so the two adapt
 # separately and TargetedWeightOperator.optimize()/startTransformProposal() drive each once.
+def length_mix_edge_transform(offset: str) -> tuple[str, str, str]:
+    return (
+        '<edgeWeightTransform id="edgeWeightTransform"'
+        ' spec="targetedbeast.weighttransform.PowerOffsetTransform"'
+        f' exponent="1.0" offset="{offset}" offsetBase="branchLength" optimise="false"/>',
+        ' edgeWeightTransform="@edgeWeightTransform"',
+        '<log idref="edgeWeightTransform"/>',
+    )
+
+
 EDGE_WEIGHT_TRANSFORM_XML = {
     "none": ("", "", ""),
+    **{f"lenmix{k}": length_mix_edge_transform(a) for k, a in LENGTH_MIX_OFFSETS.items()},
     "grid_mid": (
         '<edgeWeightTransform id="edgeWeightTransform"'
         ' spec="targetedbeast.weighttransform.PowerOffsetTransform"'
@@ -382,6 +405,8 @@ LIKELIHOOD_SPEC_FOR_SETTING = {
 }
 
 EDGE_WEIGHT_TRANSFORM_FOR_SETTING = {
+    **{f"pca_srcmix{k}": f"lenmix{k}" for k in LENGTH_MIX_OFFSETS},
+    **{f"partial_thr_srcmix{k}": f"lenmix{k}" for k in LENGTH_MIX_OFFSETS if k != "0"},
     "pca_grid_mid_dual": "grid_mid",
     "pca_grid_mid_ratio": "grid_mid_ratio",
     "pca_aos_mid": "none",
