@@ -268,6 +268,21 @@ rule partial_threaded:
         concat_tsv(input, output.summary)
 
 
+# Source-edge weights with partial targets (b = 0.5): branch length (partial_thr_fixed0p5), uniform,
+# PCA distance. Explicit target; run with --cores 4.
+SOURCE_WEIGHTS_SETTINGS = ["pca_thr", "partial_thr_fixed0p5", "partial_thr_src_uniform", "partial_thr_src_pca"]
+
+
+rule source_weights:
+    input:
+        expand(CELL_DIR + "/cell.summary.tsv", dataset="infb", tier="thorough",
+               setting=SOURCE_WEIGHTS_SETTINGS, rep=reps_for("infb", "thorough")),
+    output:
+        summary=str(RUNS_ROOT / "infb" / "thorough" / "source_weights.summary.tsv"),
+    run:
+        concat_tsv(input, output.summary)
+
+
 # PCAWeights2's distance norm: 1-norm (pca) vs Euclidean (pca_l2) at exponents 1, 1.5, 2, 3,
 # 8 reps. Explicit target.
 NORM_COMPARE_SETTINGS = ["pca", "pca_l2_fixed1", "pca_l2_fixed1p5", "pca_l2", "pca_l2_fixed3"]

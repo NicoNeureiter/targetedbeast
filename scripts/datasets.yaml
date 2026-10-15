@@ -61,16 +61,19 @@ infb:
   extra_settings: [pca_grid_mid, pca_aos_mid, pca_fixed1, pca_fixed1p5, pca_fixed3, pca_fixed4,
                    pca_fixed6, pca_fixed8, pca_l2, pca_l2_fixed1, pca_l2_fixed1p5, pca_l2_fixed3,
                    pca_nt, partial, partial_fixed0p1, partial_fixed0p2, partial_fixed0p5,
-                   partial_fixed1, pca_thr, partial_thr_fixed0p2, partial_thr_fixed0p5]
+                   partial_fixed1, pca_thr, partial_thr_fixed0p2, partial_thr_fixed0p5,
+                   partial_thr_src_uniform, partial_thr_src_pca]
   # Run with BEAST's -java flag: PartialWeights needs the Java likelihood core, which BEAGLE replaces;
   # pca_nt and pca_thr get the same so their timing is comparable.
   java_only_settings: [pca_nt, partial, partial_fixed0p1, partial_fixed0p2, partial_fixed0p5,
-                       partial_fixed1, pca_thr, partial_thr_fixed0p2, partial_thr_fixed0p5]
+                       partial_fixed1, pca_thr, partial_thr_fixed0p2, partial_thr_fixed0p5,
+                       partial_thr_src_uniform, partial_thr_src_pca]
   # Run with BEAST's -threads flag, which sets ThreadedTreeLikelihood's thread count (1 otherwise).
   # 2: on infB's 489 patterns, 4 threads gain only 5% over 2 (probe: 0.52 -> 0.49 ms/step).
   threaded_settings:
     threads: 2
-    settings: [pca_thr, partial_thr_fixed0p2, partial_thr_fixed0p5]
+    settings: [pca_thr, partial_thr_fixed0p2, partial_thr_fixed0p5, partial_thr_src_uniform,
+               partial_thr_src_pca]
   # Operators a weight transform acts on; collect_stats.py's *_targeted columns cover only these.
   targeted_operators: [TargetedWide, targetedWilsonBalding, targetedWilsonBaldingFixedHeight,
                        targetedRangeSlide]

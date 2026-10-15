@@ -63,6 +63,25 @@ EDGE_WEIGHTS_PARTIAL_THREADED = ('<distribution id="edgeweights" '
                                  'spec="targetedbeast.edgeweights.ThreadedPartialWeights" '
                                  'tree="@tree" maxWeight="20" likelihood="@treeLikelihood"/>')
 
+# Source edges from one weight class, targets from ThreadedPartialWeights at b = 0.5; the baseline,
+# partial_thr_fixed0p5, takes its source weights from PartialWeights itself (branch lengths).
+SOURCE_WEIGHTS_XML = {
+    "uniform": '<distribution id="sourceWeights" spec="targetedbeast.edgeweights.ConstantWeights" tree="@tree"/>',
+    "pca": ('<distribution id="sourceWeights" spec="targetedbeast.edgeweights.PCAWeights2" '
+            'tree="@tree" maxWeight="20" data="@infB_HA" dimension="10"/>'),
+}
+
+
+def edge_weights_source_target(source: str) -> str:
+    return "\n".join([
+        SOURCE_WEIGHTS_XML[source],
+        '<distribution id="partialTargets" spec="targetedbeast.edgeweights.ThreadedPartialWeights" '
+        'tree="@tree" maxWeight="20" likelihood="@treeLikelihood"/>',
+        '<distribution id="edgeweights" spec="targetedbeast.edgeweights.SourceTargetWeights" '
+        'source="@sourceWeights" target="@partialTargets"/>',
+    ])
+
+
 # treeLikelihood's spec, by setting. PartialWeights needs TreeLikelihood.getLikelihoodCore(), which
 # ThreadedTreeLikelihood does not have; pca_nt is pca on the same likelihood, for comparable timing.
 DEFAULT_LIKELIHOOD_SPEC = "beast.base.spec.evolution.likelihood.ThreadedTreeLikelihood"
@@ -123,6 +142,7 @@ EDGE_WEIGHTS_XML = {
     # Threaded Java likelihood: pca_thr is pca's baseline for the partial_thr settings.
     "pca_thr": EDGE_WEIGHTS_PCA,
     **{f"partial_thr_fixed{k}": EDGE_WEIGHTS_PARTIAL_THREADED for k in PARTIAL_THREADED_EXPONENTS},
+    **{f"partial_thr_src_{src}": edge_weights_source_target(src) for src in SOURCE_WEIGHTS_XML},
     # PCAWeights2 on Euclidean rather than 1-norm distance in PCA space, at the default exponent
     # and pinned at L2_EXPONENTS.
     "pca_l2": EDGE_WEIGHTS_PCA_L2,
@@ -304,6 +324,7 @@ WEIGHT_TRANSFORM_FOR_SETTING = {
     **{f"partial_fixed{k}": f"fixed{k}" for k in PARTIAL_FIXED_EXPONENTS},
     "pca_thr": "none",
     **{f"partial_thr_fixed{k}": f"fixed{k}" for k in PARTIAL_THREADED_EXPONENTS},
+    **{f"partial_thr_src_{src}": "fixed0p5" for src in SOURCE_WEIGHTS_XML},
     "pca_grid_mid_rnni": "grid_mid_rnni",
     "pca_grid_mid_dual": "grid_mid_dual",
     "pca_grid_mid_ratio": "grid_mid_ratio",
