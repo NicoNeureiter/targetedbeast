@@ -115,7 +115,7 @@ public class GridTuner extends CoefficientTuner {
 	public void startProposal(double[] theta, double[] effective) {
 		current = chooseGridPoint();
 		if (rewardFunction != null) {
-			rewardBefore = rewardFunction.getArrayValue();
+			rewardBefore = ProposalReward.begin(rewardFunction);
 		}
 		effective[WeightTransform.EXPONENT] = exponents[current];
 		// The offset is not gridded, so it proposes at whatever the transform holds. The
@@ -163,7 +163,7 @@ public class GridTuner extends CoefficientTuner {
 		}
 		double reward;
 		if (rewardFunction != null) {
-			double jump = rewardFunction.getArrayValue() - rewardBefore;
+			double jump = ProposalReward.jump(rewardFunction, rewardBefore);
 			reward = jump * jump;
 		} else {
 			reward = Math.exp(Math.min(logAlpha, 0.0));

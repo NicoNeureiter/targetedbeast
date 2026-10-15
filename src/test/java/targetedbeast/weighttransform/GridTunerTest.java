@@ -363,4 +363,38 @@ public class GridTunerTest {
 		op.setID("targetedWB");
 		return op;
 	}
+
+	/** A ProposalReward is begun when a proposal starts and read once when its outcome is reported. */
+	@Test
+	public void proposalRewardIsBegunAndRead() {
+		int[] calls = { 0, 0 };
+		class CountingReward implements Function, ProposalReward {
+			@Override
+			public void beginProposal() {
+				calls[0]++;
+			}
+
+			@Override
+			public double jump() {
+				calls[1]++;
+				return 1.0;
+			}
+
+			@Override
+			public int getDimension() {
+				return 1;
+			}
+
+			@Override
+			public double getArrayValue(int dim) {
+				throw new UnsupportedOperationException();
+			}
+		}
+		PowerOffsetTransform t = transform("reward", new CountingReward());
+		t.startProposal();
+		t.startProposal(); // MCMC skipped optimize() for the first proposal
+		t.apply(new double[] { 1.0, 2.0 });
+		t.optimize(0.0);
+		Assert.assertArrayEquals(new int[] { 2, 1 }, calls);
+	}
 }

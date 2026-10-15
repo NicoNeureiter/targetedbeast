@@ -84,7 +84,7 @@ public class RatioGridTuner extends CoefficientTuner {
     public void startProposal(double[] theta, double[] effective) {
         current = chooseGridPoint();
         if (rewardFunction != null) {
-            rewardBefore = rewardFunction.getArrayValue();
+            rewardBefore = ProposalReward.begin(rewardFunction);
         }
         double baseExponent = reference.getEffectiveCoefficients()[WeightTransform.EXPONENT];
         double exponent = baseExponent * ratios[current];
@@ -133,7 +133,7 @@ public class RatioGridTuner extends CoefficientTuner {
         }
         double reward;
         if (rewardFunction != null) {
-            double jump = rewardFunction.getArrayValue() - rewardBefore;
+            double jump = ProposalReward.jump(rewardFunction, rewardBefore);
             reward = jump * jump;
         } else {
             reward = Math.exp(Math.min(logAlpha, 0.0));
