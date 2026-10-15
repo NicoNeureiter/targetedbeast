@@ -45,6 +45,7 @@ public class PartialWeightsApproximationQuality {
 		final double[] kl = new double[EXPONENTS.length];
 		final double[] tv = new double[EXPONENTS.length];
 		final int[] top1 = new int[EXPONENTS.length];
+		final double[] exactMassInTopK = new double[EXPONENTS.length];
 		int proposals;
 		long nanos;
 		long candidates;
@@ -67,9 +68,16 @@ public class PartialWeightsApproximationQuality {
 				new Approx("every 4th pattern", null, 4),
 				new Approx("every 8th pattern", null, 8),
 				new Approx("cats 3+4, every 2nd pattern", new int[] { 2, 3 }, 2));
+		// Two-stage: PCAWeights2's top K candidates share their combined PCAWeights2 mass in proportion
+		// to PartialWeights' weights among those K; the rest keep their PCAWeights2 weight. K = 0 is
+		// PCAWeights2 alone.
+		int[] twoStage = { 0, 3, 5, 10, 20 };
 		Map<String, Stats> stats = new LinkedHashMap<>();
 		for (Approx a : approxes) {
 			stats.put(a.name(), new Stats());
+		}
+		for (int k : twoStage) {
+			stats.put(twoStageName(k), new Stats());
 		}
 
 		Random random = new Random(11);
@@ -94,6 +102,9 @@ public class PartialWeightsApproximationQuality {
 					cell.getFileName(), tree.getLeafNodeCount(), weights.patternCount, weights.matrixCount,
 					weights.treelikelihood.calculateLogP());
 
+			PCAWeights2 filter = new PCAWeights2();
+			filter.initByName("tree", tree, "data", weights.treelikelihood.dataInput.get(), "dimension", 10,
+					"maxWeight", 20.0);
 			Scorer scorer = new Scorer(weights);
 			int done = 0;
 			while (done < PROPOSALS_PER_STATE) {
@@ -105,13 +116,24 @@ public class PartialWeightsApproximationQuality {
 				if (candidates.size() < 2) {
 					continue;
 				}
-				evaluate(weights, scorer, i, candidates, approxes, stats);
+				evaluate(weights, scorer, filter, i, candidates, approxes, twoStage, stats);
 				done++;
 			}
 		}
 
 		System.out.printf("%n%-28s %10s %10s %8s %10s %10s %8s %12s%n", "approximation", "KL b=2", "TV b=2",
 				"top1", "KL b=0.2", "TV b=0.2", "top1", "us/candidate");
+		System.out.printf("%n%-34s %8s %8s %7s %8s %8s %7s %9s %9s %12s%n", "two-stage", "KL b=2", "TV b=2",
+				"top1", "KL b=0.2", "TV b=0.2", "top1", "mass b=2", "mass b=.2", "us/candidate");
+		for (int k : twoStage) {
+			Stats s = stats.get(twoStageName(k));
+			System.out.printf("%-34s %8.4f %8.4f %6.1f%% %8.5f %8.4f %6.1f%% %9.3f %9.3f %12.2f%n", twoStageName(k),
+					s.kl[0] / s.proposals, s.tv[0] / s.proposals, 100.0 * s.top1[0] / s.proposals,
+					s.kl[1] / s.proposals, s.tv[1] / s.proposals, 100.0 * s.top1[1] / s.proposals,
+					s.exactMassInTopK[0] / s.proposals, s.exactMassInTopK[1] / s.proposals,
+					s.nanos / 1000.0 / s.candidates);
+		}
+		System.out.println();
 		for (Approx a : approxes) {
 			Stats s = stats.get(a.name());
 			System.out.printf("%-28s %10.4f %10.4f %7.1f%% %10.5f %10.4f %7.1f%% %12.2f%n", a.name(),
@@ -151,8 +173,8 @@ public class PartialWeightsApproximationQuality {
 		return out;
 	}
 
-	static void evaluate(PartialWeights w, Scorer scorer, Node i, List<Node> candidates, List<Approx> approxes,
-			Map<String, Stats> stats) {
+	static void evaluate(PartialWeights w, Scorer scorer, PCAWeights2 filter, Node i, List<Node> candidates,
+			List<Approx> approxes, int[] twoStage, Map<String, Stats> stats) {
 		List<Integer> ancestors = new ArrayList<>();
 		for (Node a = i.getParent(); a != null; a = a.getParent()) {
 			ancestors.add(a.getNr());
@@ -206,6 +228,61 @@ public class PartialWeightsApproximationQuality {
 			}
 			probs[a] = scores;
 		}
+		filter.prestore();
+		filter.updateByOperatorWithoutNode(i.getNr(), ancestors);
+		long f0 = System.nanoTime();
+		double[] filterWeights = filter.getTargetWeights(i.getNr(), toNodes);
+		long filterNanos = System.nanoTime() - f0;
+		filter.reset();
+		Integer[] order = new Integer[toNodes.size()];
+		for (int k = 0; k < order.length; k++) {
+			order[k] = k;
+		}
+		java.util.Arrays.sort(order, (x, y) -> Double.compare(filterWeights[y], filterWeights[x]));
+		double exactMeanCost = (double) stats.get("exact").nanos / Math.max(1, stats.get("exact").candidates);
+		for (int K : twoStage) {
+			int top = Math.min(K, toNodes.size());
+			double[] combined = filterWeights.clone();
+			if (top > 0) {
+				double[] subsetScores = new double[top];
+				double mass = 0;
+				for (int r = 0; r < top; r++) {
+					int k = order[r];
+					subsetScores[r] = EPS + scorer.score(i, toNodes.get(k), fromPartials, toPartials.get(k), heights.get(k), null, 1) / 2.0;
+					mass += filterWeights[k];
+				}
+				double[] q = softmax(w.clipMaxToSecondMaxDiff(subsetScores, 2.0), 1.0);
+				for (int r = 0; r < top; r++) {
+					combined[order[r]] = mass * q[r];
+				}
+			}
+			Stats st = stats.get(twoStageName(K));
+			st.nanos += filterNanos + (long) (top * exactMeanCost);
+			st.candidates += toNodes.size();
+			for (int e = 0; e < EXPONENTS.length; e++) {
+				double[] approx = power(combined, EXPONENTS[e]);
+				double[] exact = dists[0][e];
+				double kl = 0, tv = 0;
+				for (int k = 0; k < exact.length; k++) {
+					if (exact[k] > 0) {
+						kl += exact[k] * Math.log(exact[k] / Math.max(approx[k], 1e-300));
+					}
+					tv += Math.abs(exact[k] - approx[k]);
+				}
+				st.kl[e] += kl;
+				st.tv[e] += tv / 2;
+				if (argmax(exact) == argmax(approx)) {
+					st.top1[e]++;
+				}
+				double inTop = 0;
+				for (int r = 0; r < top; r++) {
+					inTop += exact[order[r]];
+				}
+				st.exactMassInTopK[e] += inTop;
+			}
+			st.proposals++;
+		}
+
 		for (int a = 0; a < approxes.size(); a++) {
 			Stats s = stats.get(approxes.get(a).name());
 			for (int e = 0; e < EXPONENTS.length; e++) {
@@ -246,6 +323,24 @@ public class PartialWeightsApproximationQuality {
 		double sum = 0;
 		for (int k = 0; k < x.length; k++) {
 			out[k] = Math.exp(b * (x[k] - max));
+			sum += out[k];
+		}
+		for (int k = 0; k < x.length; k++) {
+			out[k] /= sum;
+		}
+		return out;
+	}
+
+	static String twoStageName(int k) {
+		return k == 0 ? "PCAWeights2 alone" : "PCA top " + k + " + PartialWeights";
+	}
+
+	/** Normalised x^b: what an operator's exponent b makes of raw weights x. */
+	static double[] power(double[] x, double b) {
+		double[] out = new double[x.length];
+		double sum = 0;
+		for (int k = 0; k < x.length; k++) {
+			out[k] = Math.pow(x[k], b);
 			sum += out[k];
 		}
 		for (int k = 0; k < x.length; k++) {
