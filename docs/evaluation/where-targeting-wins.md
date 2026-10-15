@@ -2040,3 +2040,54 @@ source, a = 0); `partial_thr_fixed0p5` has branch length + 0.1 as source:
   KF +24% and height +68%. With `PCAWeights2` targets no such trade-off shows.
 - `pca_srcmix0` (the identity transform) does not reproduce the earlier `pca` cells step for step
   from the same seeds; posterior means agree. Only same-session cells are compared above.
+
+## Source weights proportional to length^c
+
+`BranchLengthWeights` (source weight = branch length) combined with the target class through
+`SourceTargetWeights`; an `edgeWeightTransform` with exponent c, offset 0, `optimise="false"` makes
+the source weights exactly length^c. 4 reps, same seeds, all cells pass the ESS gate. Paired,
+t-based 90% CI, n=4; * = CI excludes 0.
+
+**`PCAWeights2` targets on BEAGLE** (`length_exponent_pca`), vs c = 1 in the same batch:
+
+| metric | c = 0.5 | c = 1.5 | c = 2 |
+|---|---|---|---|
+| runtime | +2.0% | −6.6% * | −17.4% * |
+| `treeESS_p10_rf` | +20.5% | −7.1% | −43.3% * |
+| `treeESS_median_rf` | +9.1% | −14.8% | −44.9% * |
+| `treeESS_p10_kf` | −0.7% | −4.8% | −11.0% |
+| `tree.height.ESS` | −19.1% | +6.9% | +10.9% |
+| `posterior.ESS` | +9.8% | +3.5% | −6.2% |
+| `esjd_rnni_targeted` | +29.6% * | −29.7% * | −63.8% * |
+| `treeESS_p10_rf` per hour | +17.9% | −0.6% | −31.3% * |
+| `tree.height.ESS` per hour | −20.7% | +14.3% | +34.4% |
+
+Against PCA source weights (`pca_srcmix0`, previous batch; that batch ran ≈10% slower, so per-hour
+figures here are inflated by about that much): c = 0.5 gives KF +40.5%*, height +72.1%*, RF p10
++5.7%; c = 1 gives KF +41.6%*, height +112.6%*, RF p10 −12.3%.
+
+**`PartialWeights` targets at b = 0.5** (`length_exponent_partial`), vs PCA source
+(`partial_thr_src_pca`):
+
+| metric | c = 1 (99% length) | c = 0.5 |
+|---|---|---|
+| runtime | −12.3% | −5.9% |
+| `treeESS_p10_rf` | −15.7% * | −0.4% |
+| `treeESS_median_rf` | −13.8% * | −4.1% |
+| `treeESS_p10_kf` | +35.5% * | +23.2% * |
+| `tree.height.ESS` | +104.3% * | +50.4% |
+| `posterior.ESS` | −17.7% | +16.4% * |
+| `treeESS_p10_kf` per hour | +51.0% * | +28.1% |
+| `tree.height.ESS` per hour | +128.7% * | +57.0% |
+| `posterior.ESS` per hour | −6.2% | +24.1% * |
+
+c = 0.5 against c = 1 directly: RF p10 +18.1%*, KF −9.1%, height −26.4%; per hour KF −15.2%* and
+height −31.4%*.
+
+- **c = 2 is too sharp**: topology ESS roughly halves and the topology moves' acceptance drops to
+  2–3% (5–9% at c = 1); its shorter runtime only reflects fewer accepted moves.
+- **c trades topology against heights and branch lengths.** Lower c raises topology ESS and
+  targeted ESJD; higher c raises tree-height ESS. The useful range is 0.5–1 (1.5 behaves like 1).
+- **With `PartialWeights` targets, c = 0.5 removes the topology cost** that c = 1 had against PCA
+  source weights, keeping about two-thirds of the branch-length gain and half the height gain.
+- Posterior means agree with `pca` at every exponent.
