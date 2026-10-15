@@ -1883,3 +1883,39 @@ Per-hour columns are the ESS divided by `runtime_hours`. Paired, t-based 90% CI,
 On infB, a BEAGLE PR to expose partials would remove the Java-likelihood penalty but not the
 scoring cost (about a third of `PartialWeights`' time before threading), and the per-step topology
 gain it would have to amplify is not distinguishable from zero.
+
+## `PartialWeights` reverse-pass bug: every `PartialWeights` result above is affected
+
+**Cause.** In the reverse pass, `TargetedWilsonBalding` and the weighted `RangeSlide` rebuilt the
+"without i" partials on the moved tree T′ from the likelihood core, which still holds the partials
+of T: the likelihood runs only after the proposal. Every node on i's old path to the root still
+contained i, and so did every value built from them. In a probe of 300 random Wilson–Balding moves
+(12 taxa), 80% of moves had wrong reverse scores; the largest error in a reverse target probability
+averaged 0.37 per move. Moves that change the root were wrong in a second way: `Tree.setRoot` swaps
+node numbers, so the core's partials and the tree no longer used the same numbering.
+
+**Fix.** Pruning i and its parent gives the same tree from T and from T′, so the forward pass's
+"without i" partials are exactly what the reverse pass needs. `PartialWeights` now computes them for
+all of i's ancestors (ignoring the operator's node list), keys them on that pruned tree, and reuses
+them when the reverse pass asks for the same one. It reads the core under the numbers the core was
+computed with, and forgets the cache in `store()`/`restore()`, which MCMC calls before the
+likelihood updates the core.
+
+**Why nothing caught it.** The detailed-balance harness never recomputed the likelihood, so the core
+was equally out of date in the forward and reverse passes and the kernel looked consistent. It now
+recomputes the likelihood for every sample; on the old code the three `PartialWeights`
+detailed-balance tests then fail at up to 8.3σ. `EdgeWeightCacheFreshnessTest` covered only
+`PCAWeights2`.
+
+**General check.** `EdgeWeightOracleTest` runs a real MCMC per weight class (`PCAWeights2`,
+`ConstantWeights`, `PartialWeights`, `ThreadedPartialWeights`) and targeted operator (all five in
+the benchmark), with subtree slides, kappa, gamma-shape, clock-rate and up-down moves alongside.
+`CheckedEdgeWeights` compares every weight an operator reads with a fresh instance built on a
+snapshot of the current tree and parameters, rebuilding "without i" values for all ancestors. On
+the old code it flags exactly the two reverse passes; on the fixed code all 20 chains (≈1.8M reads)
+are clean. New weight classes and operators should be added to it.
+
+**Consequence.** All `PartialWeights` cells (the exponent sweep and the threaded comparison) ran
+with a wrong Hastings ratio and must be rerun. Posterior means (likelihood, tree height, posterior)
+agreed with `pca` within two standard errors, a weak check. The fix also changes the cost: the
+forward pass now rebuilds the whole ancestor chain, and the reverse pass rebuilds nothing.
