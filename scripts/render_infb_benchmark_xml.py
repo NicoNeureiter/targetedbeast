@@ -56,6 +56,12 @@ PCA_FIXED_EXPONENTS = ("1", "1p5", "3", "4", "6", "8")
 PARTIAL_FIXED_EXPONENTS = ("0p1", "0p2", "0p5", "1")
 EDGE_WEIGHTS_PARTIAL = ('<distribution id="edgeweights" spec="targetedbeast.edgeweights.PartialWeights" '
                         'tree="@tree" maxWeight="20" data="@infB_HA" likelihood="@treeLikelihood"/>')
+# PartialWeights per ThreadedTreeLikelihood slice, scored in parallel; same weights as
+# EDGE_WEIGHTS_PARTIAL. Threads come from BEAST's -threads flag (threaded_settings in datasets.yaml).
+PARTIAL_THREADED_EXPONENTS = ("0p2", "0p5")
+EDGE_WEIGHTS_PARTIAL_THREADED = ('<distribution id="edgeweights" '
+                                 'spec="targetedbeast.edgeweights.ThreadedPartialWeights" '
+                                 'tree="@tree" maxWeight="20" likelihood="@treeLikelihood"/>')
 
 # treeLikelihood's spec, by setting. PartialWeights needs TreeLikelihood.getLikelihoodCore(), which
 # ThreadedTreeLikelihood does not have; pca_nt is pca on the same likelihood, for comparable timing.
@@ -114,6 +120,9 @@ EDGE_WEIGHTS_XML = {
     "pca_nt": EDGE_WEIGHTS_PCA,
     "partial": EDGE_WEIGHTS_PARTIAL,
     **{f"partial_fixed{k}": EDGE_WEIGHTS_PARTIAL for k in PARTIAL_FIXED_EXPONENTS},
+    # Threaded Java likelihood: pca_thr is pca's baseline for the partial_thr settings.
+    "pca_thr": EDGE_WEIGHTS_PCA,
+    **{f"partial_thr_fixed{k}": EDGE_WEIGHTS_PARTIAL_THREADED for k in PARTIAL_THREADED_EXPONENTS},
     # PCAWeights2 on Euclidean rather than 1-norm distance in PCA space, at the default exponent
     # and pinned at L2_EXPONENTS.
     "pca_l2": EDGE_WEIGHTS_PCA_L2,
@@ -293,6 +302,8 @@ WEIGHT_TRANSFORM_FOR_SETTING = {
     "pca_nt": "none",
     "partial": "none",
     **{f"partial_fixed{k}": f"fixed{k}" for k in PARTIAL_FIXED_EXPONENTS},
+    "pca_thr": "none",
+    **{f"partial_thr_fixed{k}": f"fixed{k}" for k in PARTIAL_THREADED_EXPONENTS},
     "pca_grid_mid_rnni": "grid_mid_rnni",
     "pca_grid_mid_dual": "grid_mid_dual",
     "pca_grid_mid_ratio": "grid_mid_ratio",

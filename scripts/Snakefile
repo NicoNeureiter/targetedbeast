@@ -120,9 +120,21 @@ def ess_gated(dataset: str, tier: str) -> bool:
     return bool(tier_cfg(dataset, tier).get("ess_gate", False))
 
 
+def beast_threads(wildcards) -> int:
+    """Likelihood threads for threaded_settings (BEAST's -threads), 1 otherwise."""
+    threaded = REGISTRY[wildcards.dataset].get("threaded_settings", {})
+    return threaded["threads"] if wildcards.setting in threaded.get("settings", []) else 1
+
+
 def beast_flags(wildcards) -> str:
-    """-java (no native BEAGLE) for settings that need the Java likelihood core, e.g. PartialWeights."""
-    return "-java" if wildcards.setting in REGISTRY[wildcards.dataset].get("java_only_settings", []) else ""
+    """-java (no native BEAGLE) for settings that need the Java likelihood core, e.g. PartialWeights,
+    and -threads for threaded_settings."""
+    flags = []
+    if wildcards.setting in REGISTRY[wildcards.dataset].get("java_only_settings", []):
+        flags.append("-java")
+    if beast_threads(wildcards) > 1:
+        flags.append(f"-threads {beast_threads(wildcards)}")
+    return " ".join(flags)
 
 
 def beast_seed(wildcards) -> int:
@@ -240,6 +252,22 @@ rule partial_sweep:
         concat_tsv(input, output.summary)
 
 
+# PartialWeights on a threaded Java likelihood (ThreadedPartialWeights) at the sweep's best
+# exponents, against pca on the same likelihood and pca on BEAGLE. Explicit target; run with
+# --cores 4 (two cells at a time), since each threaded cell reserves threaded_settings.threads cores.
+PARTIAL_THREADED_SETTINGS = ["pca", "pca_thr", "partial_thr_fixed0p2", "partial_thr_fixed0p5"]
+
+
+rule partial_threaded:
+    input:
+        expand(CELL_DIR + "/cell.summary.tsv", dataset="infb", tier="thorough",
+               setting=PARTIAL_THREADED_SETTINGS, rep=reps_for("infb", "thorough")),
+    output:
+        summary=str(RUNS_ROOT / "infb" / "thorough" / "partial_threaded.summary.tsv"),
+    run:
+        concat_tsv(input, output.summary)
+
+
 # PCAWeights2's distance norm: 1-norm (pca) vs Euclidean (pca_l2) at exponents 1, 1.5, 2, 3,
 # 8 reps. Explicit target.
 NORM_COMPARE_SETTINGS = ["pca", "pca_l2_fixed1", "pca_l2_fixed1p5", "pca_l2", "pca_l2_fixed3"]
@@ -310,6 +338,7 @@ rule run_beast:
     params:
         seed=beast_seed,
         flags=beast_flags,
+    threads: beast_threads
     output:
         log=CELL_DIR + "/run.log",
         trees=CELL_DIR + "/run.trees",
@@ -396,6 +425,7 @@ rule run_beast_checkpointed:
     params:
         seed=beast_seed,
         flags=beast_flags,
+    threads: beast_threads
     output:
         log=CELL_DIR + "/run.log",
         trees=CELL_DIR + "/run.trees",
@@ -535,6 +565,7 @@ rule run_beast_burnin_speed:
     params:
         seed=beast_seed,
         flags=beast_flags,
+    threads: beast_threads
     output:
         log=BURNIN_SPEED_CELL_DIR + "/run.log",
         trees=BURNIN_SPEED_CELL_DIR + "/run.trees",
