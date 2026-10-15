@@ -214,22 +214,6 @@ public class TargetedWilsonBalding extends TargetedWeightOperator {
 
 		final Node CiP = getOtherChild(p, i);
 
-		// get all nodes in target that are ancestors to p
-		List<Integer> ancestors = new ArrayList<>();
-		// make a copy of p
-		Node ancestor = i.getParent();
-		while (ancestor != null) {
-			// check if p is in the target
-			if (candidateNodes.contains(ancestor)) {
-				ancestors.add(ancestor.getNr());
-			}
-			ancestor = ancestor.getParent();
-		}
-
-		// calculate the consensus sequences without the node i
-		edgeWeights.prestore();
-		edgeWeights.updateByOperatorWithoutNode(i.getNr(), ancestors);
-
 		// remove i and p as potential targets
         candidateNodes.remove(i);
 		candidateNodes.remove(p);
@@ -248,10 +232,13 @@ public class TargetedWilsonBalding extends TargetedWeightOperator {
 		}
 		candidateNodes = feasibleCandidateNodes;
 		if (candidateNodes.size() == 0) {
-			edgeWeights.reset();
 			return Double.NEGATIVE_INFINITY;
 		}
 		assertAgesWithinIntervals(candidateAges, candidateIntervals, "forward candidate scoring");
+
+		// calculate the consensus sequences without the node i, up to the highest feasible candidate
+		edgeWeights.prestore();
+		edgeWeights.updateByOperatorWithoutNode(i.getNr(), ancestorsUpToHighestTarget(i, candidateNodes));
 
 		double[] rawTargetWeights = edgeWeights.getTargetWeights(i.getNr(), candidateNodes, candidateAges);
 		double[] distance = applyTargetTransform(rawTargetWeights);
@@ -272,6 +259,7 @@ public class TargetedWilsonBalding extends TargetedWeightOperator {
 		}
 
 		if (totalDistance < 1E-12) {
+			edgeWeights.reset();
 			return Double.NEGATIVE_INFINITY;
 		}
 
@@ -331,18 +319,6 @@ public class TargetedWilsonBalding extends TargetedWeightOperator {
 			return Double.NEGATIVE_INFINITY;
 		}
 
-		List<Integer> reverseAncestors = new ArrayList<>();
-		Node reverseAncestor = i.getParent();
-		while (reverseAncestor != null) {
-			if (reverseCandidateNodes.contains(reverseAncestor)) {
-				reverseAncestors.add(reverseAncestor.getNr());
-			}
-			reverseAncestor = reverseAncestor.getParent();
-		}
-
-		edgeWeights.prestore();
-		edgeWeights.updateByOperatorWithoutNode(i.getNr(), reverseAncestors);
-
 		Map<Integer, AttachmentInterval> forwardIntervalsByNode = new HashMap<>();
 		Map<Integer, Double> forwardAgesByNode = new HashMap<>();
 		for (int k = 0; k < candidateNodes.size(); k++) {
@@ -375,17 +351,18 @@ public class TargetedWilsonBalding extends TargetedWeightOperator {
 		}
 		reverseCandidateNodes = feasibleReverseCandidateNodes;
 		if (reverseCandidateNodes.size() == 0) {
-			edgeWeights.reset();
 			return Double.NEGATIVE_INFINITY;
 		}
 		assertAgesWithinIntervals(reverseCandidateAges, reverseCandidateIntervals, "reverse candidate scoring");
 
 		int reverseSiblingIdx = reverseCandidateNodes.indexOf(CiP);
 		if (reverseSiblingIdx < 0) {
-			edgeWeights.reset();
 			return Double.NEGATIVE_INFINITY;
 		}
 		int reverseNoOpIdx = reverseCandidateNodes.indexOf(j);
+
+		edgeWeights.prestore();
+		edgeWeights.updateByOperatorWithoutNode(i.getNr(), ancestorsUpToHighestTarget(i, reverseCandidateNodes));
 
 		double[] rawReverseWeights = edgeWeights.getTargetWeights(i.getNr(), reverseCandidateNodes, reverseCandidateAges);
 		double[] reverseDistance = applyTargetTransform(rawReverseWeights);

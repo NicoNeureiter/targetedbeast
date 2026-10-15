@@ -55,7 +55,6 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 import beast.base.core.Description;
 import beast.base.core.Input;
@@ -481,25 +480,6 @@ public class RangeSlide extends TargetedWeightOperator {
 		}
 		logHastingsRatio += Math.log(reverseWeight / reverseSourceWeights.total);
 		return logHastingsRatio;
-	}
-
-	/**
-	 * i's ancestors from its parent up to the highest one that is a target, whose "without i"
-	 * values the target weights need. Every ancestor in between is included even if it is not a
-	 * target, since a target's value is built from its children's: leaving one out rebuilds the
-	 * targets above it from values that still reflect the tree before the move. Ancestors above
-	 * the highest target are never read.
-	 */
-	private static List<Integer> ancestorsUpToHighestTarget(Node i, Set<Node> targets) {
-		List<Integer> path = new ArrayList<>();
-		int needed = 0;
-		for (Node ancestor = i.getParent(); ancestor != null; ancestor = ancestor.getParent()) {
-			path.add(ancestor.getNr());
-			if (targets.contains(ancestor)) {
-				needed = path.size();
-			}
-		}
-		return new ArrayList<>(path.subList(0, needed));
 	}
 
 	private Map<Node, Double> collectTargets(Node start, double distanceLeft, boolean isUp) {
