@@ -22,6 +22,7 @@
         <provider classname="targetedbeast.edgeweights.FelsensteinWeights2"/>
         <provider classname="targetedbeast.edgeweights.PartialWeights"/>
         <provider classname="targetedbeast.edgeweights.ThreadedPartialWeights"/>
+        <provider classname="targetedbeast.edgeweights.SourceTargetWeights"/>
         <provider classname="targetedbeast.edgeweights.CombinedEdgeWeights"/>
 
         <provider classname="targetedbeast.weighttransform.SpsaTuner"/>

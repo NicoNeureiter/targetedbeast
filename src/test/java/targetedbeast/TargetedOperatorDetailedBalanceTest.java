@@ -172,6 +172,17 @@ public class TargetedOperatorDetailedBalanceTest extends DetailedBalanceTest<Tre
     }
 
     @Test
+    public void testTargWilsonBaldingPCASourcePartialTarget() throws Exception {
+        testDetailedBalance(new TreeTrial(tree -> {
+            targetedbeast.edgeweights.SourceTargetWeights weights = new targetedbeast.edgeweights.SourceTargetWeights();
+            weights.initByName("source", getPCAWeights(tree), "target", getPartialWeights(tree));
+            TargetedWilsonBalding operator = new TargetedWilsonBalding();
+            operator.initByName("tree", tree, "weight", 1.0, "edgeWeights", weights);
+            return operator;
+        }));
+    }
+
+    @Test
     public void testTargWilsonBaldingPartial() throws Exception {
         testDetailedBalance(new TreeTrial(tree -> {
             TreeOperator operator = new TargetedWilsonBalding();
@@ -327,15 +338,23 @@ public class TargetedOperatorDetailedBalanceTest extends DetailedBalanceTest<Tre
             // clears the flags so the operator's own move drives the incremental updates.
             for (targetedbeast.edgeweights.EdgeWeights ew : edgeWeights) {
                 tree.setEverythingDirty(true);
-                if (ew instanceof PartialWeights pw) {
-                    pw.likelihoodInput.get().calculateLogP();
-                } else if (ew instanceof targetedbeast.edgeweights.ThreadedPartialWeights tpw) {
-                    tpw.likelihoodInput.get().calculateLogP();
-                }
+                recalculateLikelihood(ew);
                 ew.updateByOperator();
             }
             tree.setEverythingDirty(false);
             return tree;
+        }
+
+        /** As in a real chain, the likelihood core holds the current tree's partials. */
+        void recalculateLikelihood(targetedbeast.edgeweights.EdgeWeights ew) {
+            if (ew instanceof PartialWeights pw) {
+                pw.likelihoodInput.get().calculateLogP();
+            } else if (ew instanceof targetedbeast.edgeweights.ThreadedPartialWeights tpw) {
+                tpw.likelihoodInput.get().calculateLogP();
+            } else if (ew instanceof targetedbeast.edgeweights.SourceTargetWeights st) {
+                recalculateLikelihood(st.sourceInput.get());
+                recalculateLikelihood(st.targetInput.get());
+            }
         }
 
         @Override

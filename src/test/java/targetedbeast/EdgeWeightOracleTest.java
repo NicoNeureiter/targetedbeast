@@ -43,6 +43,7 @@ import targetedbeast.edgeweights.ConstantWeights;
 import targetedbeast.edgeweights.EdgeWeights;
 import targetedbeast.edgeweights.PCAWeights2;
 import targetedbeast.edgeweights.PartialWeights;
+import targetedbeast.edgeweights.SourceTargetWeights;
 import targetedbeast.edgeweights.ThreadedPartialWeights;
 import targetedbeast.operators.RangeSlide;
 import targetedbeast.operators.TargetedWilsonBalding;
@@ -201,6 +202,27 @@ public class EdgeWeightOracleTest {
 		}
 	};
 
+	/** Source and target weights from two classes, as in the source-weight benchmark settings. */
+	static WeightsFactory sourceTarget(WeightsFactory source, WeightsFactory target) {
+		return new WeightsFactory() {
+			public Distribution liveLikelihood(Model m, Tree t) {
+				return target.liveLikelihood(m, t);
+			}
+
+			public EdgeWeights live(Model m, Tree t, Distribution l) {
+				SourceTargetWeights w = new SourceTargetWeights();
+				w.initByName("source", source.live(m, t, l), "target", target.live(m, t, l));
+				return w;
+			}
+
+			public EdgeWeights fresh(Model m, Tree t) {
+				SourceTargetWeights w = new SourceTargetWeights();
+				w.initByName("source", source.fresh(m, t), "target", target.fresh(m, t));
+				return w;
+			}
+		};
+	}
+
 	/** The benchmark's targeted operators, each built on the weights it is given. */
 	static Map<String, Function<Object[], Operator>> targetedOperators() {
 		Map<String, Function<Object[], Operator>> ops = new LinkedHashMap<>();
@@ -278,8 +300,13 @@ public class EdgeWeightOracleTest {
 		}, model::key);
 
 		// As in the benchmark XML: the weights sit in the prior, the likelihood next to it.
+		List<Distribution> priorParts = new ArrayList<>(List.of(yule, (Distribution) live));
+		if (live instanceof SourceTargetWeights st) {
+			priorParts.add((Distribution) st.sourceInput.get());
+			priorParts.add((Distribution) st.targetInput.get());
+		}
 		CompoundDistribution prior = new CompoundDistribution();
-		prior.initByName("distribution", yule, "distribution", (Distribution) live);
+		prior.initByName("distribution", priorParts);
 		CompoundDistribution posterior = new CompoundDistribution();
 		posterior.initByName("distribution", prior, "distribution", likelihood);
 
@@ -359,5 +386,15 @@ public class EdgeWeightOracleTest {
 	@Test
 	public void testThreadedPartialWeights() throws Exception {
 		assertClean(THREADED_PARTIAL);
+	}
+
+	@Test
+	public void testPCASourcePartialTarget() throws Exception {
+		assertClean(sourceTarget(PCA, THREADED_PARTIAL));
+	}
+
+	@Test
+	public void testConstantSourcePartialTarget() throws Exception {
+		assertClean(sourceTarget(CONSTANT, THREADED_PARTIAL));
 	}
 }
