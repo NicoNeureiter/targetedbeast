@@ -163,6 +163,7 @@ EDGE_WEIGHTS_XML = {
     **{f"partial_thr_src_{src}": edge_weights_source_target(src) for src in ("uniform", "pca")},
     **{f"pca_srclen{k}": edge_weights_source_target("length", "pca") for k in LENGTH_EXPONENTS},
     **{f"partial_thr_srclen{k}": edge_weights_source_target("length") for k in LENGTH_EXPONENTS},
+    "partial_thr_srclen_grid": edge_weights_source_target("length"),
     # PCA source weights mixed towards branch lengths (EDGE_WEIGHT_TRANSFORM_FOR_SETTING); with
     # PartialWeights targets, mix 0 is partial_thr_src_pca.
     **{f"pca_srcmix{k}": EDGE_WEIGHTS_PCA for k in LENGTH_MIX_OFFSETS},
@@ -213,6 +214,14 @@ GRID_MAX_EXPONENT_MID = max(GRID_EXPONENTS_MID)
 # coefficient: getting clean signal out of one gridded exponent was hard enough at this chain
 # length, so the offset is fixed rather than added as a second grid dimension.
 OFFSET_MIXTURE_0_1 = 1.0 / 9.0
+
+# Grids for source weights length^c and PartialWeights' target exponent b, tuned together
+# (partial_thr_srclen_grid). c = 2 collapsed topology mixing with pca targets; b = 0.2-0.5 was best
+# in the fixed PartialWeights sweep. The source side keeps a fixed offset so that zero-length edges
+# keep a positive weight.
+GRID_EXPONENTS_LENGTH = [0.25, 0.5, 0.75, 1.0, 1.5]
+GRID_EXPONENTS_PARTIAL = [0.1, 0.2, 0.35, 0.5, 0.75, 1.0]
+LENGTH_GRID_OFFSET = 0.03
 
 # Same mixture-weight solve as OFFSET_MIXTURE_0_1, but for a 0.05 floor instead of 0.1: solving
 # a/(1+a) = 0.05 for a. Used by "grid_mid_ratio" below; does not replace OFFSET_MIXTURE_0_1, which
@@ -322,6 +331,20 @@ WEIGHT_TRANSFORM_XML = {
         ' targetWeightTransform="@targetWeightTransform"',
         '<log idref="targetWeightTransform"/>',
     ),
+    # PartialWeights' target exponent b, grid-tuned over the range the fixed sweep found useful.
+    "grid_partial": (
+        '<targetWeightTransform id="targetWeightTransform"'
+        ' spec="targetedbeast.weighttransform.PowerOffsetTransform"'
+        f' exponent="0.5" offset="0.0" maxExponent="{max(GRID_EXPONENTS_PARTIAL)}">\n'
+        '            <tuner spec="targetedbeast.weighttransform.GridTuner"'
+        f' exponents="{" ".join(str(b) for b in GRID_EXPONENTS_PARTIAL)}"'
+        f' explorationProb="0.1" burnin="{GRID_BURNIN}">\n'
+        '                <reward idref="likelihood"/>\n'
+        '            </tuner>\n'
+        '        </targetWeightTransform>',
+        ' targetWeightTransform="@targetWeightTransform"',
+        '<log idref="targetWeightTransform"/>',
+    ),
     # Pinned exponents, no tuner: optimise="false" makes startProposal()/optimize() no-ops. fixed2
     # is the reference point (see "pca_fixed2" above) - w^2 with zero offset, identical to the
     # no-transform path.
@@ -351,6 +374,7 @@ WEIGHT_TRANSFORM_FOR_SETTING = {
     **{f"partial_thr_src_{src}": "fixed0p5" for src in ("uniform", "pca")},
     **{f"pca_srclen{k}": "none" for k in LENGTH_EXPONENTS},
     **{f"partial_thr_srclen{k}": "fixed0p5" for k in LENGTH_EXPONENTS},
+    "partial_thr_srclen_grid": "grid_partial",
     **{f"pca_srcmix{k}": "none" for k in LENGTH_MIX_OFFSETS},
     **{f"partial_thr_srcmix{k}": "fixed0p5" for k in LENGTH_MIX_OFFSETS if k != "0"},
     "pca_grid_mid_rnni": "grid_mid_rnni",
@@ -378,6 +402,22 @@ def length_exponent_edge_transform(exponent: str) -> tuple[str, str, str]:
     )
 
 
+def length_grid_edge_transform() -> tuple[str, str, str]:
+    return (
+        '<edgeWeightTransform id="edgeWeightTransform"'
+        ' spec="targetedbeast.weighttransform.PowerOffsetTransform"'
+        f' exponent="1.0" offset="{LENGTH_GRID_OFFSET}" maxExponent="{max(GRID_EXPONENTS_LENGTH)}">\n'
+        '            <tuner spec="targetedbeast.weighttransform.GridTuner"'
+        f' exponents="{" ".join(str(c) for c in GRID_EXPONENTS_LENGTH)}"'
+        f' explorationProb="0.1" burnin="{GRID_BURNIN}">\n'
+        '                <reward idref="likelihood"/>\n'
+        '            </tuner>\n'
+        '        </edgeWeightTransform>',
+        ' edgeWeightTransform="@edgeWeightTransform"',
+        '<log idref="edgeWeightTransform"/>',
+    )
+
+
 def length_mix_edge_transform(offset: str) -> tuple[str, str, str]:
     return (
         '<edgeWeightTransform id="edgeWeightTransform"'
@@ -392,6 +432,7 @@ EDGE_WEIGHT_TRANSFORM_XML = {
     "none": ("", "", ""),
     **{f"lenmix{k}": length_mix_edge_transform(a) for k, a in LENGTH_MIX_OFFSETS.items()},
     **{f"lenexp{k}": length_exponent_edge_transform(c) for k, c in LENGTH_EXPONENTS.items()},
+    "lengrid": length_grid_edge_transform(),
     "grid_mid": (
         '<edgeWeightTransform id="edgeWeightTransform"'
         ' spec="targetedbeast.weighttransform.PowerOffsetTransform"'
@@ -435,6 +476,7 @@ EDGE_WEIGHT_TRANSFORM_FOR_SETTING = {
     **{f"pca_srcmix{k}": f"lenmix{k}" for k in LENGTH_MIX_OFFSETS},
     **{f"pca_srclen{k}": f"lenexp{k}" for k in LENGTH_EXPONENTS},
     **{f"partial_thr_srclen{k}": f"lenexp{k}" for k in LENGTH_EXPONENTS},
+    "partial_thr_srclen_grid": "lengrid",
     **{f"partial_thr_srcmix{k}": f"lenmix{k}" for k in LENGTH_MIX_OFFSETS if k != "0"},
     "pca_grid_mid_dual": "grid_mid",
     "pca_grid_mid_ratio": "grid_mid_ratio",
