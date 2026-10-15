@@ -107,6 +107,61 @@ public class PartialWeightsScoringTest {
 		assertTrue(checked > 100);
 	}
 
+	@Test
+	public void testSharedHeightScoresMatchReference() throws Exception {
+		System.setProperty("java.only", "true");
+		Random random = new Random(13);
+		Alignment data = randomAlignment(random);
+		TaxonSet taxa = new TaxonSet();
+		for (int t = 0; t < NUM_TAXA; t++) {
+			taxa.initByName("taxon", new Taxon(String.valueOf(t)));
+		}
+		Tree tree = new Tree();
+		tree.initByName("taxonset", taxa);
+		YuleModel yule = new YuleModel();
+		yule.initByName("tree", tree, "birthDiffRate", "2.0");
+		DirectSimulator simulator = new DirectSimulator();
+		simulator.initByName("distribution", (TreeDistribution) yule, "nSamples", 1);
+		SiteModel siteModel = new SiteModel();
+		siteModel.initByName("substModel", new JukesCantor(), "gammaCategoryCount", 4,
+				"shape", new RealScalarParam<>(0.4, PositiveReal.INSTANCE));
+		TreeLikelihood likelihood = new TreeLikelihood();
+		likelihood.initByName("tree", tree, "siteModel", siteModel, "data", data,
+				"implementation", "BeerLikelihoodCore4");
+		PartialWeights weights = new PartialWeights();
+		weights.initByName("tree", tree, "likelihood", likelihood, "data", data);
+
+		int checked = 0;
+		for (int sample = 0; sample < 20; sample++) {
+			simulator.run();
+			tree.setEverythingDirty(true);
+			likelihood.calculateLogP();
+			tree.setEverythingDirty(false);
+			weights.ensureInitialized();
+			Node from = tree.getNode(random.nextInt(tree.getNodeCount() - 1));
+			if (from.isRoot()) {
+				continue;
+			}
+			double toHeight = from.getHeight() + random.nextDouble();
+			List<Node> toNodes = new ArrayList<>();
+			List<double[]> toPartials = new ArrayList<>();
+			for (Node to : tree.getNodesAsArray()) {
+				if (to != from && to.getHeight() < toHeight) {
+					toNodes.add(to);
+					toPartials.add(weights.getPartials(to.getNr()));
+				}
+			}
+			double[] fromPartials = weights.getPartials(from.getNr());
+			double[] actual = weights.scoreAtSharedHeight(from, fromPartials, toNodes, toPartials, toHeight);
+			for (int k = 0; k < toNodes.size(); k++) {
+				double expected = referenceScore(weights, from, toNodes.get(k), fromPartials, toPartials.get(k), toHeight);
+				assertEquals(expected, actual[k], 1e-12 * Math.abs(expected));
+				checked++;
+			}
+		}
+		assertTrue(checked > 50);
+	}
+
 	/** Frozen copy of the original computePartialsAgreement, computeLikelihoodFromPartials and helpers. */
 	static double referenceScore(PartialWeights w, Node fromNode, Node toNode, double[] fromPartials,
 			double[] toPartials, double toHeight) {

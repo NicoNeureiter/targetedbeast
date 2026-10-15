@@ -73,6 +73,8 @@ public class PartialWeights extends Distribution implements EdgeWeights {
     double[] _patternLogLikelihoods;
     private double[] _fromAtParent;
     private double[] _toAtParent;
+    private double[] _fromAtParentAll;
+    private boolean[] _fromDegenerate;
     
 	private static final double EPS = 1E-8;
 
@@ -171,6 +173,10 @@ public class PartialWeights extends Distribution implements EdgeWeights {
         if (_fromAtParent == null) {
             _fromAtParent = new double[stateCount];
             _toAtParent = new double[stateCount];
+        }
+        if (_fromAtParentAll == null) {
+            _fromAtParentAll = new double[partialsSize];
+            _fromDegenerate = new boolean[matrixCount * patternCount];
         }
 		
         assert partialsSize == patternCount * stateCount * matrixCount;
@@ -646,21 +652,17 @@ public class PartialWeights extends Distribution implements EdgeWeights {
         Node fromNode = treeInput.get().getNode(fromNodeNr);
         double[] fromPartials = getPartials(fromNodeNr);
 
-        // Compute the potential likelihood for all toNode candidates
-		double[] weights = new double[toNodeNrs.size()];
-		for (int k = 0; k < toNodeNrs.size(); k++) {
-			int toNodeNr = toNodeNrs.get(k);
+        // All candidates attach at newHeight, so the moved node's side is shared.
+		List<Node> toNodes = new ArrayList<>(toNodeNrs.size());
+		List<double[]> toPartials = new ArrayList<>(toNodeNrs.size());
+		for (int toNodeNr : toNodeNrs) {
             Node toNode = resolveScoringNode(treeInput.get().getNode(toNodeNr), fromNode);
-
-            // Use partialsWithoutNode (excludes fromNodeNr's contribution)
-			double[] toPartials = getPartialsWithoutNode(toNode.getNr());
-
-			// Compute the full proposed tree log-likelihood
-			double toWeight = computePartialsAgreement(fromNode, toNode, fromPartials, toPartials, newHeight);
-			weights[k] = EPS + toWeight / 2.0; // division by two to counteract squaring of probabilities in the operators
-
-            // double partialDistance = getAveragePartialDiff(fromPartials, toPartials);
-            // weights[k] = 1. / partialDistance;
+			toNodes.add(toNode);
+			toPartials.add(getPartialsWithoutNode(toNode.getNr())); // excludes fromNodeNr's contribution
+		}
+		double[] weights = scoreAtSharedHeight(fromNode, fromPartials, toNodes, toPartials, newHeight);
+		for (int k = 0; k < weights.length; k++) {
+			weights[k] = EPS + weights[k] / 2.0; // division by two to counteract squaring of probabilities in the operators
 		}
 
         weights = clipMaxToSecondMaxDiff(weights, 2.);
@@ -730,6 +732,11 @@ public class PartialWeights extends Distribution implements EdgeWeights {
             }
         }
 
+        return weightedLogLikelihood();
+    }
+
+    /** Pattern-weighted log-likelihood of the category-integrated partials in {@code _targetPartials}. */
+    private double weightedLogLikelihood() {
         double[] freqs = getSubstitutionModel().getFrequencies();
         likelihoodCore.calculateLogLikelihoods(_targetPartials, freqs, _patternLogLikelihoods);
         double weightedSum = 0.0;
@@ -737,6 +744,103 @@ public class PartialWeights extends Distribution implements EdgeWeights {
             weightedSum += alignment.getPatternWeight(p) * _patternLogLikelihoods[p];
         }
         return weightedSum;
+    }
+
+    /**
+     * Agreement scores of several candidates attached at one shared height, each equal to
+     * {@link #computePartialsAgreement}. The moved node's side (its transition matrices and its
+     * partials propagated to the new parent and normalised) depends only on that height, so it is
+     * computed once instead of once per candidate.
+     */
+    double[] scoreAtSharedHeight(Node fromNode, double[] fromPartials, List<Node> toNodes,
+            List<double[]> toPartials, double toHeight) {
+        calculateTransitionMatrix(fromNode, toHeight, _fromMatrix);
+        for (int category = 0; category < matrixCount; category++) {
+            final int m = category * matrixSize;
+            for (int pattern = 0; pattern < patternCount; pattern++) {
+                final int in = getPartialOffset(pattern, category);
+                double fromSum = 0.0;
+                for (int i = 0; i < stateCount; i++) {
+                    double f = 0.0;
+                    for (int j = 0; j < stateCount; j++) {
+                        f += _fromMatrix[m + i * stateCount + j] * fromPartials[in + j];
+                    }
+                    _fromAtParentAll[in + i] = f;
+                    fromSum += f;
+                }
+                _fromDegenerate[category * patternCount + pattern] = fromSum <= EPS;
+                for (int i = 0; i < stateCount; i++) {
+                    _fromAtParentAll[in + i] /= fromSum;
+                }
+            }
+        }
+        double[] scores = new double[toNodes.size()];
+        for (int k = 0; k < toNodes.size(); k++) {
+            scores[k] = scoreAgainstSharedFrom(toNodes.get(k), toPartials.get(k), toHeight);
+        }
+        return scores;
+    }
+
+    /** Nucleotide case of one (category, pattern) term in {@link #scoreAgainstSharedFrom}, unrolled. */
+    private void accumulateSharedAgreement4(int m, int in, int out, int cp, double[] toPartials,
+            double proportion, double uniform) {
+        final double[] tm = _toMatrix, f = _fromAtParentAll, target = _targetPartials;
+        final double y0 = toPartials[in], y1 = toPartials[in + 1], y2 = toPartials[in + 2], y3 = toPartials[in + 3];
+        final double t0 = tm[m] * y0 + tm[m + 1] * y1 + tm[m + 2] * y2 + tm[m + 3] * y3;
+        final double t1 = tm[m + 4] * y0 + tm[m + 5] * y1 + tm[m + 6] * y2 + tm[m + 7] * y3;
+        final double t2 = tm[m + 8] * y0 + tm[m + 9] * y1 + tm[m + 10] * y2 + tm[m + 11] * y3;
+        final double t3 = tm[m + 12] * y0 + tm[m + 13] * y1 + tm[m + 14] * y2 + tm[m + 15] * y3;
+        final double toSum = t0 + t1 + t2 + t3;
+        if (toSum <= EPS || _fromDegenerate[cp]) {
+            target[out] += uniform * proportion;
+            target[out + 1] += uniform * proportion;
+            target[out + 2] += uniform * proportion;
+            target[out + 3] += uniform * proportion;
+        } else {
+            target[out] += (t0 / toSum) * f[in] * proportion;
+            target[out + 1] += (t1 / toSum) * f[in + 1] * proportion;
+            target[out + 2] += (t2 / toSum) * f[in + 2] * proportion;
+            target[out + 3] += (t3 / toSum) * f[in + 3] * proportion;
+        }
+    }
+
+    /** One candidate's score against the normalised moved-node partials of {@link #scoreAtSharedHeight}. */
+    private double scoreAgainstSharedFrom(Node toNode, double[] toPartials, double toHeight) {
+        calculateTransitionMatrix(toNode, toHeight, _toMatrix);
+        double[] proportions = getSiteModel().getCategoryProportions(toNode);
+        java.util.Arrays.fill(_targetPartials, 0.0);
+        final double uniform = 1.0 / stateCount / stateCount;
+        for (int category = 0; category < matrixCount; category++) {
+            final int m = category * matrixSize;
+            final double proportion = proportions[category];
+            for (int pattern = 0; pattern < patternCount; pattern++) {
+                final int in = getPartialOffset(pattern, category);
+                final int out = pattern * stateCount;
+                if (stateCount == 4) {
+                    accumulateSharedAgreement4(m, in, out, category * patternCount + pattern, toPartials, proportion, uniform);
+                    continue;
+                }
+                double toSum = 0.0;
+                for (int i = 0; i < stateCount; i++) {
+                    double t = 0.0;
+                    for (int j = 0; j < stateCount; j++) {
+                        t += _toMatrix[m + i * stateCount + j] * toPartials[in + j];
+                    }
+                    _toAtParent[i] = t;
+                    toSum += t;
+                }
+                if (toSum <= EPS || _fromDegenerate[category * patternCount + pattern]) {
+                    for (int i = 0; i < stateCount; i++) {
+                        _targetPartials[out + i] += uniform * proportion;
+                    }
+                } else {
+                    for (int i = 0; i < stateCount; i++) {
+                        _targetPartials[out + i] += (_toAtParent[i] / toSum) * _fromAtParentAll[in + i] * proportion;
+                    }
+                }
+            }
+        }
+        return weightedLogLikelihood();
     }
 
     /** Nucleotide case of {@link #accumulateAgreement}, unrolled. */
