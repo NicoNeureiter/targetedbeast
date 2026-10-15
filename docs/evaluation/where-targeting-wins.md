@@ -1919,3 +1919,34 @@ are clean. New weight classes and operators should be added to it.
 with a wrong Hastings ratio and must be rerun. Posterior means (likelihood, tree height, posterior)
 agreed with `pca` within two standard errors, a weak check. The fix also changes the cost: the
 forward pass now rebuilds the whole ancestor chain, and the reverse pass rebuilds nothing.
+
+## Threaded `PartialWeights` on the fixed code
+
+`partial_threaded` rerun after the reverse-pass fix: `pca_thr`, `partial_thr_fixed0p2` and
+`partial_thr_fixed0p5` (4 reps each, same seeds, two cells at a time); the BEAGLE `pca` cells and
+the reference checkpoint were kept (`--touch`), since the fix does not touch their code. All 12 new
+cells pass the ESS gate. Paired, t-based 90% CI, n=4, vs `pca_thr`; * = CI excludes 0:
+
+| metric | b = 0.2 | b = 0.5 | `pca` (BEAGLE) |
+|---|---|---|---|
+| runtime | +92.9% * | +89.1% * | +9.1% * |
+| `treeESS_p10_rf` (topology) | +14.4% | +15.4% | −0.9% |
+| `treeESS_p10_kf` (branch lengths) | **+47.6%** * | **+43.5%** * | +10.9% |
+| `tree.height.ESS` | **+103.8%** * | **+114.1%** * | +11.1% |
+| `posterior.ESS` | −33.2% | −4.0% | +17.9% |
+| `esjd_rnni_targeted` | +21.4% | +14.4% * | +5.6% |
+| `treeESS_p10_rf` per hour | −40.8% * | −38.6% * | −9.1% |
+| `treeESS_p10_kf` per hour | −23.5% * | −24.1% * | +1.8% |
+| `tree.height.ESS` per hour | +5.6% | +13.1% | +1.9% |
+| `posterior.ESS` per hour | −65.4% * | −48.9% * | +8.4% |
+
+- **Per step, the picture survives the fix and the topology gain grows**: RF tree ESS +14–15%
+  (was +4%), still with CI including 0; KF tree ESS +44–48% and tree-height ESS ≈2×, both
+  significant as before. Posterior means agree with `pca` within two standard errors.
+- **The fix is cost-neutral**: partial cells take 533–548 s, as before (≈540 s).
+- **The runtime ratio moved because `pca_thr` did**: its cells took 277–283 s now against
+  348–389 s in the first run, with the same scheduling (each paired with a partial cell). The cause
+  is not known; most likely other load on the machine during the first run. On this run's
+  same-session timing, `PartialWeights` costs ≈1.9× `pca_thr`, not 1.45×, and loses per hour on
+  every metric but tree height. `pca` (BEAGLE) ran in an earlier session, so its runtime row is not
+  comparable either.
