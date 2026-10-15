@@ -153,6 +153,25 @@ public class TargetedOperatorDetailedBalanceTest extends DetailedBalanceTest<Tre
     }
 
     @Test
+    public void testTargWilsonBaldingThreadedPartial() throws Exception {
+        testDetailedBalance(new TreeTrial(tree -> {
+            TreeOperator operator = new TargetedWilsonBalding();
+            operator.initByName("tree", tree, "weight", 1.0, "edgeWeights", getThreadedPartialWeights(tree));
+            return operator;
+        }));
+    }
+
+    @Test
+    public void testRangeSlideThreadedPartial() throws Exception {
+        testDetailedBalance(new TreeTrial(tree -> {
+            RangeSlide operator = new RangeSlide();
+            operator.initByName("tree", tree, "weight", 1.0, "edgeWeights", getThreadedPartialWeights(tree),
+                    "useWeightedStep", true, "size", 0.25, "optimise", false);
+            return operator;
+        }));
+    }
+
+    @Test
     public void testTargWilsonBaldingPartial() throws Exception {
         testDetailedBalance(new TreeTrial(tree -> {
             TreeOperator operator = new TargetedWilsonBalding();
@@ -400,6 +419,23 @@ public class TargetedOperatorDetailedBalanceTest extends DetailedBalanceTest<Tre
 
 
 
+
+    /** PartialWeights over a two-thread likelihood, as ThreadedPartialWeights. */
+    targetedbeast.edgeweights.ThreadedPartialWeights getThreadedPartialWeights(Tree tree) {
+        int savedThreads = beast.base.core.ProgramStatus.m_nThreads;
+        beast.base.core.ProgramStatus.m_nThreads = 2;
+        try {
+            System.setProperty("java.only", "true");
+            beast.base.spec.evolution.likelihood.ThreadedTreeLikelihood likelihood =
+                    new beast.base.spec.evolution.likelihood.ThreadedTreeLikelihood();
+            likelihood.initByName("tree", tree, "siteModel", getSiteModel(), "data", alignment, "threads", 2);
+            targetedbeast.edgeweights.ThreadedPartialWeights edgeWeights = new targetedbeast.edgeweights.ThreadedPartialWeights();
+            edgeWeights.initByName("tree", tree, "likelihood", likelihood);
+            return edgeWeights;
+        } finally {
+            beast.base.core.ProgramStatus.m_nThreads = savedThreads;
+        }
+    }
 
     PartialWeights getPartialWeights(Tree tree) {
         TreeLikelihood treeLikelihood = new TreeLikelihood();
