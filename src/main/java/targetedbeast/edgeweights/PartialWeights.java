@@ -46,6 +46,13 @@ public class PartialWeights extends Distribution implements EdgeWeights {
 	
 	// Track which node was ignored when computing partialsWithoutNode
 	private int currentIgnoredNode = -1;
+
+	// The pruned tree partialsWithoutNode were computed on, by core label; cachedFrom is null when
+	// there are none
+	private Node cachedFrom;
+	private final Map<Node, Integer> coreLabels = new IdentityHashMap<>();
+	private Node[] prunedParents;
+	private double[] prunedHeights;
 	
 	// For every leaf node, generate a sequence number
 	// Leaf nodes with the same sequence have the same number
@@ -109,6 +116,8 @@ public class PartialWeights extends Distribution implements EdgeWeights {
 		
 		partialsWithoutNode = new double[nodeCount][];
 		partialsWithoutNodeValid = new boolean[nodeCount];
+		prunedParents = new Node[nodeCount];
+		prunedHeights = new double[nodeCount];
 		leafPartials = new double[leafNodeCount][];
 		
 		initSequenceID();
@@ -246,7 +255,7 @@ public class PartialWeights extends Distribution implements EdgeWeights {
 			return leafPartials[nodeNr];
 		} else {
 			double[] partials = new double[partialsSize];
-			likelihoodCore.getNodePartials(nodeNr, partials);
+			likelihoodCore.getNodePartials(coreLabel(nodeNr), partials);
 			return partials;
 		}
 	}
@@ -306,48 +315,84 @@ public class PartialWeights extends Distribution implements EdgeWeights {
      * the last likelihood update. Use sparingly, as the likelihood update is expensive.
      */
 	public void updateByOperator() {
-        // Clear stale "without node" partials
-        // partialsWithoutNode = new double[nodeCount][]; 
-        for (int i=0; i<nodeCount; i++)
-            partialsWithoutNodeValid[i] = false;
+		// Source weights are branch lengths, so there is nothing to update.
 	}
 
+	/**
+	 * Computes the partials without {@code ignore} for all of its ancestors; {@code nodes} is
+	 * ignored. These depend only on the tree with {@code ignore} and its parent pruned, which a
+	 * move of {@code ignore}'s subtree leaves unchanged. The reverse pass of such a move therefore
+	 * reuses the forward pass's values: it could not rebuild them, since the likelihood core still
+	 * holds the partials of the tree before the move.
+	 */
 	@Override
 	public void updateByOperatorWithoutNode(int ignore, List<Integer> nodes) {
 		ensureInitialized();
-        updateByOperator();
-
-        // Recalculate the likelihood to ensure partials are up to date
-        // getTree().setEverythingDirty(true);
-        // likelihoodInput.get().calculateLogP();
-		
-		// Ensure that the parent of the ignored node is always included in nodesToUpdate.
-		// This is crucial because when ignore is a node i, its parent p becomes unary.
-		// We must compute partialsWithoutNode[p] so that ancestors of p can properly
-		// fetch p's partials through getPartialsForWithoutNode.
-		Node parentOfIgnore = null;
-		if (ignore >= 0 && ignore < nodeCount) {
-			Node ignoreNode = treeInput.get().getNode(ignore);
-			parentOfIgnore = ignoreNode.getParent();
-		}
-		
-		List<Integer> nodesToUpdate = new ArrayList<>(nodes);
-		if (parentOfIgnore != null && !parentOfIgnore.isRoot()) {
-			if (!nodesToUpdate.contains(parentOfIgnore.getNr())) {
-				nodesToUpdate.add(parentOfIgnore.getNr());
-			}
-		}
-		
-		// Track which node is being ignored and which nodes will have valid partialsWithoutNode
 		currentIgnoredNode = ignore;
-		
-		// Compute modified partials that exclude the contribution of the ignored node
-		Set<Integer> nodeSet = new HashSet<>(nodesToUpdate);
-        
+		Node from = treeInput.get().getNode(ignore);
+		if (from == cachedFrom && prunedTreeUnchanged(from)) {
+			return;
+		}
+		forgetPartialsWithoutNode();
+		Arrays.fill(partialsWithoutNodeValid, false);
+
+		Set<Integer> nodeSet = new HashSet<>();
+		for (Node a = from.getParent(); a != null; a = a.getParent()) {
+			nodeSet.add(a.getNr());
+		}
         Node root = treeInput.get().getRoot();
         Node effectiveRoot = becomesUnary(root, ignore) ? getIncludedChild(root, ignore) : root;
         updatePartialsWithoutNodeRecursive(effectiveRoot, ignore, nodeSet);
+		recordPrunedTree(from);
     }
+
+	/** Forgets the cached partials without a node; call whenever the likelihood core may have changed. */
+	void forgetPartialsWithoutNode() {
+		cachedFrom = null;
+		coreLabels.clear();
+	}
+
+	/**
+	 * The number under which the likelihood core and the cache hold node {@code nodeNr}'s
+	 * partials. These differ only after a move that changed the root, since Tree.setRoot swaps
+	 * the new root's number with the old one's.
+	 */
+	private int coreLabel(int nodeNr) {
+		if (cachedFrom == null) {
+			return nodeNr;
+		}
+		return coreLabels.get(treeInput.get().getNode(nodeNr));
+	}
+
+	private void recordPrunedTree(Node from) {
+		Node parent = from.getParent();
+		for (Node n : treeInput.get().getNodesAsArray()) {
+			coreLabels.put(n, n.getNr());
+			prunedParents[n.getNr()] = prunedParent(n, parent);
+			prunedHeights[n.getNr()] = n.getHeight();
+		}
+		cachedFrom = from;
+	}
+
+	private boolean prunedTreeUnchanged(Node from) {
+		Node parent = from.getParent();
+		for (Node n : treeInput.get().getNodesAsArray()) {
+			if (n == parent || n == from) {
+				continue;
+			}
+			int label = coreLabels.get(n);
+			if (prunedParents[label] != prunedParent(n, parent) || prunedHeights[label] != n.getHeight()) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	/** n's parent once {@code pruned} is removed, null for the root. */
+	private static Node prunedParent(Node n, Node pruned) {
+		Node p = n.getParent();
+		return p == pruned ? p.getParent() : p;
+	}
 
 	/**
 	 * Recursively update partials for the "without node" case.
@@ -461,8 +506,9 @@ public class PartialWeights extends Distribution implements EdgeWeights {
 	 * Otherwise, read from the likelihood core.
 	 */
 	public double[] getPartialsWithoutNode(int nodeNr) {
-		if (partialsWithoutNodeValid[nodeNr])
-            return partialsWithoutNode[nodeNr];
+		int label = coreLabel(nodeNr);
+		if (partialsWithoutNodeValid[label])
+            return partialsWithoutNode[label];
 		else
             return getPartials(nodeNr);
 	}
@@ -479,6 +525,9 @@ public class PartialWeights extends Distribution implements EdgeWeights {
 
 	@Override
 	public void store() {
+		// MCMC stores after every proposal that is not rejected outright, before the likelihood
+		// recomputes the core's partials.
+		forgetPartialsWithoutNode();
 		super.store();
 	}
 
@@ -496,6 +545,7 @@ public class PartialWeights extends Distribution implements EdgeWeights {
 
 	@Override
 	public void restore() {
+		forgetPartialsWithoutNode();
 		super.restore();
 	}
 

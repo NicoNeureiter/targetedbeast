@@ -327,6 +327,11 @@ public class TargetedOperatorDetailedBalanceTest extends DetailedBalanceTest<Tre
             // clears the flags so the operator's own move drives the incremental updates.
             for (targetedbeast.edgeweights.EdgeWeights ew : edgeWeights) {
                 tree.setEverythingDirty(true);
+                if (ew instanceof PartialWeights pw) {
+                    pw.likelihoodInput.get().calculateLogP();
+                } else if (ew instanceof targetedbeast.edgeweights.ThreadedPartialWeights tpw) {
+                    tpw.likelihoodInput.get().calculateLogP();
+                }
                 ew.updateByOperator();
             }
             tree.setEverythingDirty(false);

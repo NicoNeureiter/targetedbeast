@@ -163,6 +163,23 @@ public class ThreadedPartialWeights extends Distribution implements EdgeWeights 
 		}
 	}
 
+	/** The slices are not in the posterior, so MCMC's store and restore reach them only from here. */
+	@Override
+	public void store() {
+		for (PartialWeights slice : slices) {
+			slice.forgetPartialsWithoutNode();
+		}
+		super.store();
+	}
+
+	@Override
+	public void restore() {
+		for (PartialWeights slice : slices) {
+			slice.forgetPartialsWithoutNode();
+		}
+		super.restore();
+	}
+
 	/** Source weights depend only on branch lengths, so any slice gives them. */
 	@Override
 	public double getEdgeWeights(int nodeNr) {
