@@ -1872,7 +1872,7 @@ Per-hour columns are the ESS divided by `runtime_hours`. Paired, t-based 90% CI,
 (Unmarked: CI includes 0.)
 
 - **Threading and the earlier optimisations cut the cost from 5–7× to 1.4–1.5×** `pca`'s on the
-  same likelihood (cells of ~9–10 min against ~30–40 min for the unthreaded sweep).
+  same likelihood (cells of 7–10 min against 30–60 min in the unthreaded sweep).
 - **Per step, the gain is in branch lengths and tree height, not topology.** KF tree ESS rises by
   40–47% and tree-height ESS doubles; RF tree ESS moves by +4%, CI including 0.
 - **Per hour it still loses on topology** (−25–31%) and posterior ESS, breaks even on branch
