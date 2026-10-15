@@ -312,6 +312,33 @@ rule source_mix_partial:
         concat_tsv(input, output.summary)
 
 
+# Source weights length^c (BranchLengthWeights, edge transform exponent c). PCAWeights2 targets on
+# BEAGLE at c = 0.5..2, and PartialWeights targets (b = 0.5) at c = 0.5; c = 1 with PartialWeights
+# is partial_thr_srcmixlen. Run with --cores 4.
+LENGTH_EXPONENT_PCA_SETTINGS = ["pca_srclen0p5", "pca_srclen1", "pca_srclen1p5", "pca_srclen2"]
+LENGTH_EXPONENT_PARTIAL_SETTINGS = ["partial_thr_src_pca", "partial_thr_srcmixlen", "partial_thr_srclen0p5"]
+
+
+rule length_exponent_pca:
+    input:
+        expand(CELL_DIR + "/cell.summary.tsv", dataset="infb", tier="thorough",
+               setting=LENGTH_EXPONENT_PCA_SETTINGS, rep=reps_for("infb", "thorough")),
+    output:
+        summary=str(RUNS_ROOT / "infb" / "thorough" / "length_exponent_pca.summary.tsv"),
+    run:
+        concat_tsv(input, output.summary)
+
+
+rule length_exponent_partial:
+    input:
+        expand(CELL_DIR + "/cell.summary.tsv", dataset="infb", tier="thorough",
+               setting=LENGTH_EXPONENT_PARTIAL_SETTINGS, rep=reps_for("infb", "thorough")),
+    output:
+        summary=str(RUNS_ROOT / "infb" / "thorough" / "length_exponent_partial.summary.tsv"),
+    run:
+        concat_tsv(input, output.summary)
+
+
 # PCAWeights2's distance norm: 1-norm (pca) vs Euclidean (pca_l2) at exponents 1, 1.5, 2, 3,
 # 8 reps. Explicit target.
 NORM_COMPARE_SETTINGS = ["pca", "pca_l2_fixed1", "pca_l2_fixed1p5", "pca_l2", "pca_l2_fixed3"]
