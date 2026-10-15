@@ -443,6 +443,8 @@ public class TargetedWilsonBalding extends TargetedWeightOperator {
 			reverseTotalWeight = reverseWeights.total;
 		}
 		if (reverseTotalWeight < 1E-12) {
+			// BEAST does not restore calculation nodes on a direct reject: undo the cache update above.
+			edgeWeights.reset();
 			return Double.NEGATIVE_INFINITY;
 		}
 		logHastingsRatio += Math.log(iWeight / reverseTotalWeight);
