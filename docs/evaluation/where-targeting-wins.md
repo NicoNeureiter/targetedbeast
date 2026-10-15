@@ -1679,6 +1679,9 @@ now exclude i), so old and new cells must not be paired.
 
 ## `PartialWeights` exponent sweep (fixed kernel)
 
+> **INVALIDATED — rerun before citing.** These cells ran with the `RangeSlide` restore bug and
+> the `PCAWeights2` cache drift described under "Edge-weight cache bugs" below.
+
 First `PartialWeights` results on a valid kernel (`3a79c17`, `d3bdfe9`, `76fc1e7`); the
 `beast2.8-felsenstein-weights` branch's `partial`/`partial_grid` numbers ran on the broken one.
 `PartialWeights` returns a softmax over candidate log-likelihoods, so a pinned exponent b is an
@@ -1726,6 +1729,9 @@ On infB, `PartialWeights` is a better proposal per step once flattened, but not 
 
 ## `PCAWeights2` vs `ConstantWeights` on the fixed kernel
 
+> **INVALIDATED — rerun before citing.** These cells ran with the `RangeSlide` restore bug and
+> the `PCAWeights2` cache drift described under "Edge-weight cache bugs" below.
+
 The project's headline comparison, rerun after the `RangeSlide` fix (`76fc1e7`) at the operators'
 defaults: `snakemake pca_vs_constant`, `thorough` tier, 8 reps (seeds 1000–1007), from a shared
 checkpoint rebuilt on the fixed code. All 16 cells pass the ESS gate. This replaces the earlier
@@ -1756,6 +1762,54 @@ strongly than ESJD: topology ESS rises by nearly half. RNNI ESJD understates the
 reason found above — it is dominated by height reorderings the targeted operators barely touch.
 The ESS-type metrics agree in direction everywhere, which makes this the most solid result in the
 document. Per CPU-second the gain holds (`PCAWeights2` costs little per proposal).
+
+## Edge-weight cache bugs: every `PCAWeights2` result above is affected
+
+Three defects let the edge-weight cache disagree with the tree. All `PCAWeights2` cells in this
+document, and the `PartialWeights` sweep, ran with at least one of them.
+
+1. **`PCAWeights2` ignored height changes** (`efea525`). A node's point is a branch-length-weighted
+   average of its children's, but the resync after a move followed only "filthy" nodes (dirty > 1)
+   and stopped climbing at the move's MRCA (dirty 3). A plain height change (dirty 1) therefore left
+   that node and all its ancestors stale, and so did every node above an MRCA. It now resyncs any
+   dirty node and propagates to the root.
+2. **`RangeSlide` left forward-pass values active** (`99f11c8`). The stale-cache fix ported from the
+   felsenstein branch (`d3bdfe9`) added a second `prestore()` while the forward "without i" pass was
+   never rolled back, so after a rejected move the cache was not restored. It now resets after the
+   forward weights.
+3. **Late direct rejects skipped the restore** (`832feda`). The four targeted operators can return
+   −∞ after updating the cache (degenerate reverse source weights). BEAST does not restore calculation
+   nodes on a direct reject when `requiresStateInitialisation()` is true (the default), so the cache
+   kept describing the rejected tree. They now reset before returning; `TargetedWilsonBalding` had
+   one more such return before its first reset.
+
+**How they were found.** Old and new code gave different chains from the same seed although the
+change only skipped unread values. A probe comparing the cache with a freshly built `PCAWeights2`
+after every step found it stale at 95% of proposal starts on infB, growing over the run, even with
+only a standard `SubtreeSlide` moving the tree. BEAST's `-Dbeast.debug=true` (which validates
+`getChecksum()` after every reject and rechecks the posterior every step) caught defect 2 within
+250 steps and, after the first fix, defect 3 at step ~5,750. The likelihood itself was never wrong:
+BEAST rechecks it by full recomputation, but the edge weights add 0 to the posterior and escape
+that check.
+
+**Why the detailed-balance tests missed them.** They rebuild the cache for every sample, so they
+check a single proposal from a fresh cache, never the state a real chain carries from step to step.
+`EdgeWeightCacheFreshnessTest` now runs a real MCMC per targeted operator, plus one with infB's full
+tree-operator mix for 20,000 steps, with reject validation on, and compares the cache with a fresh
+instance after every step. It fails within 10 steps on the old code. A 20,000-step infB run in
+debug mode is clean on the fixed code. `PartialWeights` is not covered by this test yet.
+
+**Trimming the "without i" rebuild** (`46eb08f`, `8bbdc3e`). `RangeSlide` and `TargetedWilsonBalding`
+rebuilt the cache for all of i's ancestors up to the root; only those up to the highest
+(feasible) target are read. Run with constant identity hash codes (`-XX:hashCode=2`), old and new code
+give identical 5,000-step chains: the trimming changes only speed. Under normal hashing chains differ,
+because `RangeSlide` picks targets by iterating a `HashMap<Node, …>`, whose order depends on when
+nodes were first hashed. Fast tier, `partial_fixed0p2`: `targetedWilsonBalding` −21% per proposal,
+`targetedRangeSlide` −46%, whole chain −13%; for `PCAWeights2` the rebuild is too cheap to matter.
+`TargetedWilsonBaldingFixedHeight` and `TargetedWide` already rebuilt only what they read.
+
+**Reruns.** `pca_vs_constant` is being rerun on the fixed code. The `PartialWeights` sweep
+(`partial_sweep`, ~16 CPU-hours) needs rerunning too if its results are still wanted.
 
 Editing `datasets.yaml` or the renderer makes Snakemake treat existing cells, including the shared
 checkpoint, as out of date. If their rendered XML is unchanged, mark them current with
