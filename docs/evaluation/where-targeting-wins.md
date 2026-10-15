@@ -1950,3 +1950,40 @@ cells pass the ESS gate. Paired, t-based 90% CI, n=4, vs `pca_thr`; * = CI exclu
   same-session timing, `PartialWeights` costs ≈1.9× `pca_thr`, not 1.45×, and loses per hour on
   every metric but tree height. `pca` (BEAGLE) ran in an earlier session, so its runtime row is not
   comparable either.
+
+## Source-edge weights with `PartialWeights` targets
+
+Does the choice of edge to move matter, with `PartialWeights` choosing where it goes? Three source
+weightings, all with `ThreadedPartialWeights` targets at b = 0.5 (`SourceTargetWeights` combines
+two weight classes): branch length + 0.1, `PartialWeights`' own (`partial_thr_fixed0p5`, the
+baseline); uniform (`partial_thr_src_uniform`, `ConstantWeights`); and PCA distance
+(`partial_thr_src_pca`, `PCAWeights2` as in `pca`). Target `source_weights`, 4 reps, same seeds;
+the baseline and `pca_thr` cells are from the rerun above, same session. All cells pass the ESS
+gate. Paired, t-based 90% CI, n=4, vs `partial_thr_fixed0p5`; * = CI excludes 0:
+
+| metric | uniform source | PCA source | `pca_thr` |
+|---|---|---|---|
+| runtime | +18.0% | +14.9% | −47.1% * |
+| `treeESS_p10_rf` (topology) | −0.7% | +7.2% | −13.3% |
+| `treeESS_p10_kf` (branch lengths) | −46.3% * | −26.5% * | −30.3% * |
+| `tree.height.ESS` | −64.2% * | −51.0% * | −53.3% * |
+| `posterior.ESS` | −1.7% | −7.3% | +4.1% |
+| `esjd_rnni_targeted` | +36.8% * | +19.0% * | −12.6% * |
+| `treeESS_p10_rf` per hour | −15.8% | −5.9% | +62.9% * |
+| `treeESS_p10_kf` per hour | −54.0% * | −34.5% * | +31.7% * |
+| `tree.height.ESS` per hour | −69.2% * | −56.6% * | −11.6% |
+| `posterior.ESS` per hour | −16.9% | −19.9% | +95.8% * |
+
+The runtime increases include one slow cell in each new setting (729 s and 718 s against 540–600 s
+for the rest); by median they are +8–9%.
+
+- **The branch-length and tree-height gains come from the source weights, not the targets.** Both
+  other source weightings lose them (KF −27 to −46%, height −51 to −64%), while topology ESS does
+  not move. Uniform and PCA sources move the tree further per targeted proposal (ESJD +19–37%) but
+  mix branch lengths worse.
+- **The targets' own contribution is topology.** With the same PCA source, `PartialWeights` targets
+  against `PCAWeights2` targets (`partial_thr_src_pca` vs `pca_thr`): RF tree ESS +23.6% (CI excludes
+  0), KF +5.6% and height +4.8% (both CI include 0), at 2.2× the runtime.
+- **Partial-informed source weights look unnecessary**: the cheap branch-length weighting is the
+  best of the three. The open question is the reverse: whether `pca`'s own source weights should be
+  branch lengths too.
