@@ -2399,3 +2399,28 @@ No difference is significant at n = 4. c = 0.25 is level with 0.5 on the bottlen
 ahead); c = 0.1, the grid's lower edge and the transform's lowest allowed exponent, trades topology
 (RF min −43%) for likelihood ESS. The tuners' preference for 0.1–0.25 is therefore harmless but not a
 gain; c = 0.25–0.5 is the useful range.
+
+**The target exponent b on the bottleneck reward** (target `bottleneck_b`, 4 reps): one shared
+target transform for the four targeted operators, b tuned over 0.5–6, source exponent fixed at
+c = 0.25; the baseline is c = 0.25 with the operators' default target handling (Wilson–Balding and
+Wide square their target weights, RangeSlide uses them as they come). One `pca_bnb_ref` rep fails the
+ESS gate. Posterior means agree with `pca`. Vs the baseline (bottleneck ESS 176):
+
+| metric | tuned b, per proposal | tuned b, references |
+|---|---|---|
+| bottleneck ESS | −9.1% | −5.2% |
+| `treeESS_p10_rf` | −7.9% | +2.9% |
+| `treeESS_min_rf` | −25.1% | −4.0% |
+| `likelihood.ESS` | −7.1% | −10.1% |
+| `tree.height.ESS` | −17.4% | +3.3% |
+| runtime | +8.8% * | +15.6% * |
+
+- **Both rewards find an interior optimum for b**: the per-proposal reward leads at b = 2 in three
+  reps (3 in one), the reference reward at 3–4 (6 in one), with the reward falling off on both sides.
+  This is the behaviour the earlier jump rewards never showed for the source exponent.
+- **Tuning b does not beat the defaults** on the bottleneck (−9% and −5%, CI including 0). The
+  default squaring (b = 2) is already where the per-proposal reward settles. The tuned runs also give
+  `RangeSlide` the shared b, against its default of 1.
+- With a reward aimed at the bottleneck, the tuners now behave sensibly on both exponents (they avoid
+  known-bad settings and find interior optima where they exist), but on infB they match rather than
+  beat good fixed settings: c = 0.25–0.5 with the default target handling.
