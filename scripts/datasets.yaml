@@ -70,21 +70,22 @@ infb:
                    pca_split_slide_tgt2, pca_split_grid, pca_split_toff0, pca_split_toff0p05,
                    pca_split_toff0p2, pca_split_grid_wide, pca_lentune_jump, pca_lentune_block,
                    pca_lentune_ref, pca_bntune_jump, pca_bntune_block, pca_bntune_ref,
-                   pca_srclen0p1, pca_srclen0p25, pca_bnb_jump, pca_bnb_ref]
+                   pca_srclen0p1, pca_srclen0p25, pca_bnb_jump, pca_bnb_ref, pca_thr_srclen0p5,
+                   partial_thr_bnb_jump]
   # Run with BEAST's -java flag: PartialWeights needs the Java likelihood core, which BEAGLE replaces;
   # pca_nt and pca_thr get the same so their timing is comparable.
   java_only_settings: [pca_nt, partial, partial_fixed0p1, partial_fixed0p2, partial_fixed0p5,
                        partial_fixed1, pca_thr, partial_thr_fixed0p2, partial_thr_fixed0p5,
                        partial_thr_src_uniform, partial_thr_src_pca, partial_thr_srcmix0p5,
                        partial_thr_srcmixlen, partial_thr_srclen0p5, partial_thr_srclen_grid,
-                       partial_thr_srclen_grid_kf]
+                       partial_thr_srclen_grid_kf, pca_thr_srclen0p5, partial_thr_bnb_jump]
   # Run with BEAST's -threads flag, which sets ThreadedTreeLikelihood's thread count (1 otherwise).
   # 2: on infB's 489 patterns, 4 threads gain only 5% over 2 (probe: 0.52 -> 0.49 ms/step).
   threaded_settings:
     threads: 2
     settings: [pca_thr, partial_thr_fixed0p2, partial_thr_fixed0p5, partial_thr_src_uniform,
                partial_thr_src_pca, partial_thr_srcmix0p5, partial_thr_srcmixlen, partial_thr_srclen0p5,
-               partial_thr_srclen_grid, partial_thr_srclen_grid_kf]
+               partial_thr_srclen_grid, partial_thr_srclen_grid_kf, pca_thr_srclen0p5, partial_thr_bnb_jump]
   # Operators a weight transform acts on; collect_stats.py's *_targeted columns cover only these.
   targeted_operators: [TargetedWide, targetedWilsonBalding, targetedWilsonBaldingFixedHeight,
                        targetedRangeSlide]

@@ -512,6 +512,24 @@ rule bottleneck_b:
         concat_tsv(input, output.summary)
 
 
+# PartialWeights against the best pca configuration on the same threaded Java likelihood, judged by
+# the bottleneck ESS: length^0.5 sources with pca targets, with PartialWeights targets (b = 0.5 and
+# b tuned on the bottleneck reward), and the old PartialWeights default (length + 0.1 sources). Run
+# with --cores 4 --forcerun run_beast_checkpointed.
+PARTIAL_BOTTLENECK_SETTINGS = ["pca_thr_srclen0p5", "partial_thr_srclen0p5", "partial_thr_fixed0p5",
+                               "partial_thr_bnb_jump"]
+
+
+rule partial_bottleneck:
+    input:
+        expand(CELL_DIR + "/cell.summary.tsv", dataset="infb", tier="thorough",
+               setting=PARTIAL_BOTTLENECK_SETTINGS, rep=reps_for("infb", "thorough")),
+    output:
+        summary=str(RUNS_ROOT / "infb" / "thorough" / "partial_bottleneck.summary.tsv"),
+    run:
+        concat_tsv(input, output.summary)
+
+
 # PCAWeights2's distance norm: 1-norm (pca) vs Euclidean (pca_l2) at exponents 1, 1.5, 2, 3,
 # 8 reps. Explicit target.
 NORM_COMPARE_SETTINGS = ["pca", "pca_l2_fixed1", "pca_l2_fixed1p5", "pca_l2", "pca_l2_fixed3"]

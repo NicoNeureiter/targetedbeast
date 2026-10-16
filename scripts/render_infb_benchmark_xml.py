@@ -170,6 +170,10 @@ EDGE_WEIGHTS_XML = {
     **{f"pca_lentune_{k}": edge_weights_source_target("length", "pca") for k in ("jump", "block", "ref")},
     **{f"pca_bntune_{k}": edge_weights_source_target("length", "pca") for k in ("jump", "block", "ref")},
     **{f"pca_bnb_{k}": edge_weights_source_target("length", "pca") for k in ("jump", "ref")},
+    # The partial-weights comparison on the threaded Java likelihood: pca with length^0.5 sources, and
+    # PartialWeights targets with length^0.5 sources and b tuned on the bottleneck reward.
+    "pca_thr_srclen0p5": edge_weights_source_target("length", "pca"),
+    "partial_thr_bnb_jump": edge_weights_source_target("length"),
     **{f"partial_thr_srclen{k}": edge_weights_source_target("length") for k in LENGTH_EXPONENTS},
     "partial_thr_srclen_grid": edge_weights_source_target("length"),
     "partial_thr_srclen_grid_kf": edge_weights_source_target("length"),
@@ -462,6 +466,13 @@ WEIGHT_TRANSFORM_XML = {
         ' targetWeightTransform="@targetWeightTransform"',
         '<log idref="targetWeightTransform"/>',
     ) for k, a in TARGET_OFFSETS.items()},
+    # PartialWeights' target exponent b tuned on the bottleneck reward, per proposal.
+    "grid_partial_bnb": (
+        grid_transform("targetWeightTransform", "targetWeightTransform", GRID_EXPONENTS_PARTIAL,
+                       BOTTLENECK_TUNE_REWARDS["jump"][0]),
+        ' targetWeightTransform="@targetWeightTransform"',
+        '<log idref="targetWeightTransform"/>',
+    ),
     **{f"grid_bnb_{k}": (
         grid_transform("targetWeightTransform", "targetWeightTransform", BNB_TARGET_GRID, reward),
         ' targetWeightTransform="@targetWeightTransform"',
@@ -512,6 +523,8 @@ WEIGHT_TRANSFORM_FOR_SETTING = {
     **{f"pca_lentune_{k}": "none" for k in ("jump", "block", "ref")},
     **{f"pca_bntune_{k}": "none" for k in ("jump", "block", "ref")},
     **{f"pca_bnb_{k}": f"grid_bnb_{k}" for k in ("jump", "ref")},
+    "pca_thr_srclen0p5": "none",
+    "partial_thr_bnb_jump": "grid_partial_bnb",
     **{f"partial_thr_srclen{k}": "fixed0p5" for k in LENGTH_EXPONENTS},
     "partial_thr_srclen_grid": "grid_partial",
     "partial_thr_srclen_grid_kf": "grid_partial_kf",
@@ -647,6 +660,8 @@ EDGE_WEIGHT_TRANSFORM_FOR_SETTING = {
     **{f"pca_lentune_{k}": f"lentune_{k}" for k in ("jump", "block", "ref")},
     **{f"pca_bntune_{k}": f"bntune_{k}" for k in ("jump", "block", "ref")},
     **{f"pca_bnb_{k}": f"lenexp{BNB_SOURCE_EXPONENT}" for k in ("jump", "ref")},
+    "pca_thr_srclen0p5": "lenexp0p5",
+    "partial_thr_bnb_jump": "lenexp0p5",
     **{f"partial_thr_srclen{k}": f"lenexp{k}" for k in LENGTH_EXPONENTS},
     "partial_thr_srclen_grid": "lengrid",
     "partial_thr_srclen_grid_kf": "lengrid_kf",
