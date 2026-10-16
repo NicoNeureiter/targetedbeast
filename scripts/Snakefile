@@ -372,6 +372,21 @@ rule operator_split:
         concat_tsv(input, output.summary)
 
 
+# The slide's own target exponent b (0.5, 1 = RangeSlide's default, 2), with the split source
+# exponents (topology operators 0.5, targetedRangeSlide 1.5). Run with --cores 4.
+SLIDE_TARGET_SETTINGS = ["pca_split_slide_tgt0p5", "pca_split_slide_tgt1", "pca_split_slide_tgt2"]
+
+
+rule slide_target:
+    input:
+        expand(CELL_DIR + "/cell.summary.tsv", dataset="infb", tier="thorough",
+               setting=SLIDE_TARGET_SETTINGS, rep=reps_for("infb", "thorough")),
+    output:
+        summary=str(RUNS_ROOT / "infb" / "thorough" / "slide_target.summary.tsv"),
+    run:
+        concat_tsv(input, output.summary)
+
+
 # PCAWeights2's distance norm: 1-norm (pca) vs Euclidean (pca_l2) at exponents 1, 1.5, 2, 3,
 # 8 reps. Explicit target.
 NORM_COMPARE_SETTINGS = ["pca", "pca_l2_fixed1", "pca_l2_fixed1p5", "pca_l2", "pca_l2_fixed3"]

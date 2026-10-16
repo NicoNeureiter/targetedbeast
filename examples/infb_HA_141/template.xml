@@ -266,11 +266,13 @@
                         edgeWeights="@edgeweights" subtreeSlide="@subtreeSlide" shrinkage="0.2"/>
         <operator id="targetedWilsonBaldingDelta2" spec="targetedbeast.operators.TargetedWilsonBaldingHeightDelta" tree="@tree" weight="5"
                         edgeWeights="@edgeweights" subtreeSlide="@subtreeSlide" shrinkage="0.2" forceTopologyChange="true"/> -->
-        <operator id="targetedRangeSlide" spec="targetedbeast.operators.RangeSlide" tree="@tree" edgeWeights="@edgeweights" weight="5" size="2.0" optimise="false" useWeightedStep="true"{target_weight_transform_ref}{targeted_range_slide_edge_transform_ref}/>
+        <operator id="targetedRangeSlide" spec="targetedbeast.operators.RangeSlide" tree="@tree" edgeWeights="@edgeweights" weight="5" size="2.0" optimise="false" useWeightedStep="true"{targeted_range_slide_target_transform_ref}{targeted_range_slide_edge_transform_ref}/>
         <!-- Short weighted slide for local height moves; weight 0 (off) unless a setting turns it on.
-             Its source exponent is localEdgeWeightTransform's, which targetedRangeSlide can share. -->
-        <operator id="localRangeSlide" spec="targetedbeast.operators.RangeSlide" tree="@tree" edgeWeights="@edgeweights" weight="{local_range_slide_weight}" size="0.5" optimise="false" useWeightedStep="true"{target_weight_transform_ref}>
-            <edgeWeightTransform id="localEdgeWeightTransform" spec="targetedbeast.weighttransform.PowerOffsetTransform" exponent="1.5" offset="0.0" optimise="false"/>
+             Its own transforms, localEdgeWeightTransform and localTargetWeightTransform, are what
+             targetedRangeSlide uses when a setting gives the slide its own exponents. -->
+        <operator id="localRangeSlide" spec="targetedbeast.operators.RangeSlide" tree="@tree" edgeWeights="@edgeweights" weight="{local_range_slide_weight}" size="0.5" optimise="false" useWeightedStep="true">
+            {local_edge_weight_transform}
+            {local_target_weight_transform}
         </operator>
         <!-- targeted-operators:end -->
 

@@ -165,7 +165,7 @@ EDGE_WEIGHTS_XML = {
     **{f"partial_thr_srclen{k}": edge_weights_source_target("length") for k in LENGTH_EXPONENTS},
     "partial_thr_srclen_grid": edge_weights_source_target("length"),
     "partial_thr_srclen_grid_kf": edge_weights_source_target("length"),
-    **{k: edge_weights_source_target("length", "pca") for k in ("pca_split_range12", "pca_split_slide", "pca_split_local")},
+    **{k: edge_weights_source_target("length", "pca") for k in ("pca_split_range12", "pca_split_slide", "pca_split_local", "pca_split_slide_tgt0p5", "pca_split_slide_tgt1", "pca_split_slide_tgt2")},
     # PCA source weights mixed towards branch lengths (EDGE_WEIGHT_TRANSFORM_FOR_SETTING); with
     # PartialWeights targets, mix 0 is partial_thr_src_pca.
     **{f"pca_srcmix{k}": EDGE_WEIGHTS_PCA for k in LENGTH_MIX_OFFSETS},
@@ -391,7 +391,7 @@ WEIGHT_TRANSFORM_FOR_SETTING = {
     **{f"partial_thr_srclen{k}": "fixed0p5" for k in LENGTH_EXPONENTS},
     "partial_thr_srclen_grid": "grid_partial",
     "partial_thr_srclen_grid_kf": "grid_partial_kf",
-    **{k: "none" for k in ("pca_split_range12", "pca_split_slide", "pca_split_local")},
+    **{k: "none" for k in ("pca_split_range12", "pca_split_slide", "pca_split_local", "pca_split_slide_tgt0p5", "pca_split_slide_tgt1", "pca_split_slide_tgt2")},
     **{f"pca_srcmix{k}": "none" for k in LENGTH_MIX_OFFSETS},
     **{f"partial_thr_srcmix{k}": "fixed0p5" for k in LENGTH_MIX_OFFSETS if k != "0"},
     "pca_grid_mid_rnni": "grid_mid_rnni",
@@ -496,7 +496,7 @@ EDGE_WEIGHT_TRANSFORM_FOR_SETTING = {
     **{f"partial_thr_srclen{k}": f"lenexp{k}" for k in LENGTH_EXPONENTS},
     "partial_thr_srclen_grid": "lengrid",
     "partial_thr_srclen_grid_kf": "lengrid_kf",
-    **{k: "lenexp0p5" for k in ("pca_split_range12", "pca_split_slide", "pca_split_local")},
+    **{k: "lenexp0p5" for k in ("pca_split_range12", "pca_split_slide", "pca_split_local", "pca_split_slide_tgt0p5", "pca_split_slide_tgt1", "pca_split_slide_tgt2")},
     **{f"partial_thr_srcmix{k}": f"lenmix{k}" for k in LENGTH_MIX_OFFSETS if k != "0"},
     "pca_grid_mid_dual": "grid_mid",
     "pca_grid_mid_ratio": "grid_mid_ratio",
@@ -510,19 +510,38 @@ EDGE_WEIGHT_TRANSFORM_FOR_SETTING = {
 #   pca_split_range12: plain Range at twice its weight;
 #   pca_split_slide:   targetedRangeSlide's source exponent 1.5 (localEdgeWeightTransform's);
 #   pca_split_local:   an added short weighted slide (localRangeSlide, size 0.5, source exponent 1.5).
-SPLIT_SETTINGS = ("pca_split_range12", "pca_split_slide", "pca_split_local")
+def local_transform(role: str, exponent: str) -> str:
+    """A fixed transform on localRangeSlide, by role ("edge" or "target")."""
+    tag = f"{role}WeightTransform"
+    return (f'<{tag} id="local{tag[0].upper()}{tag[1:]}" spec="targetedbeast.weighttransform.PowerOffsetTransform"'
+            f' exponent="{exponent}" offset="0.0" optimise="false"/>')
+
+
+SLIDE_TARGET_EXPONENTS = {"0p5": "0.5", "1": "1.0", "2": "2.0"}
+SPLIT_SETTINGS = ("pca_split_range12", "pca_split_slide", "pca_split_local",
+                  *(f"pca_split_slide_tgt{k}" for k in SLIDE_TARGET_EXPONENTS))
 OPERATOR_SLOTS_FOR_SETTING = {
     "pca_split_range12": {"range_weight": "12.0"},
     "pca_split_slide": {"targeted_range_slide_edge_transform_ref": ' edgeWeightTransform="@localEdgeWeightTransform"'},
     "pca_split_local": {"local_range_slide_weight": "5.0"},
+    # pca_split_slide with the slide's own target exponent b (1 is RangeSlide's untransformed default).
+    **{f"pca_split_slide_tgt{k}": {
+        "targeted_range_slide_edge_transform_ref": ' edgeWeightTransform="@localEdgeWeightTransform"',
+        "targeted_range_slide_target_transform_ref": ' targetWeightTransform="@localTargetWeightTransform"',
+        "local_target_weight_transform": local_transform("target", b),
+    } for k, b in SLIDE_TARGET_EXPONENTS.items()},
 }
 
 
-def operator_slots(setting: str, edge_transform_ref: str) -> dict[str, str]:
+def operator_slots(setting: str, edge_transform_ref: str, target_transform_ref: str) -> dict[str, str]:
     slots = {
         "range_weight": "6.0",
         "targeted_range_slide_edge_transform_ref": edge_transform_ref,
+        "targeted_range_slide_target_transform_ref": target_transform_ref,
         "local_range_slide_weight": "0.0",
+        "local_edge_weight_transform": local_transform("edge", "1.5"),
+        # RangeSlide uses target weights as they come, so exponent 1 is its untransformed default.
+        "local_target_weight_transform": local_transform("target", "1.0"),
     }
     slots.update(OPERATOR_SLOTS_FOR_SETTING.get(setting, {}))
     return slots
@@ -544,7 +563,7 @@ def render_run_xml(template_text: str, setting: str, chain_length: int, out_dir:
         edge_weight_transform_ref=edge_transform_ref,
         edge_weight_transform_log=edge_transform_log,
         likelihood_spec=LIKELIHOOD_SPEC_FOR_SETTING.get(setting, DEFAULT_LIKELIHOOD_SPEC),
-        **operator_slots(setting, edge_transform_ref),
+        **operator_slots(setting, edge_transform_ref, transform_ref),
     )
 
     run_needle = '<run id="mcmc" spec="MCMC" chainLength='
