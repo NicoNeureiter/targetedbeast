@@ -169,6 +169,7 @@ EDGE_WEIGHTS_XML = {
     **{f"pca_srclen{k}": edge_weights_source_target("length", "pca") for k in LENGTH_EXPONENTS},
     **{f"pca_lentune_{k}": edge_weights_source_target("length", "pca") for k in ("jump", "block", "ref")},
     **{f"pca_bntune_{k}": edge_weights_source_target("length", "pca") for k in ("jump", "block", "ref")},
+    **{f"pca_bnb_{k}": edge_weights_source_target("length", "pca") for k in ("jump", "ref")},
     **{f"partial_thr_srclen{k}": edge_weights_source_target("length") for k in LENGTH_EXPONENTS},
     "partial_thr_srclen_grid": edge_weights_source_target("length"),
     "partial_thr_srclen_grid_kf": edge_weights_source_target("length"),
@@ -303,6 +304,12 @@ LENGTH_TUNE_REWARDS = {
     "block": (displacement_reward("displacement", normalisation=50), ' blockLength="100" learnin="20"'),
     "ref": (displacement_reward("displacement", references=3), ""),
 }
+# Target exponent b tuned on the bottleneck reward (pca_bnb_*), shared by the four targeted operators,
+# with the source exponent fixed at BNB_SOURCE_EXPONENT (a LENGTH_EXPONENTS key). Without a transform
+# the Wilson-Balding and Wide operators square their target weights (b = 2), RangeSlide uses them as
+# they come (b = 1).
+BNB_TARGET_GRID = [0.5, 1.0, 2.0, 3.0, 4.0, 6.0]
+BNB_SOURCE_EXPONENT = "0p25"
 BOTTLENECK_TUNE_REWARDS = {
     "jump": (displacement_reward("displacement", tree_metrics=BOTTLENECK_TREE_METRICS), ""),
     "block": (displacement_reward("displacement", normalisation=50, tree_metrics=BOTTLENECK_TREE_METRICS),
@@ -455,6 +462,11 @@ WEIGHT_TRANSFORM_XML = {
         ' targetWeightTransform="@targetWeightTransform"',
         '<log idref="targetWeightTransform"/>',
     ) for k, a in TARGET_OFFSETS.items()},
+    **{f"grid_bnb_{k}": (
+        grid_transform("targetWeightTransform", "targetWeightTransform", BNB_TARGET_GRID, reward),
+        ' targetWeightTransform="@targetWeightTransform"',
+        '<log idref="targetWeightTransform"/>',
+    ) for k, (reward, _) in BOTTLENECK_TUNE_REWARDS.items() if k in ("jump", "ref")},
     "grid_split_topology_wide": (
         grid_transform("targetWeightTransform", "targetWeightTransform", SPLIT_GRID_WIDE_TOPOLOGY_TARGET,
                        shared_reward("rf", "topologyJump", define=False)),
@@ -499,6 +511,7 @@ WEIGHT_TRANSFORM_FOR_SETTING = {
     **{f"pca_srclen{k}": "none" for k in LENGTH_EXPONENTS},
     **{f"pca_lentune_{k}": "none" for k in ("jump", "block", "ref")},
     **{f"pca_bntune_{k}": "none" for k in ("jump", "block", "ref")},
+    **{f"pca_bnb_{k}": f"grid_bnb_{k}" for k in ("jump", "ref")},
     **{f"partial_thr_srclen{k}": "fixed0p5" for k in LENGTH_EXPONENTS},
     "partial_thr_srclen_grid": "grid_partial",
     "partial_thr_srclen_grid_kf": "grid_partial_kf",
@@ -633,6 +646,7 @@ EDGE_WEIGHT_TRANSFORM_FOR_SETTING = {
     **{f"pca_srclen{k}": f"lenexp{k}" for k in LENGTH_EXPONENTS},
     **{f"pca_lentune_{k}": f"lentune_{k}" for k in ("jump", "block", "ref")},
     **{f"pca_bntune_{k}": f"bntune_{k}" for k in ("jump", "block", "ref")},
+    **{f"pca_bnb_{k}": f"lenexp{BNB_SOURCE_EXPONENT}" for k in ("jump", "ref")},
     **{f"partial_thr_srclen{k}": f"lenexp{k}" for k in LENGTH_EXPONENTS},
     "partial_thr_srclen_grid": "lengrid",
     "partial_thr_srclen_grid_kf": "lengrid_kf",
