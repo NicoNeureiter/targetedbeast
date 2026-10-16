@@ -63,6 +63,40 @@ public class TreeJumpFunctionTest {
 		Assert.assertEquals(2.0, fn.jump(), 1e-12);
 	}
 
+	/** Two tuners sharing an instance: one snapshot and one measurement serve both. */
+	@Test
+	public void sharedWithinAProposal() {
+		Tree tree = new TreeParser(NEWICK_BEFORE, false, true, true, 1);
+		int[] distanceCalls = { 0 };
+		KuhnerFelsensteinMetric counting = new KuhnerFelsensteinMetric() {
+			@Override
+			public double distance(beast.base.evolution.tree.TreeInterface t1, beast.base.evolution.tree.TreeInterface t2) {
+				distanceCalls[0]++;
+				return super.distance(t1, t2);
+			}
+		};
+		TreeJumpFunction fn = new TreeJumpFunction();
+		fn.initByName("tree", tree, "treeMetric", counting);
+		fn.beginProposal();
+		fn.beginProposal(); // second tuner, same proposal
+		tree.assignFrom(new TreeParser(NEWICK_AFTER, false, true, true, 1));
+		Assert.assertEquals(2.0, fn.jump(), 1e-12);
+		Assert.assertEquals(2.0, fn.jump(), 1e-12);
+		Assert.assertEquals(1, distanceCalls[0]);
+	}
+
+	/** A pending snapshot from a proposal whose outcome was never reported is retaken once the tree has moved. */
+	@Test
+	public void staleSnapshotIsRetaken() {
+		Tree tree = new TreeParser(NEWICK_BEFORE, false, true, true, 1);
+		TreeJumpFunction fn = new TreeJumpFunction();
+		fn.initByName("tree", tree, "treeMetric", new KuhnerFelsensteinMetric());
+		fn.beginProposal();
+		tree.assignFrom(new TreeParser(NEWICK_AFTER, false, true, true, 1)); // accepted, outcome not reported
+		fn.beginProposal();
+		Assert.assertEquals(0.0, fn.jump(), 0.0);
+	}
+
 	private static TreeJumpFunction newFunction(Tree tree) {
 		RNNIMetric metric = new RNNIMetric(TAXA);
 		TreeJumpFunction fn = new TreeJumpFunction();
