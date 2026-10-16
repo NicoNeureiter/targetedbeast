@@ -170,7 +170,7 @@ EDGE_WEIGHTS_XML = {
     **{f"partial_thr_srclen{k}": edge_weights_source_target("length") for k in LENGTH_EXPONENTS},
     "partial_thr_srclen_grid": edge_weights_source_target("length"),
     "partial_thr_srclen_grid_kf": edge_weights_source_target("length"),
-    **{k: edge_weights_source_target("length", "pca") for k in ("pca_split_range12", "pca_split_slide", "pca_split_local", "pca_split_slide_tgt0p5", "pca_split_slide_tgt1", "pca_split_slide_tgt2", "pca_split_grid")},
+    **{k: edge_weights_source_target("length", "pca") for k in ("pca_split_range12", "pca_split_slide", "pca_split_local", "pca_split_slide_tgt0p5", "pca_split_slide_tgt1", "pca_split_slide_tgt2", "pca_split_grid", "pca_split_grid_wide")},
     **{f"pca_split_toff{k}": edge_weights_source_target("length", "pca") for k in TARGET_OFFSETS},
     # PCA source weights mixed towards branch lengths (EDGE_WEIGHT_TRANSFORM_FOR_SETTING); with
     # PartialWeights targets, mix 0 is partial_thr_src_pca.
@@ -242,15 +242,31 @@ GRID_REWARDS = {
 }
 
 
+TREE_METRIC_SPEC = {
+    "rf": "targetedbeast.weighttransform.RobinsonFouldsMetric",
+    "kf": "targetedbeast.weighttransform.KuhnerFelsensteinMetric",
+}
+
+
+def shared_reward(metric: str, id_: str, define: bool) -> str:
+    """A tree-jump reward shared by the tuners of one operator group: defined by the first, referenced by the rest."""
+    if not define:
+        return f'<reward idref="{id_}"/>'
+    return (f'<reward id="{id_}" spec="targetedbeast.weighttransform.TreeJumpFunction" tree="@tree">'
+            f'<treeMetric spec="{TREE_METRIC_SPEC[metric]}"/></reward>')
+
+
 def grid_transform(tag: str, id_: str, exponents: list[float], reward: str, offset: float = 0.0) -> str:
-    """A grid-tuned PowerOffsetTransform element; tag is edgeWeightTransform or targetWeightTransform."""
+    """A grid-tuned PowerOffsetTransform element; tag is edgeWeightTransform or targetWeightTransform.
+    reward is a GRID_REWARDS key or a reward element."""
+    reward = GRID_REWARDS.get(reward, reward)
     return (
         f'<{tag} id="{id_}" spec="targetedbeast.weighttransform.PowerOffsetTransform"'
         f' exponent="{exponents[len(exponents) // 2]}" offset="{offset}" maxExponent="{max(exponents)}">\n'
         '            <tuner spec="targetedbeast.weighttransform.GridTuner"'
         f' exponents="{" ".join(str(e) for e in exponents)}"'
         f' explorationProb="0.1" burnin="{GRID_BURNIN}">\n'
-        f'                {GRID_REWARDS[reward]}\n'
+        f'                {reward}\n'
         '            </tuner>\n'
         f'        </{tag}>'
     )
@@ -262,6 +278,10 @@ SPLIT_GRID_TOPOLOGY_SOURCE = [0.25, 0.5, 0.75, 1.0]
 SPLIT_GRID_TOPOLOGY_TARGET = [1.0, 2.0, 3.0, 4.0, 6.0]
 SPLIT_GRID_SLIDE_SOURCE = [0.75, 1.0, 1.5, 2.0, 3.0]
 SPLIT_GRID_SLIDE_TARGET = [0.5, 0.75, 1.0, 1.5, 2.0]
+# Extended where the tuners ran to an edge: topology c and b downwards, slide c upwards.
+SPLIT_GRID_WIDE_TOPOLOGY_SOURCE = [0.1, 0.25, 0.5, 0.75, 1.0]
+SPLIT_GRID_WIDE_TOPOLOGY_TARGET = [0.25, 0.5, 1.0, 2.0, 3.0, 4.0]
+SPLIT_GRID_WIDE_SLIDE_SOURCE = [1.0, 1.5, 2.0, 3.0, 4.0, 6.0]
 
 
 def grid_partial_transform(reward: str) -> tuple[str, str, str]:
@@ -396,8 +416,15 @@ WEIGHT_TRANSFORM_XML = {
         ' targetWeightTransform="@targetWeightTransform"',
         '<log idref="targetWeightTransform"/>',
     ) for k, a in TARGET_OFFSETS.items()},
+    "grid_split_topology_wide": (
+        grid_transform("targetWeightTransform", "targetWeightTransform", SPLIT_GRID_WIDE_TOPOLOGY_TARGET,
+                       shared_reward("rf", "topologyJump", define=False)),
+        ' targetWeightTransform="@targetWeightTransform"',
+        '<log idref="targetWeightTransform"/>',
+    ),
     "grid_split_topology": (
-        grid_transform("targetWeightTransform", "targetWeightTransform", SPLIT_GRID_TOPOLOGY_TARGET, "rf"),
+        grid_transform("targetWeightTransform", "targetWeightTransform", SPLIT_GRID_TOPOLOGY_TARGET,
+                       shared_reward("rf", "topologyJump", define=False)),
         ' targetWeightTransform="@targetWeightTransform"',
         '<log idref="targetWeightTransform"/>',
     ),
@@ -436,6 +463,7 @@ WEIGHT_TRANSFORM_FOR_SETTING = {
     "partial_thr_srclen_grid_kf": "grid_partial_kf",
     **{k: "none" for k in ("pca_split_range12", "pca_split_slide", "pca_split_local", "pca_split_slide_tgt0p5", "pca_split_slide_tgt1", "pca_split_slide_tgt2")},
     "pca_split_grid": "grid_split_topology",
+    "pca_split_grid_wide": "grid_split_topology_wide",
     **{f"pca_split_toff{k}": f"fixed3_off{k}" for k in TARGET_OFFSETS},
     **{f"pca_srcmix{k}": "none" for k in LENGTH_MIX_OFFSETS},
     **{f"partial_thr_srcmix{k}": "fixed0p5" for k in LENGTH_MIX_OFFSETS if k != "0"},
@@ -494,9 +522,15 @@ EDGE_WEIGHT_TRANSFORM_XML = {
     "none": ("", "", ""),
     **{f"lenmix{k}": length_mix_edge_transform(a) for k, a in LENGTH_MIX_OFFSETS.items()},
     **{f"lenexp{k}": length_exponent_edge_transform(c) for k, c in LENGTH_EXPONENTS.items()},
+    "lengrid_split_topology_wide": (
+        grid_transform("edgeWeightTransform", "edgeWeightTransform", SPLIT_GRID_WIDE_TOPOLOGY_SOURCE,
+                       shared_reward("rf", "topologyJump", define=True), LENGTH_GRID_OFFSET),
+        ' edgeWeightTransform="@edgeWeightTransform"',
+        '<log idref="edgeWeightTransform"/>',
+    ),
     "lengrid_split_topology": (
-        grid_transform("edgeWeightTransform", "edgeWeightTransform", SPLIT_GRID_TOPOLOGY_SOURCE, "rf",
-                       LENGTH_GRID_OFFSET),
+        grid_transform("edgeWeightTransform", "edgeWeightTransform", SPLIT_GRID_TOPOLOGY_SOURCE,
+                       shared_reward("rf", "topologyJump", define=True), LENGTH_GRID_OFFSET),
         ' edgeWeightTransform="@edgeWeightTransform"',
         '<log idref="edgeWeightTransform"/>',
     ),
@@ -549,6 +583,7 @@ EDGE_WEIGHT_TRANSFORM_FOR_SETTING = {
     "partial_thr_srclen_grid_kf": "lengrid_kf",
     **{k: "lenexp0p5" for k in ("pca_split_range12", "pca_split_slide", "pca_split_local", "pca_split_slide_tgt0p5", "pca_split_slide_tgt1", "pca_split_slide_tgt2")},
     "pca_split_grid": "lengrid_split_topology",
+    "pca_split_grid_wide": "lengrid_split_topology_wide",
     **{f"pca_split_toff{k}": "lenexp0p5" for k in TARGET_OFFSETS},
     **{f"partial_thr_srcmix{k}": f"lenmix{k}" for k in LENGTH_MIX_OFFSETS if k != "0"},
     "pca_grid_mid_dual": "grid_mid",
@@ -573,6 +608,7 @@ def local_transform(role: str, exponent: str) -> str:
 SLIDE_TARGET_EXPONENTS = {"0p5": "0.5", "1": "1.0", "2": "2.0"}
 SPLIT_SETTINGS = ("pca_split_range12", "pca_split_slide", "pca_split_local",
                   *(f"pca_split_slide_tgt{k}" for k in SLIDE_TARGET_EXPONENTS), "pca_split_grid",
+                  "pca_split_grid_wide",
                   *TARGET_OFFSET_SETTINGS)
 OPERATOR_SLOTS_FOR_SETTING = {
     "pca_split_range12": {"range_weight": "12.0"},
@@ -588,15 +624,18 @@ OPERATOR_SLOTS_FOR_SETTING = {
         "targeted_range_slide_edge_transform_ref": ' edgeWeightTransform="@localEdgeWeightTransform"',
         "targeted_range_slide_target_transform_ref": ' targetWeightTransform="@localTargetWeightTransform"',
     } for k in TARGET_OFFSET_SETTINGS},
-    "pca_split_grid": {
+    **{name: {
         "targeted_range_slide_edge_transform_ref": ' edgeWeightTransform="@localEdgeWeightTransform"',
         "targeted_range_slide_target_transform_ref": ' targetWeightTransform="@localTargetWeightTransform"',
-        "local_edge_weight_transform": grid_transform("edgeWeightTransform", "localEdgeWeightTransform",
-                                                      SPLIT_GRID_SLIDE_SOURCE, "kf", LENGTH_GRID_OFFSET),
+        "local_edge_weight_transform": grid_transform("edgeWeightTransform", "localEdgeWeightTransform", source,
+                                                      shared_reward("kf", "slideJump", define=True),
+                                                      LENGTH_GRID_OFFSET),
         "local_target_weight_transform": grid_transform("targetWeightTransform", "localTargetWeightTransform",
-                                                        SPLIT_GRID_SLIDE_TARGET, "kf"),
+                                                        SPLIT_GRID_SLIDE_TARGET,
+                                                        shared_reward("kf", "slideJump", define=False)),
         "local_transform_log": '<log idref="localEdgeWeightTransform"/>\n            <log idref="localTargetWeightTransform"/>',
-    },
+    } for name, source in (("pca_split_grid", SPLIT_GRID_SLIDE_SOURCE),
+                           ("pca_split_grid_wide", SPLIT_GRID_WIDE_SLIDE_SOURCE))},
 }
 
 
