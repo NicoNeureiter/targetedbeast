@@ -97,7 +97,7 @@ def edge_weights_source_target(source: str, target: str = "partial") -> str:
 
 
 # Source weights length^c: BranchLengthWeights through the edge transform's exponent c.
-LENGTH_EXPONENTS = {"0p5": "0.5", "1": "1.0", "1p5": "1.5", "2": "2.0"}
+LENGTH_EXPONENTS = {"0p1": "0.1", "0p25": "0.25", "0p5": "0.5", "1": "1.0", "1p5": "1.5", "2": "2.0"}
 
 # Uniform floor on the topology operators' target weights at exponent 3: offset a gives the uniform
 # weight a/(1+a). With the split source exponents and the slide on its own transforms.
