@@ -60,4 +60,15 @@ public class KuhnerFelsensteinMetricTest {
 		Tree b = tree("(((A:1,B:1):1.5,C:2.5):1,(D:1,E:1):2.5);");
 		Assert.assertEquals(0.5, new TreeHeightMetric().distance(a, b), TOL);
 	}
+
+	/** Comparing prepared forms gives exactly the direct distance, for every prepared metric. */
+	@Test
+	public void preparedDistancesMatchDirect() {
+		Tree a = tree("(((A:1,B:1):1,C:2):1,(D:1,E:1):2);");
+		Tree b = tree("(((A:1,C:1):1.5,B:2.5):1,(D:1,E:1):2.5);");
+		for (PreparedTreeMetric m : new PreparedTreeMetric[] { new KuhnerFelsensteinMetric(), new RobinsonFouldsMetric(),
+				new TreeHeightMetric(), new TreeLengthMetric() }) {
+			Assert.assertEquals(m.getClass().getSimpleName(), m.distance(a, b), m.distance(m.prepare(a), m.prepare(b)), TOL);
+		}
+	}
 }

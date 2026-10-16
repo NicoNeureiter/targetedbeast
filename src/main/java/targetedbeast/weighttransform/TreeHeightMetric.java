@@ -3,10 +3,9 @@ package targetedbeast.weighttransform;
 import beast.base.core.BEASTObject;
 import beast.base.core.Description;
 import beast.base.evolution.tree.TreeInterface;
-import beast.base.evolution.tree.TreeMetric;
 
 @Description("Absolute difference in root height between two trees.")
-public class TreeHeightMetric extends BEASTObject implements TreeMetric {
+public class TreeHeightMetric extends BEASTObject implements PreparedTreeMetric {
 
 	private double referenceHeight;
 
@@ -27,5 +26,15 @@ public class TreeHeightMetric extends BEASTObject implements TreeMetric {
 	@Override
 	public double distance(TreeInterface tree) {
 		return Math.abs(tree.getRoot().getHeight() - referenceHeight);
+	}
+
+	@Override
+	public Object prepare(TreeInterface tree) {
+		return tree.getRoot().getHeight();
+	}
+
+	@Override
+	public double distance(Object prepared1, Object prepared2) {
+		return Math.abs((Double) prepared1 - (Double) prepared2);
 	}
 }

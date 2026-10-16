@@ -37,6 +37,8 @@ public class DisplacementReward extends BEASTObject implements Function, Proposa
 	/** A copy of the state the reward depends on, with a cheap signature to compare it by. */
 	private static final class Snapshot {
 		Tree tree;
+		/** Each tree metric's prepared form of {@link #tree}, null for metrics that cannot prepare. */
+		Object[] prepared;
 		int[] parents;
 		double[] heights;
 		double[] scalars;
@@ -99,9 +101,10 @@ public class DisplacementReward extends BEASTObject implements Function, Proposa
 		}
 		double[] raw = new double[components];
 		double[] level = new double[components];
+		Object[] live = prepare(tree);
 		if (references == 0) {
 			for (int c = 0; c < components; c++) {
-				raw[c] = squaredToLive(c, snapshot);
+				raw[c] = squaredToLive(c, snapshot, live);
 				level[c] = raw[c];
 			}
 		} else if (!referenceStates.isEmpty()) {
@@ -110,7 +113,7 @@ public class DisplacementReward extends BEASTObject implements Function, Proposa
 			int k = 0;
 			for (Snapshot ref : referenceStates) {
 				for (int c = 0; c < components; c++) {
-					after[c][k] = squaredToLive(c, ref);
+					after[c][k] = squaredToLive(c, ref, live);
 					raw[c] += (after[c][k] - before[c][k]) / referenceStates.size();
 					level[c] += after[c][k] / referenceStates.size();
 				}
@@ -176,9 +179,30 @@ public class DisplacementReward extends BEASTObject implements Function, Proposa
 		}
 	}
 
-	private double squaredToLive(int c, Snapshot from) {
+	/** Each tree metric's prepared form of {@code t}; one clade pass per metric instead of one per comparison. */
+	private Object[] prepare(Tree t) {
+		Object[] prepared = new Object[metrics.size()];
+		if (t != null) {
+			for (int c = 0; c < metrics.size(); c++) {
+				if (metrics.get(c) instanceof PreparedTreeMetric m) {
+					prepared[c] = m.prepare(t);
+				}
+			}
+		}
+		return prepared;
+	}
+
+	private double treeDistance(int c, Tree a, Object preparedA, Tree b, Object preparedB) {
+		TreeMetric metric = metrics.get(c);
+		if (metric instanceof PreparedTreeMetric m && preparedA != null && preparedB != null) {
+			return m.distance(preparedA, preparedB);
+		}
+		return metric.distance(a, b);
+	}
+
+	private double squaredToLive(int c, Snapshot from, Object[] live) {
 		if (c < metrics.size()) {
-			double d = metrics.get(c).distance(from.tree, tree);
+			double d = treeDistance(c, from.tree, from.prepared[c], tree, live[c]);
 			return d * d;
 		}
 		Function f = parameters.get(c - metrics.size());
@@ -194,7 +218,7 @@ public class DisplacementReward extends BEASTObject implements Function, Proposa
 
 	private double squared(int c, Snapshot a, Snapshot b) {
 		if (c < metrics.size()) {
-			double d = metrics.get(c).distance(a.tree, b.tree);
+			double d = treeDistance(c, a.tree, a.prepared[c], b.tree, b.prepared[c]);
 			return d * d;
 		}
 		int offset = scalarOffset(c);
@@ -220,6 +244,7 @@ public class DisplacementReward extends BEASTObject implements Function, Proposa
 		if (tree != null) {
 			if (copyTree) {
 				s.tree = tree.copy();
+				s.prepared = prepare(s.tree);
 			}
 			int n = tree.getNodeCount();
 			s.parents = new int[n];

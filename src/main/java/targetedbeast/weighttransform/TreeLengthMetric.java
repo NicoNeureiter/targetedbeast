@@ -4,10 +4,9 @@ import beast.base.core.BEASTObject;
 import beast.base.core.Description;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.TreeInterface;
-import beast.base.evolution.tree.TreeMetric;
 
 @Description("Absolute difference in total branch length between two trees.")
-public class TreeLengthMetric extends BEASTObject implements TreeMetric {
+public class TreeLengthMetric extends BEASTObject implements PreparedTreeMetric {
 
 	private double referenceLength;
 
@@ -37,5 +36,15 @@ public class TreeLengthMetric extends BEASTObject implements TreeMetric {
 			sum += length(child);
 		}
 		return sum;
+	}
+
+	@Override
+	public Object prepare(TreeInterface tree) {
+		return length(tree.getRoot());
+	}
+
+	@Override
+	public double distance(Object prepared1, Object prepared2) {
+		return Math.abs((Double) prepared1 - (Double) prepared2);
 	}
 }

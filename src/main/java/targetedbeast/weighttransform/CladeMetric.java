@@ -7,10 +7,9 @@ import java.util.Map;
 import beast.base.core.BEASTObject;
 import beast.base.evolution.tree.Node;
 import beast.base.evolution.tree.TreeInterface;
-import beast.base.evolution.tree.TreeMetric;
 
 /** A tree metric over rooted clades, matched by the taxa below them; leaves matched by taxon ID. */
-public abstract class CladeMetric extends BEASTObject implements TreeMetric {
+public abstract class CladeMetric extends BEASTObject implements PreparedTreeMetric {
 
 	private Map<String, Integer> leafIndex;
 	private Map<BitSet, Double> reference;
@@ -36,6 +35,17 @@ public abstract class CladeMetric extends BEASTObject implements TreeMetric {
 	@Override
 	public double distance(TreeInterface tree) {
 		return distance(reference, clades(tree));
+	}
+
+	@Override
+	public Object prepare(TreeInterface tree) {
+		return clades(tree);
+	}
+
+	@SuppressWarnings("unchecked")
+	@Override
+	public double distance(Object prepared1, Object prepared2) {
+		return distance((Map<BitSet, Double>) prepared1, (Map<BitSet, Double>) prepared2);
 	}
 
 	/** Branch length above each non-root node, keyed by the taxa below it. */
