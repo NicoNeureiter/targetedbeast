@@ -37,6 +37,8 @@
         <provider classname="targetedbeast.weighttransform.KuhnerFelsensteinMetric"/>
         <provider classname="targetedbeast.weighttransform.RobinsonFouldsMetric"/>
         <provider classname="targetedbeast.weighttransform.TreeHeightMetric"/>
+        <provider classname="targetedbeast.weighttransform.TreeLengthMetric"/>
+        <provider classname="targetedbeast.weighttransform.DisplacementReward"/>
 
         <provider classname="targetedbeast.init.ensureNoZeroEdgeLength"/>
 

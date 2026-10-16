@@ -74,5 +74,7 @@ open module targetedbeast {
         targetedbeast.weighttransform.TreeJumpFunction,
         targetedbeast.weighttransform.KuhnerFelsensteinMetric,
         targetedbeast.weighttransform.RobinsonFouldsMetric,
-        targetedbeast.weighttransform.TreeHeightMetric;
+        targetedbeast.weighttransform.TreeHeightMetric,
+        targetedbeast.weighttransform.TreeLengthMetric,
+        targetedbeast.weighttransform.DisplacementReward;
 }
