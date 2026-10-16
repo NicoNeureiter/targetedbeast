@@ -447,6 +447,23 @@ rule fixed_randomizer:
         concat_tsv(input, output.summary)
 
 
+# One shared source exponent c (length^c, grid 0.25-1.5) tuned on the composite displacement reward
+# per proposal, per block, or against reference states, with fixed c = 0.5 and c = 1 in the same
+# batch. Run with --cores 4 --forcerun run_beast_checkpointed.
+REWARD_MODE_SETTINGS = ["pca_srclen0p5", "pca_srclen1", "pca_lentune_jump", "pca_lentune_block",
+                        "pca_lentune_ref"]
+
+
+rule reward_modes:
+    input:
+        expand(CELL_DIR + "/cell.summary.tsv", dataset="infb", tier="thorough",
+               setting=REWARD_MODE_SETTINGS, rep=reps_for("infb", "thorough")),
+    output:
+        summary=str(RUNS_ROOT / "infb" / "thorough" / "reward_modes.summary.tsv"),
+    run:
+        concat_tsv(input, output.summary)
+
+
 # PCAWeights2's distance norm: 1-norm (pca) vs Euclidean (pca_l2) at exponents 1, 1.5, 2, 3,
 # 8 reps. Explicit target.
 NORM_COMPARE_SETTINGS = ["pca", "pca_l2_fixed1", "pca_l2_fixed1p5", "pca_l2", "pca_l2_fixed3"]

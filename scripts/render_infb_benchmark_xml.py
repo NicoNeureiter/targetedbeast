@@ -167,6 +167,7 @@ EDGE_WEIGHTS_XML = {
     **{f"partial_thr_fixed{k}": EDGE_WEIGHTS_PARTIAL_THREADED for k in PARTIAL_THREADED_EXPONENTS},
     **{f"partial_thr_src_{src}": edge_weights_source_target(src) for src in ("uniform", "pca")},
     **{f"pca_srclen{k}": edge_weights_source_target("length", "pca") for k in LENGTH_EXPONENTS},
+    **{f"pca_lentune_{k}": edge_weights_source_target("length", "pca") for k in ("jump", "block", "ref")},
     **{f"partial_thr_srclen{k}": edge_weights_source_target("length") for k in LENGTH_EXPONENTS},
     "partial_thr_srclen_grid": edge_weights_source_target("length"),
     "partial_thr_srclen_grid_kf": edge_weights_source_target("length"),
@@ -256,7 +257,8 @@ def shared_reward(metric: str, id_: str, define: bool) -> str:
             f'<treeMetric spec="{TREE_METRIC_SPEC[metric]}"/></reward>')
 
 
-def grid_transform(tag: str, id_: str, exponents: list[float], reward: str, offset: float = 0.0) -> str:
+def grid_transform(tag: str, id_: str, exponents: list[float], reward: str, offset: float = 0.0,
+                   tuner_attrs: str = "") -> str:
     """A grid-tuned PowerOffsetTransform element; tag is edgeWeightTransform or targetWeightTransform.
     reward is a GRID_REWARDS key or a reward element."""
     reward = GRID_REWARDS.get(reward, reward)
@@ -265,11 +267,35 @@ def grid_transform(tag: str, id_: str, exponents: list[float], reward: str, offs
         f' exponent="{exponents[len(exponents) // 2]}" offset="{offset}" maxExponent="{max(exponents)}">\n'
         '            <tuner spec="targetedbeast.weighttransform.GridTuner"'
         f' exponents="{" ".join(str(e) for e in exponents)}"'
-        f' explorationProb="0.1" burnin="{GRID_BURNIN}">\n'
+        f' explorationProb="0.1" burnin="{GRID_BURNIN}"{tuner_attrs}>\n'
         f'                {reward}\n'
         '            </tuner>\n'
         f'        </{tag}>'
     )
+
+
+# Composite displacement rewards (DisplacementReward) for tuning one shared source exponent c:
+# RF, KF, root height and tree length, plus the log-likelihood, each normalised by its own scale.
+def displacement_reward(id_: str, references: int = 0, spacing: int = 100, normalisation: int = 1000) -> str:
+    return (
+        f'<reward id="{id_}" spec="targetedbeast.weighttransform.DisplacementReward" tree="@tree"'
+        f' references="{references}" referenceSpacing="{spacing}" normalisation="{normalisation}">'
+        '<treeMetric spec="targetedbeast.weighttransform.RobinsonFouldsMetric"/>'
+        '<treeMetric spec="targetedbeast.weighttransform.KuhnerFelsensteinMetric"/>'
+        '<treeMetric spec="targetedbeast.weighttransform.TreeHeightMetric"/>'
+        '<treeMetric spec="targetedbeast.weighttransform.TreeLengthMetric"/>'
+        '<parameter idref="likelihood"/></reward>'
+    )
+
+
+LENGTH_TUNE_GRID = [0.25, 0.5, 0.75, 1.0, 1.5]
+# Per proposal; per block of 100 tuner proposals (learnin then counts blocks); or against three
+# reference states 100, 200 and 300 measured proposals back.
+LENGTH_TUNE_REWARDS = {
+    "jump": (displacement_reward("displacement"), ""),
+    "block": (displacement_reward("displacement", normalisation=50), ' blockLength="100" learnin="20"'),
+    "ref": (displacement_reward("displacement", references=3), ""),
+}
 
 
 # Separate tuners for the topology operators and the range slide (pca_split_grid), each on a
@@ -458,6 +484,7 @@ WEIGHT_TRANSFORM_FOR_SETTING = {
     **{f"partial_thr_fixed{k}": f"fixed{k}" for k in PARTIAL_THREADED_EXPONENTS},
     **{f"partial_thr_src_{src}": "fixed0p5" for src in ("uniform", "pca")},
     **{f"pca_srclen{k}": "none" for k in LENGTH_EXPONENTS},
+    **{f"pca_lentune_{k}": "none" for k in ("jump", "block", "ref")},
     **{f"partial_thr_srclen{k}": "fixed0p5" for k in LENGTH_EXPONENTS},
     "partial_thr_srclen_grid": "grid_partial",
     "partial_thr_srclen_grid_kf": "grid_partial_kf",
@@ -534,6 +561,12 @@ EDGE_WEIGHT_TRANSFORM_XML = {
         ' edgeWeightTransform="@edgeWeightTransform"',
         '<log idref="edgeWeightTransform"/>',
     ),
+    **{f"lentune_{k}": (
+        grid_transform("edgeWeightTransform", "edgeWeightTransform", LENGTH_TUNE_GRID, reward, LENGTH_GRID_OFFSET,
+                       attrs),
+        ' edgeWeightTransform="@edgeWeightTransform"',
+        '<log idref="edgeWeightTransform"/>',
+    ) for k, (reward, attrs) in LENGTH_TUNE_REWARDS.items()},
     "lengrid": length_grid_edge_transform(),
     "lengrid_kf": length_grid_edge_transform("kf"),
     "grid_mid": (
@@ -578,6 +611,7 @@ LIKELIHOOD_SPEC_FOR_SETTING = {
 EDGE_WEIGHT_TRANSFORM_FOR_SETTING = {
     **{f"pca_srcmix{k}": f"lenmix{k}" for k in LENGTH_MIX_OFFSETS},
     **{f"pca_srclen{k}": f"lenexp{k}" for k in LENGTH_EXPONENTS},
+    **{f"pca_lentune_{k}": f"lentune_{k}" for k in ("jump", "block", "ref")},
     **{f"partial_thr_srclen{k}": f"lenexp{k}" for k in LENGTH_EXPONENTS},
     "partial_thr_srclen_grid": "lengrid",
     "partial_thr_srclen_grid_kf": "lengrid_kf",
