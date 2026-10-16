@@ -2190,3 +2190,42 @@ Per operator (means over 4 reps, per proposal of that operator):
   one rep fails the gate).
 - In this batch c = 1 throughout costs less topology than in the exponent sweep (−6% against −12 to
   −17%): at n = 4 these differences are noisy, and only the split settings were compared within it.
+
+## The slide's target exponent, separate tuners, and a target offset
+
+All with `PCAWeights2` targets on BEAGLE and the split source exponents (topology operators
+length^0.5, `targetedRangeSlide` length^1.5 on its own transforms). 4 reps each, all cells pass
+the ESS gate, posterior means agree with `pca`. Paired, t-based 90% CI, n=4; * = CI excludes 0.
+
+**The slide's own target exponent b** (`slide_target`). `RangeSlide` uses its target weights as
+they come, so b = 1 is its default; the other targeted operators square theirs. Vs b = 1:
+
+| metric | b = 0.5 | b = 2 |
+|---|---|---|
+| `treeESS_p10_rf` | −3.6% | −2.3% |
+| `treeESS_p10_kf` | −6.5% | −15.4% * |
+| `tree.height.ESS` | −7.3% | −16.1% * |
+| `posterior.ESS` | −18.7% | −17.2% |
+
+b = 1 is best. The slide's own acceptance (0.21) and jumps barely change with b.
+
+**Separate grid tuners** (`split_grid`, `pca_split_grid`): the topology operators' source exponent
+c (0.25–1, offset 0.03) and target exponent b (1–6) on an RF-jump reward; the slide's c (0.75–3,
+offset 0.03) and b (0.5–2) on a KF-jump reward. Vs the fixed split (`pca_split_slide_tgt1`, previous
+batch): per step nothing differs significantly (RF −4.2%, KF +2.1%, height +4.9%), but runtime is
++16.6%* (the four tree-jump rewards copy the tree and compute clade metrics on every proposal), so
+per hour RF −17.8%*, KF −12.8%*, posterior −19.4%*. Where the tuners settled:
+
+- topology c: 0.25 in all reps, reward falling monotonically with c (≈1.95 at 0.25 to ≈1.3 at 1);
+- topology b: 1 in three reps, 2 in one, reward falling with b;
+- slide c: 3.0 in all reps, reward rising monotonically (≈0.5 at 0.75 to ≈3.2 at 3);
+- slide b: flat (2.1–2.2), leaders scattered.
+
+Both jump rewards run to the edge of their grids: RF jumps grow as the topology operators' proposals
+flatten, KF jumps as the slide concentrates on long edges. Matching each tuner's reward to its
+operators' job does not give the jump rewards an interior optimum; the fixed split remains the
+better configuration.
+
+**A uniform floor on the topology operators' target weights** at b = 3 (`target_offset`), vs
+offset 0: offset 0.05 gives RF +0.4%, KF −0.9%, height +19.3%; offset 0.2 gives RF −5.6%, KF +9.9%,
+height +16.5%; none significant. A target offset is not worth adding.
