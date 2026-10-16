@@ -2139,3 +2139,54 @@ alternating-call protocol drifted out of phase. Tree-jump rewards now implement 
 (`beginProposal()` at the start of a proposal, `jump()` when MCMC reports the outcome), so a skipped
 outcome only means a fresh snapshot. `pca_grid_mid_rnni` above ran with the old protocol and its
 rewards are unreliable; the likelihood reward reads a state value and was never affected.
+
+## Splitting height moves from topology moves
+
+The source exponent c trades topology against heights because the operators want opposite
+settings: as c rises, the topology operators' acceptance falls while the weighted `RangeSlide`'s
+rises and its moves become local. Three ways of separating the jobs, all with `PCAWeights2` targets
+on BEAGLE and the topology operators (`targetedWilsonBalding`, `…FixedHeight`, `TargetedWide`) at
+source weights length^0.5: plain `Range` at double weight (6 → 12, `pca_split_range12`);
+`targetedRangeSlide` with its own source exponent 1.5 (`pca_split_slide`); and an added short weighted
+slide, `localRangeSlide` (size 0.5, source exponent 1.5, weight 5, `pca_split_local`). The template
+now has slots for these, off by default. `BenchmarkMCMC` also logs per-operator ESJD in root height
+(`esjd_height`), RF (`esjd_rf`) and KF (`esjd_kf`) distance, alongside RNNI. Target
+`operator_split`, 4 reps; the c = 0.5 and c = 1 cells were rerun in the same batch. One
+`pca_split_range12` rep fails the ESS gate (posterior ESS 57); the rest pass. Posterior means agree
+with `pca`.
+
+Paired, t-based 90% CI, n=4, vs c = 0.5 throughout (`pca_srclen0p5`); * = CI excludes 0:
+
+| metric | c = 1 throughout | `Range` ×2 | slide at c = 1.5 | added local slide |
+|---|---|---|---|---|
+| runtime | −1.8% | −3.4% | +4.2% | −7.0% * |
+| `treeESS_p10_rf` | −5.6% | −11.4% | +0.1% | −9.7% |
+| `treeESS_p10_kf` | +0.6% | +18.7% * | +14.4% | +10.9% |
+| `tree.height.ESS` | +13.8% | +39.0% * | +71.3% * | +18.9% |
+| `posterior.ESS` | −1.4% | −39.2% | −1.7% | −13.4% |
+| `treeESS_p10_kf` per hour | +2.2% | +23.4% * | +10.0% | +19.2% |
+| `tree.height.ESS` per hour | +15.5% | +43.7% * | +65.6% * | +27.4% * |
+| `posterior.ESS` per hour | +0.2% | −36.7% | −4.9% | −6.7% |
+
+Per operator (means over 4 reps, per proposal of that operator):
+
+| | c = 0.5 | c = 1 | slide at c = 1.5 |
+|---|---|---|---|
+| topology operators' acceptance | 0.07–0.12 | 0.05–0.09 | 0.07–0.12 |
+| topology operators' `esjd_rf` | 1.5–2.0 | 1.3–1.5 | 1.4–2.0 |
+| `targetedRangeSlide` acceptance | 0.058 | 0.113 | 0.205 |
+| `targetedRangeSlide` `esjd_height` | 0.067 | 0.217 | 0.500 |
+| `targetedRangeSlide` `esjd_kf` | 0.29 | 0.71 | 1.43 |
+
+- **The topology operators never move the root height** (`esjd_height` = 0): root height is moved
+  only by the range slides, the interval scalers and the clock up-down operator.
+- **Giving `targetedRangeSlide` its own exponent removes the trade-off**: tree-height ESS +71%
+  (+66% per hour) with topology ESS unchanged (+0.1%). The topology operators keep exactly their
+  c = 0.5 behaviour, and the slide becomes the main root-height mover (69% of the summed squared
+  root-height jump, against 23% at c = 0.5). It needs its long range (size 2.0) for that: the added
+  size-0.5 slide moves the root height little (`esjd_height` 0.05) and gains less.
+- **Doubling the plain `Range`** helps heights and branch lengths too (+39%/+19%), but by taking
+  proposals away from the other operators, with a topology and posterior-ESS cost (CI includes 0;
+  one rep fails the gate).
+- In this batch c = 1 throughout costs less topology than in the exponent sweep (−6% against −12 to
+  −17%): at n = 4 these differences are noisy, and only the split settings were compared within it.
