@@ -2382,3 +2382,20 @@ c = 0.5; * = CI excludes 0:
 - Whether c = 0.1–0.25 is better than 0.5 on its own is open: the earlier finding that c = 0.1
   hurt topology came from the extended split grid, which had the node randomizer stuck in 3 of 4
   reps.
+
+**Fixed low source exponents** (target `low_exponent`, 4 reps, all cells pass the ESS gate), where the
+bottleneck-reward tuners settled. Vs fixed c = 0.5 (bottleneck ESS 159):
+
+| metric | c = 0.1 | c = 0.25 |
+|---|---|---|
+| bottleneck ESS | −3.0% | +7.7% |
+| `treeESS_p10_rf` | −18.6% | −3.2% |
+| `treeESS_min_rf` | −42.9% | −1.6% |
+| `likelihood.ESS` | +23.8% | +11.3% |
+| `posterior.ESS` | −3.7% | −23.3% |
+| `tree.height.ESS` | −8.1% | −10.5% |
+
+No difference is significant at n = 4. c = 0.25 is level with 0.5 on the bottleneck (slightly
+ahead); c = 0.1, the grid's lower edge and the transform's lowest allowed exponent, trades topology
+(RF min −43%) for likelihood ESS. The tuners' preference for 0.1–0.25 is therefore harmless but not a
+gain; c = 0.25–0.5 is the useful range.
