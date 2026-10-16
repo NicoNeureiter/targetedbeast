@@ -2301,3 +2301,45 @@ CI, n=4; * = CI excludes 0:
   comparison (+0.1% RF) had the randomizer stuck in different reps.
 - From here on, every comparison reruns all its settings in one batch on the current code; only the
   shared reference checkpoint (a starting state, no operator tuning) is reused.
+
+## Composite displacement rewards: per proposal, per block, against references
+
+`DisplacementReward` combines RF, KF, root-height and tree-length distance and the log-likelihood,
+each normalised by its own mean squared displacement (estimated over the first measurements, then
+frozen), so they count equally. Three ways of crediting a grid point: the displacement over one
+proposal (`pca_lentune_jump`); over a block of 100 of the tuner's proposals, holding the grid point
+for the block (`GridTuner blockLength`, `pca_lentune_block`); or the change in squared distance to
+three past reference states, 100, 200 and 300 measured proposals back, so a move that is undone
+scores negative (`pca_lentune_ref`). Each tunes one source exponent c (length^c, grid 0.25–1.5,
+offset 0.03) shared by the four targeted operators, `PCAWeights2` targets, BEAGLE. Fixed c = 0.5 and
+c = 1 in the same batch (`reward_modes`, 4 reps; the node randomizer works in all cells). One
+`pca_lentune_block` rep fails the ESS gate. Posterior means agree with `pca`.
+
+Vs fixed c = 0.5; * = CI excludes 0:
+
+| metric | fixed c = 1 | tuned, per proposal | tuned, per block | tuned, references |
+|---|---|---|---|---|
+| runtime | −3.2% | +23.3% * | +5.6% | +77.1% * |
+| `treeESS_p10_rf` | −6.6% | −6.8% | −3.5% | −8.2% |
+| `treeESS_median_rf` | −7.3% | −12.1% * | −3.6% | −4.5% |
+| `treeESS_p10_kf` | +2.3% | +12.6% | −1.9% | +8.3% |
+| `tree.height.ESS` | +17.8% | +20.7% | +13.9% | +22.1% |
+| `posterior.ESS` | +9.8% | +1.0% | +1.3% | −5.8% |
+
+All three tuners lead at c = 1.5, the top of the grid, in 11 of 12 reps. The per-proposal reward
+rises steeply with c (≈3.6 at 0.25 to ≈8.8 at 1.5); the block and reference rewards are nearly flat
+(differences of a few percent between grid points).
+
+- **No reward mode separates from fixed c = 0.5 on raw ESS**, and neither does fixed c = 1: with the
+  randomizer fixed, the ESS surface over c in 0.5–1.5 is flat within the noise of 4 reps (the
+  topology-versus-heights trade-off is still visible in direction: RF −4 to −8%, height +14 to +22%).
+  This comparison therefore has little power to tell the rewards apart.
+- **The composite favours high c by construction**: three of its five components (KF, root height,
+  tree length) reward branch-length moves, one (RF) topology. Its weighting encodes a point on the
+  trade-off.
+- **Block and reference rewards are much flatter than the per-proposal reward**, consistent with
+  their discounting moves that are undone; at this grid they do not single out a point.
+- **Cost**: the reference mode computes three distances per component per proposal (+77% runtime),
+  the per-proposal mode one (+23%), the block mode one per block (+6%).
+- A decisive test needs grid points whose ESS clearly differs, e.g. c = 0.1 or c = 2, which the
+  earlier runs showed hurt topology mixing badly.
