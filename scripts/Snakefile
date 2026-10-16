@@ -387,6 +387,36 @@ rule slide_target:
         concat_tsv(input, output.summary)
 
 
+# Separate grid tuners for the topology operators (RF-jump reward) and the range slide (KF-jump
+# reward), against the fixed split. Run with --cores 4.
+SPLIT_GRID_SETTINGS = ["pca_split_slide_tgt1", "pca_split_grid"]
+
+
+rule split_grid:
+    input:
+        expand(CELL_DIR + "/cell.summary.tsv", dataset="infb", tier="thorough",
+               setting=SPLIT_GRID_SETTINGS, rep=reps_for("infb", "thorough")),
+    output:
+        summary=str(RUNS_ROOT / "infb" / "thorough" / "split_grid.summary.tsv"),
+    run:
+        concat_tsv(input, output.summary)
+
+
+# Uniform floor (offset 0, 0.05, 0.2) on the topology operators' target weights at exponent 3, with
+# the split source exponents. Run with --cores 4.
+TARGET_OFFSET_SETTINGS = ["pca_split_toff0", "pca_split_toff0p05", "pca_split_toff0p2"]
+
+
+rule target_offset:
+    input:
+        expand(CELL_DIR + "/cell.summary.tsv", dataset="infb", tier="thorough",
+               setting=TARGET_OFFSET_SETTINGS, rep=reps_for("infb", "thorough")),
+    output:
+        summary=str(RUNS_ROOT / "infb" / "thorough" / "target_offset.summary.tsv"),
+    run:
+        concat_tsv(input, output.summary)
+
+
 # PCAWeights2's distance norm: 1-norm (pca) vs Euclidean (pca_l2) at exponents 1, 1.5, 2, 3,
 # 8 reps. Explicit target.
 NORM_COMPARE_SETTINGS = ["pca", "pca_l2_fixed1", "pca_l2_fixed1p5", "pca_l2", "pca_l2_fixed3"]

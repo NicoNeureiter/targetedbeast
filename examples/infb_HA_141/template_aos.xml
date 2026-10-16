@@ -335,6 +335,7 @@
             <!-- <log idref="CoalescentConstant"/> -->
             {target_weight_transform_log}
             {edge_weight_transform_log}
+            {local_transform_log}
         </logger>
         <logger id="screenlog" spec="Logger" logEvery="10000">
             <log idref="posterior"/>
