@@ -45,4 +45,19 @@ public class KuhnerFelsensteinMetricTest {
 		metric.setReference(a);
 		Assert.assertEquals(2.0, metric.distance(b), TOL);
 	}
+
+	@Test
+	public void robinsonFouldsCountsUnmatchedClades() {
+		Tree a = tree("(((A:1,B:1):1,C:2):1,(D:1,E:1):2);");
+		Tree b = tree("(((A:1,C:1):1,B:2):1,(D:1,E:1):2);");
+		Assert.assertEquals(0.0, new RobinsonFouldsMetric().distance(a, tree("(((A:1,B:1):1.5,C:2.5):1,(D:1,E:1):2.5);")), 0.0);
+		Assert.assertEquals(2.0, new RobinsonFouldsMetric().distance(a, b), 0.0);
+	}
+
+	@Test
+	public void treeHeightIsRootHeightDifference() {
+		Tree a = tree("(((A:1,B:1):1,C:2):1,(D:1,E:1):2);");
+		Tree b = tree("(((A:1,B:1):1.5,C:2.5):1,(D:1,E:1):2.5);");
+		Assert.assertEquals(0.5, new TreeHeightMetric().distance(a, b), TOL);
+	}
 }
