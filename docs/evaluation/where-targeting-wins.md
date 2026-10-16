@@ -2222,10 +2222,48 @@ per hour RF −17.8%*, KF −12.8%*, posterior −19.4%*. Where the tuners settl
 - slide b: flat (2.1–2.2), leaders scattered.
 
 Both jump rewards run to the edge of their grids: RF jumps grow as the topology operators' proposals
-flatten, KF jumps as the slide concentrates on long edges. Matching each tuner's reward to its
-operators' job does not give the jump rewards an interior optimum; the fixed split remains the
-better configuration.
+flatten, KF jumps as the slide concentrates on long edges. This run alone does not say whether
+following them past the grid bounds helps; the next section tests that.
 
 **A uniform floor on the topology operators' target weights** at b = 3 (`target_offset`), vs
 offset 0: offset 0.05 gives RF +0.4%, KF −0.9%, height +19.3%; offset 0.2 gives RF −5.6%, KF +9.9%,
 height +16.5%; none significant. A target offset is not worth adding.
+
+## Shared tree-jump rewards, and extended grids
+
+Tuners driven by the same proposals now share one `TreeJumpFunction`, which snapshots the tree and
+measures the distance once per proposal (it keeps a pending snapshot only while the tree still
+matches it, so a proposal whose outcome MCMC did not report cannot leave a stale one). The split grid
+was rerun with shared rewards, and on grids extended where the tuners had stopped at an edge
+(`pca_split_grid_wide`: topology c 0.1–1 and b 0.25–4, slide c 1–6, slide b 0.5–2). Target
+`split_grid_shared`, 4 reps, the fixed split rerun in the same batch. One `pca_split_grid_wide` rep
+fails the ESS gate; the rest pass. Posterior means agree with `pca`.
+
+Vs the fixed split (`pca_split_slide_tgt1`); * = CI excludes 0:
+
+| metric | grid (shared rewards) | extended grid |
+|---|---|---|
+| runtime | +9.1% | +6.4% |
+| `treeESS_p10_rf` | −2.4% | −31.1% * |
+| `treeESS_median_rf` | −7.2% * | −26.1% * |
+| `treeESS_p10_kf` | −1.5% | −2.8% |
+| `tree.height.ESS` | +8.6% | −2.4% |
+| `posterior.ESS` | +6.4% | −38.0% |
+| `treeESS_p10_rf` per hour | −10.1% | −34.1% * |
+| `treeESS_p10_kf` per hour | −9.9% | −8.1% |
+| `tree.height.ESS` per hour | −0.6% | −6.6% |
+
+Where the extended tuners settled, in all four reps: topology c at 0.1 (the new floor), slide c at 6
+(the new ceiling, though its reward flattens: ≈3.2 at 3, 3.6 at 4, 3.8 at 6), topology b at 1–2 (an
+interior optimum, near the operators' default squaring), slide b flat.
+
+- **Sharing halves the overhead** (+17% to +9% runtime against the fixed split; the cross-batch
+  comparison before had the same baseline issue, so this is approximate).
+- **Following the jump rewards past the old bounds hurts.** With topology c at 0.1 the topology ESS
+  drops by 26–31%. RF jumps per proposal keep rising as the source weights flatten towards uniform,
+  but topology mixing gets worse; uniform source weights were also the worst in the source-weight
+  comparison. The jump reward is misleading for the source exponent, not just bounded by the grid.
+- **The target exponent b is the one parameter with an interior optimum under the RF reward**, at
+  1–2.
+- Which of the two edge moves caused the loss is not separated here; the topology source exponent
+  is the likely cause, since it alone acts on the topology operators.
