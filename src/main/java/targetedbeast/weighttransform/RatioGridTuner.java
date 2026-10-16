@@ -100,21 +100,8 @@ public class RatioGridTuner extends CoefficientTuner {
         if (Randomizer.nextDouble() < explorationProbInput.get() || !hasLearned()) {
             return Randomizer.nextInt(ratios.length);
         }
-        double total = 0.0;
-        for (double r : meanReward) {
-            total += r;
-        }
-        if (!(total > 0.0)) {
-            return Randomizer.nextInt(ratios.length);
-        }
-        double u = Randomizer.nextDouble() * total;
-        for (int i = 0; i < ratios.length; i++) {
-            u -= meanReward[i];
-            if (u < 0.0) {
-                return i;
-            }
-        }
-        return ratios.length - 1;
+        int choice = GridChoice.proportional(meanReward);
+        return choice < 0 ? Randomizer.nextInt(ratios.length) : choice;
     }
 
     private boolean hasLearned() {
@@ -133,8 +120,7 @@ public class RatioGridTuner extends CoefficientTuner {
         }
         double reward;
         if (rewardFunction != null) {
-            double jump = ProposalReward.jump(rewardFunction, rewardBefore);
-            reward = jump * jump;
+            reward = ProposalReward.reward(rewardFunction, rewardBefore);
         } else {
             reward = Math.exp(Math.min(logAlpha, 0.0));
         }

@@ -16,6 +16,12 @@ public interface ProposalReward {
 	/** Size of the change since the last {@link #beginProposal()}. */
 	double jump();
 
+	/** The tuner's reward for the proposal: by default the squared jump; may be signed. */
+	default double reward() {
+		double jump = jump();
+		return jump * jump;
+	}
+
 	/** Starts a proposal on any reward Function; returns the "before" value of a plain Function. */
 	static double begin(Function reward) {
 		if (reward instanceof ProposalReward r) {
@@ -25,8 +31,12 @@ public interface ProposalReward {
 		return reward.getArrayValue();
 	}
 
-	/** The jump across the proposal begun with {@link #begin}, given the value that returned. */
-	static double jump(Function reward, double before) {
-		return reward instanceof ProposalReward r ? r.jump() : reward.getArrayValue() - before;
+	/** The reward for the proposal begun with {@link #begin}, given the value that returned. */
+	static double reward(Function reward, double before) {
+		if (reward instanceof ProposalReward r) {
+			return r.reward();
+		}
+		double jump = reward.getArrayValue() - before;
+		return jump * jump;
 	}
 }

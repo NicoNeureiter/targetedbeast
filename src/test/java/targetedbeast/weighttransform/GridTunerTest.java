@@ -397,4 +397,43 @@ public class GridTunerTest {
 		t.optimize(0.0);
 		Assert.assertArrayEquals(new int[] { 2, 1 }, calls);
 	}
+
+	/** In block mode the reward is begun once per block and read once at its end. */
+	@Test
+	public void blockModeReadsOncePerBlock() {
+		int[] calls = { 0, 0 };
+		class CountingReward implements Function, ProposalReward {
+			@Override
+			public void beginProposal() {
+				calls[0]++;
+			}
+
+			@Override
+			public double jump() {
+				calls[1]++;
+				return 1.0;
+			}
+
+			@Override
+			public int getDimension() {
+				return 1;
+			}
+
+			@Override
+			public double getArrayValue(int dim) {
+				throw new UnsupportedOperationException();
+			}
+		}
+		PowerOffsetTransform t = transform("reward", new CountingReward(), "blockLength", 3);
+		double[] exponents = new double[6];
+		for (int i = 0; i < 6; i++) {
+			t.startProposal();
+			exponents[i] = t.getEffectiveCoefficients()[0];
+			t.apply(new double[] { 1.0, 2.0 });
+			t.optimize(0.0);
+		}
+		Assert.assertArrayEquals(new int[] { 2, 2 }, calls);
+		Assert.assertEquals(exponents[0], exponents[2], 0.0);
+		Assert.assertEquals(exponents[3], exponents[5], 0.0);
+	}
 }
