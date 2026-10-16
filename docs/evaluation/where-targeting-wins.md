@@ -2343,3 +2343,42 @@ rises steeply with c (≈3.6 at 0.25 to ≈8.8 at 1.5); the block and reference 
   the per-proposal mode one (+23%), the block mode one per block (+6%).
 - A decisive test needs grid points whose ESS clearly differs, e.g. c = 0.1 or c = 2, which the
   earlier runs showed hurt topology mixing badly.
+
+## The mixing bottleneck, and a reward aimed at it
+
+**Which ESS limits the chain.** On the clean cells (fixed c = 0.5 and c = 1 in `reward_modes`), mean
+ESS lowest first: RF tree ESS (min ≈107, p10 166–177), log-likelihood (151–177), posterior (206–227),
+prior (231–256), tree length (≈310), KF p10 (≈550), popSize and clock rate (580–660), tree height
+(700–830), gamma shape and kappa (1000–1140). The log-likelihood is the lowest logged parameter in
+16 of 20 cells. Topology and the likelihood are the bottleneck; tree height, branch lengths and the
+substitution and clock parameters mix 3–6× better. Gains in tree-height or KF ESS bought with
+topology ESS (the split, higher c) therefore improve what was not limiting.
+
+**A reward on the bottleneck only.** `DisplacementReward` with RF and the log-likelihood, tuning one
+shared source exponent over a grid including points known to hurt topology mixing (c = 0.1, 0.25,
+0.5, 1, 2), per proposal, per block of 100, or against three references (reference trees' clades
+are now prepared once, `PreparedTreeMetric`). Fixed c = 0.5 and c = 2 in the same batch (target
+`bottleneck_tune`, 4 reps). One fixed c = 2 rep fails the ESS gate. Posterior means agree with `pca`.
+"Bottleneck" below is the lower of RF p10 tree ESS and log-likelihood ESS in each cell. Vs fixed
+c = 0.5; * = CI excludes 0:
+
+| metric | fixed c = 2 | tuned, per proposal | tuned, per block | tuned, references |
+|---|---|---|---|---|
+| bottleneck ESS | −35.3% * | +7.5% | −4.8% | −1.1% |
+| `treeESS_p10_rf` | −42.3% * | −0.9% | −10.6% | −7.3% |
+| `treeESS_min_rf` | −41.4% * | +20.9% * | −8.0% | −10.1% |
+| `likelihood.ESS` | −25.1% | +3.1% | −6.6% | +2.4% |
+| `treeESS_p10_kf` | +16.5% | +14.3% | +6.9% | +8.4% * |
+| `tree.height.ESS` | +65.6% * | +51.4% * | +24.4% | +20.3% |
+| runtime | −22.1% * | +7.7% | −3.8% | +17.9% * |
+
+- **All three rewards now rank c = 2 last in every rep**, by a wide margin, and fall monotonically in
+  c, leading at 0.1 or 0.25. Fixed c = 2 confirms the ranking: bottleneck ESS −35%.
+- **The tuned chains match fixed c = 0.5 on the bottleneck** (−5% to +8%, CI including 0), with the
+  per-proposal reward slightly ahead (RF min +21%*). Aiming the reward at the bottleneck removes the
+  mismatch seen with the earlier rewards, which all ran to the top of the grid.
+- **The three modes agree on the ranking.** Per proposal is the cheapest per unit of signal; caching
+  the reference clades brought the reference mode from +77% to +18% runtime.
+- Whether c = 0.1–0.25 is better than 0.5 on its own is open: the earlier finding that c = 0.1
+  hurt topology came from the extended split grid, which had the node randomizer stuck in 3 of 4
+  reps.
