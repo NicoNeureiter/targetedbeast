@@ -2424,3 +2424,34 @@ ESS gate. Posterior means agree with `pca`. Vs the baseline (bottleneck ESS 176)
 - With a reward aimed at the bottleneck, the tuners now behave sensibly on both exponents (they avoid
   known-bad settings and find interior optima where they exist), but on infB they match rather than
   beat good fixed settings: c = 0.25–0.5 with the default target handling.
+
+## `PartialWeights` against the best `pca` configuration, on the bottleneck
+
+All on the threaded Java likelihood (two threads), in one batch on the current code (target
+`partial_bottleneck`, 4 reps, all cells pass the ESS gate, posterior means agree): `pca` targets with
+length^0.5 sources (`pca_thr_srclen0p5`, the best `pca` configuration found); `PartialWeights` targets
+at b = 0.5 with length^0.5 sources (`partial_thr_srclen0p5`) or with the old length + 0.1 sources
+(`partial_thr_fixed0p5`); and `PartialWeights` with length^0.5 sources and b tuned on the bottleneck
+reward per proposal over 0.1–1 (`partial_thr_bnb_jump`). Bottleneck ESS is the lower of RF p10 tree
+ESS and log-likelihood ESS. Vs `pca_thr_srclen0p5`; * = CI excludes 0:
+
+| metric | partial, length^0.5 | partial, length + 0.1 | partial, tuned b |
+|---|---|---|---|
+| bottleneck ESS | −10.8% | −11.8% | −1.6% |
+| `treeESS_p10_rf` | +3.3% | −2.7% | +9.3% |
+| `treeESS_min_rf` | +9.7% | +17.2% | +28.2% |
+| `likelihood.ESS` | −11.4% | −13.7% | −6.8% |
+| `posterior.ESS` | −23.3% | −25.6% | −20.7% |
+| `tree.height.ESS` | +9.1% | +36.1% * | −13.0% |
+| runtime | +107% * | +93% * | +109% * |
+| bottleneck ESS per hour | 1051 vs 2439 | 1112 | 1157 |
+
+The tuned b leads at 0.2 in three reps (0.5 in one), with a flat reward over 0.1–0.5 and lower at
+0.75–1, matching the fixed sweep's 0.2–0.5.
+
+- **On raw bottleneck ESS, `PartialWeights` does not beat `pca` once `pca` has length-based source
+  weights** (−2% to −12%, CI including 0); topology ESS alone is at best slightly higher (RF p10 +9%,
+  min +28% with tuned b, CI including 0), the likelihood ESS slightly lower.
+- The earlier per-step topology gains of `PartialWeights` over `pca` were measured against `pca`
+  with its PCA source weights; length-based sources close most of that gap on their own.
+- At twice the runtime, `PartialWeights` delivers less than half the bottleneck ESS per hour.
