@@ -2267,3 +2267,37 @@ interior optimum, near the operators' default squaring), slide b flat.
   1–2.
 - Which of the two edge moves caused the loss is not separated here; the topology source exponent
   is the likely cause, since it alone acts on the topology operators.
+
+## `HeightBasedNodeRandomizer` was stuck in about half the cells; baselines rerun
+
+`HeightBasedNodeRandomizer` (in the infB template, weight 0.5) does not read the edge weights, but
+its step-size adaptation could collapse: once `percentage` was too small for any node to qualify,
+every proposal was invalid, MCMC reported that to `optimize` as a rejection, `percentage` shrank
+further, and the intended floor `1/nodeCount` was integer division, i.e. 0. In 29 of the 52 cells of
+the latest batches it accepted almost nothing (one stuck cell: 3 accepts in 8,653 proposals); where it
+worked it was the largest single topology mover (≈44 RF per accepted proposal) and RF tree ESS was
+≈16% higher. Which reps got stuck was effectively random, so **every infB result in this document
+carries that extra per-rep noise in topology ESS** (no systematic bias, since it does not depend on
+the setting). Fixed in `f031295`: a proposal with no candidate makes `percentage` grow, and the floor
+is 1/(internal node count).
+
+Baselines rerun on the fixed code, all settings in one batch (target `fixed_randomizer`, 4 reps; the
+randomizer works in all 12 cells, acceptance 0.24–0.29; all pass the ESS gate). Paired, t-based 90%
+CI, n=4; * = CI excludes 0:
+
+| metric | length^0.5 sources vs `pca` | fixed split vs `pca` | fixed split vs length^0.5 |
+|---|---|---|---|
+| runtime | +0.4% | +2.2% | +1.8% |
+| `treeESS_p10_rf` | +24.8% * | +7.1% | −14.2% * |
+| `treeESS_median_rf` | +14.0% * | +4.8% | −8.1% |
+| `treeESS_p10_kf` | +38.2% * | +47.2% * | +6.5% |
+| `tree.height.ESS` | +61.7% | +134.5% * | +45.0% |
+| `posterior.ESS` | −9.1% | −8.0% | +1.1% |
+
+- **Length-based source weights beat `pca`'s PCA source weights** on topology, branch lengths and
+  tree height.
+- **The split's "no topology cost" does not hold up on clean cells**: against length^0.5 everywhere
+  it now costs 14% RF tree ESS (CI excludes 0) for +45% tree-height ESS (CI includes 0). The earlier
+  comparison (+0.1% RF) had the randomizer stuck in different reps.
+- From here on, every comparison reruns all its settings in one batch on the current code; only the
+  shared reference checkpoint (a starting state, no operator tuning) is reused.
