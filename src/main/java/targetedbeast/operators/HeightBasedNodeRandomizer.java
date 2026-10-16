@@ -28,6 +28,9 @@ public class HeightBasedNodeRandomizer extends TreeOperator {
     double limit;
     double percentage;
     double lower;
+
+    /** True if the last proposal found no candidate node, i.e. percentage was too small to propose anything. */
+    private boolean noCandidates;
     
 	@Override
 	public void initAndValidate() {
@@ -45,6 +48,7 @@ public class HeightBasedNodeRandomizer extends TreeOperator {
 	public double proposal() {
 		final Tree tree = treeInput.get();
 		double logHastingsRatio = 0;
+		noCandidates = false;
 		
 		List<Double> heights = new ArrayList<>();
 		for (int i = 0; i < tree.getNodeCount(); i++) {			
@@ -99,6 +103,7 @@ public class HeightBasedNodeRandomizer extends TreeOperator {
 			
 			// choose a random node avoiding root
 			if (totalCandidates == 0) {
+				noCandidates = true;
 				return Double.NEGATIVE_INFINITY;
 			}
 
@@ -290,10 +295,12 @@ public class HeightBasedNodeRandomizer extends TreeOperator {
     @Override
     public void optimize(final double logAlpha) {
         if (optimiseInput.get()) {
-            double delta = calcDelta(logAlpha);
+            // A proposal with no candidate node means percentage is too small to propose
+            // anything. Counting it as a rejection would shrink percentage further, which made
+            // this an absorbing state; grow instead, as after an accepted move.
+            double delta = calcDelta(noCandidates ? 0.0 : logAlpha);
             delta += Math.log(percentage);
             final double f = Math.exp(delta);
-            double lower = 1/treeInput.get().getNodeCount();
         	percentage = Math.min(Math.max(f, lower), 0.25);
         }
     }
