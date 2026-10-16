@@ -355,6 +355,23 @@ rule length_grid_partial:
         concat_tsv(input, output.summary)
 
 
+# Height moves split off the topology operators (pca targets, length^0.5 sources): plain Range at
+# double weight, targetedRangeSlide at source exponent 1.5, or an added short localRangeSlide. The c = 0.5
+# and c = 1 baselines are rerun for per-operator height/RF/KF jumps. Run with --cores 4.
+OPERATOR_SPLIT_SETTINGS = ["pca_srclen0p5", "pca_srclen1", "pca_split_range12", "pca_split_slide",
+                           "pca_split_local"]
+
+
+rule operator_split:
+    input:
+        expand(CELL_DIR + "/cell.summary.tsv", dataset="infb", tier="thorough",
+               setting=OPERATOR_SPLIT_SETTINGS, rep=reps_for("infb", "thorough")),
+    output:
+        summary=str(RUNS_ROOT / "infb" / "thorough" / "operator_split.summary.tsv"),
+    run:
+        concat_tsv(input, output.summary)
+
+
 # PCAWeights2's distance norm: 1-norm (pca) vs Euclidean (pca_l2) at exponents 1, 1.5, 2, 3,
 # 8 reps. Explicit target.
 NORM_COMPARE_SETTINGS = ["pca", "pca_l2_fixed1", "pca_l2_fixed1p5", "pca_l2", "pca_l2_fixed3"]

@@ -165,6 +165,7 @@ EDGE_WEIGHTS_XML = {
     **{f"partial_thr_srclen{k}": edge_weights_source_target("length") for k in LENGTH_EXPONENTS},
     "partial_thr_srclen_grid": edge_weights_source_target("length"),
     "partial_thr_srclen_grid_kf": edge_weights_source_target("length"),
+    **{k: edge_weights_source_target("length", "pca") for k in ("pca_split_range12", "pca_split_slide", "pca_split_local")},
     # PCA source weights mixed towards branch lengths (EDGE_WEIGHT_TRANSFORM_FOR_SETTING); with
     # PartialWeights targets, mix 0 is partial_thr_src_pca.
     **{f"pca_srcmix{k}": EDGE_WEIGHTS_PCA for k in LENGTH_MIX_OFFSETS},
@@ -390,6 +391,7 @@ WEIGHT_TRANSFORM_FOR_SETTING = {
     **{f"partial_thr_srclen{k}": "fixed0p5" for k in LENGTH_EXPONENTS},
     "partial_thr_srclen_grid": "grid_partial",
     "partial_thr_srclen_grid_kf": "grid_partial_kf",
+    **{k: "none" for k in ("pca_split_range12", "pca_split_slide", "pca_split_local")},
     **{f"pca_srcmix{k}": "none" for k in LENGTH_MIX_OFFSETS},
     **{f"partial_thr_srcmix{k}": "fixed0p5" for k in LENGTH_MIX_OFFSETS if k != "0"},
     "pca_grid_mid_rnni": "grid_mid_rnni",
@@ -494,12 +496,36 @@ EDGE_WEIGHT_TRANSFORM_FOR_SETTING = {
     **{f"partial_thr_srclen{k}": f"lenexp{k}" for k in LENGTH_EXPONENTS},
     "partial_thr_srclen_grid": "lengrid",
     "partial_thr_srclen_grid_kf": "lengrid_kf",
+    **{k: "lenexp0p5" for k in ("pca_split_range12", "pca_split_slide", "pca_split_local")},
     **{f"partial_thr_srcmix{k}": f"lenmix{k}" for k in LENGTH_MIX_OFFSETS if k != "0"},
     "pca_grid_mid_dual": "grid_mid",
     "pca_grid_mid_ratio": "grid_mid_ratio",
     "pca_aos_mid": "none",
     "pca_l2": "none",
 }
+
+
+# Splitting height moves from topology moves (pca targets, length^0.5 sources for the topology
+# operators). Overrides of the operator slots below, by setting:
+#   pca_split_range12: plain Range at twice its weight;
+#   pca_split_slide:   targetedRangeSlide's source exponent 1.5 (localEdgeWeightTransform's);
+#   pca_split_local:   an added short weighted slide (localRangeSlide, size 0.5, source exponent 1.5).
+SPLIT_SETTINGS = ("pca_split_range12", "pca_split_slide", "pca_split_local")
+OPERATOR_SLOTS_FOR_SETTING = {
+    "pca_split_range12": {"range_weight": "12.0"},
+    "pca_split_slide": {"targeted_range_slide_edge_transform_ref": ' edgeWeightTransform="@localEdgeWeightTransform"'},
+    "pca_split_local": {"local_range_slide_weight": "5.0"},
+}
+
+
+def operator_slots(setting: str, edge_transform_ref: str) -> dict[str, str]:
+    slots = {
+        "range_weight": "6.0",
+        "targeted_range_slide_edge_transform_ref": edge_transform_ref,
+        "local_range_slide_weight": "0.0",
+    }
+    slots.update(OPERATOR_SLOTS_FOR_SETTING.get(setting, {}))
+    return slots
 
 
 def render_run_xml(template_text: str, setting: str, chain_length: int, out_dir: Path,
@@ -518,6 +544,7 @@ def render_run_xml(template_text: str, setting: str, chain_length: int, out_dir:
         edge_weight_transform_ref=edge_transform_ref,
         edge_weight_transform_log=edge_transform_log,
         likelihood_spec=LIKELIHOOD_SPEC_FOR_SETTING.get(setting, DEFAULT_LIKELIHOOD_SPEC),
+        **operator_slots(setting, edge_transform_ref),
     )
 
     run_needle = '<run id="mcmc" spec="MCMC" chainLength='
@@ -538,6 +565,10 @@ def render_run_xml(template_text: str, setting: str, chain_length: int, out_dir:
     xml = xml.replace(
         state_needle,
         '<metric id="rnni" spec="beastlabs.evolution.tree.RNNIMetric" taxonset="@TaxonSet.infB_HA"/>\n'
+        # Per-operator split of what RNNI mixes together: root height, topology, branch lengths.
+        '        <metric id="height" spec="targetedbeast.weighttransform.TreeHeightMetric"/>\n'
+        '        <metric id="rf" spec="targetedbeast.weighttransform.RobinsonFouldsMetric"/>\n'
+        '        <metric id="kf" spec="targetedbeast.weighttransform.KuhnerFelsensteinMetric"/>\n'
         f'        {state_needle}',
     )
 

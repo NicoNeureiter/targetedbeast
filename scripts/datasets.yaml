@@ -65,7 +65,8 @@ infb:
                    partial_thr_src_uniform, partial_thr_src_pca, pca_srcmix0, pca_srcmix0p5,
                    pca_srcmixlen, partial_thr_srcmix0p5, partial_thr_srcmixlen, pca_srclen0p5,
                    pca_srclen1, pca_srclen1p5, pca_srclen2, partial_thr_srclen0p5,
-                   partial_thr_srclen_grid, partial_thr_srclen_grid_kf]
+                   partial_thr_srclen_grid, partial_thr_srclen_grid_kf, pca_split_range12,
+                   pca_split_slide, pca_split_local]
   # Run with BEAST's -java flag: PartialWeights needs the Java likelihood core, which BEAGLE replaces;
   # pca_nt and pca_thr get the same so their timing is comparable.
   java_only_settings: [pca_nt, partial, partial_fixed0p1, partial_fixed0p2, partial_fixed0p5,

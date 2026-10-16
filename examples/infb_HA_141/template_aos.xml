@@ -252,7 +252,7 @@
 
         <operator id="subtreeSlide" spec="beast.base.evolution.operator.kernel.BactrianSubtreeSlide" tree="@tree" size="2.0" weight="4"/>
         <operator id="BactrianSubtreeSlide" spec="kernel.BactrianSubtreeSlide" tree="@tree" size="2.0" weight="4"/>
-		<operator id="Range" spec="targetedbeast.operators.RangeSlide" tree="@tree" weight="6.0" size="0.5" edgeWeights="@edgeweights"/>    
+		<operator id="Range" spec="targetedbeast.operators.RangeSlide" tree="@tree" weight="{range_weight}" size="0.5" edgeWeights="@edgeweights"/>    
 
         <!-- <operator id="UnTargetedWide" spec="targetedbeast.operators.WeightedWideOperator" tree="@tree" weight="5"/> -->
         <!-- targeted-operators:begin -->
