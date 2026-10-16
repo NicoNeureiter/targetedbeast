@@ -432,6 +432,21 @@ rule split_grid_shared:
         concat_tsv(input, output.summary)
 
 
+# Baselines rerun after the HeightBasedNodeRandomizer fix (f031295): pca, length^0.5 sources, and the
+# fixed split. Run with --cores 4.
+FIXED_RANDOMIZER_SETTINGS = ["pca", "pca_srclen0p5", "pca_split_slide_tgt1"]
+
+
+rule fixed_randomizer:
+    input:
+        expand(CELL_DIR + "/cell.summary.tsv", dataset="infb", tier="thorough",
+               setting=FIXED_RANDOMIZER_SETTINGS, rep=reps_for("infb", "thorough")),
+    output:
+        summary=str(RUNS_ROOT / "infb" / "thorough" / "fixed_randomizer.summary.tsv"),
+    run:
+        concat_tsv(input, output.summary)
+
+
 # PCAWeights2's distance norm: 1-norm (pca) vs Euclidean (pca_l2) at exponents 1, 1.5, 2, 3,
 # 8 reps. Explicit target.
 NORM_COMPARE_SETTINGS = ["pca", "pca_l2_fixed1", "pca_l2_fixed1p5", "pca_l2", "pca_l2_fixed3"]
