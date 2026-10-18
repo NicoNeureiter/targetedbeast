@@ -416,6 +416,11 @@ public class EdgeWeightOracleTest {
 	}
 
 	@Test
+	public void testLengthSourcePartialTarget() throws Exception {
+		assertClean(sourceTarget(LENGTH, THREADED_PARTIAL));
+	}
+
+	@Test
 	public void testConstantSourcePartialTarget() throws Exception {
 		assertClean(sourceTarget(CONSTANT, THREADED_PARTIAL));
 	}

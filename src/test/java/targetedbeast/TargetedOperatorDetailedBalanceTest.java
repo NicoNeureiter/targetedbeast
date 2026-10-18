@@ -914,6 +914,25 @@ public class TargetedOperatorDetailedBalanceTest extends DetailedBalanceTest<Tre
         }));
     }
 
+    /** The benchmarked PartialWeights configuration: length^0.5 sources, PartialWeights targets at b = 0.5. */
+    @Test
+    public void testTargWilsonBaldingLengthSourcePartialTarget() throws Exception {
+        testDetailedBalance(new TreeTrial(tree -> {
+            targetedbeast.edgeweights.BranchLengthWeights lengths = new targetedbeast.edgeweights.BranchLengthWeights();
+            lengths.initByName("tree", tree);
+            targetedbeast.edgeweights.SourceTargetWeights weights = new targetedbeast.edgeweights.SourceTargetWeights();
+            weights.initByName("source", lengths, "target", getPartialWeights(tree));
+            targetedbeast.weighttransform.PowerOffsetTransform source = new targetedbeast.weighttransform.PowerOffsetTransform();
+            source.initByName("exponent", 0.5, "offset", 0.0, "optimise", false);
+            targetedbeast.weighttransform.PowerOffsetTransform target = new targetedbeast.weighttransform.PowerOffsetTransform();
+            target.initByName("exponent", 0.5, "offset", 0.0, "optimise", false);
+            TreeOperator operator = new TargetedWilsonBalding();
+            operator.initByName("tree", tree, "weight", 1.0, "edgeWeights", weights, "edgeWeightTransform", source,
+                    "targetWeightTransform", target);
+            return operator;
+        }));
+    }
+
     @Test
     public void testRangeSlideSourceTransform() throws Exception {
         testDetailedBalance(new TreeTrial(tree -> {
