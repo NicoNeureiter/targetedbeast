@@ -271,6 +271,8 @@ public class RangeSlide extends TargetedWeightOperator {
 		SourceWeights reverseSourceWeights = getSourceWeights(tree);
 		double reverseWeight = reverseSourceWeights.weightFor(i.getNr());
 		if (reverseSourceWeights.isDegenerate() || !(reverseWeight > 0.0)) {
+			// BEAST does not restore calculation nodes on a direct reject: undo the cache update above.
+			edgeWeights.reset();
 			return Double.NEGATIVE_INFINITY;
 		}
 		logHastingsRatio += Math.log(reverseWeight / reverseSourceWeights.total);
@@ -474,6 +476,8 @@ public class RangeSlide extends TargetedWeightOperator {
 		SourceWeights reverseSourceWeights = getSourceWeights(tree);
 		double reverseWeight = reverseSourceWeights.weightFor(i.getNr());
 		if (reverseSourceWeights.isDegenerate() || !(reverseWeight > 0.0)) {
+			// BEAST does not restore calculation nodes on a direct reject: undo the cache update above.
+			edgeWeights.reset();
 			return Double.NEGATIVE_INFINITY;
 		}
 		logHastingsRatio += Math.log(reverseWeight / reverseSourceWeights.total);

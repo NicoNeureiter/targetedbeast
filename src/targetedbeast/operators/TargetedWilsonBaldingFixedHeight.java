@@ -233,6 +233,8 @@ public class TargetedWilsonBaldingFixedHeight extends TargetedWeightOperator {
 		double reverseWeight = reverseSourceWeights.weightFor(randomNode);
 		if (reverseSourceWeights.isDegenerate() || reverseWeight < WEIGHT_EPS) {
 			registerReject("reverseEdgeWeightBelowEPS");
+			// BEAST does not restore calculation nodes on a direct reject: undo the cache update above.
+			edgeWeights.reset();
 			return Double.NEGATIVE_INFINITY;
 		}
 		logHastingsRatio += Math.log(reverseWeight / reverseSourceWeights.total);
@@ -399,6 +401,8 @@ public class TargetedWilsonBaldingFixedHeight extends TargetedWeightOperator {
 		double reverseWeight = reverseSourceWeights.weightFor(i.getNr());
 		if (reverseSourceWeights.isDegenerate() || reverseWeight < WEIGHT_EPS) {
 			registerReject("reverseEdgeWeightBelowEPS");
+			// BEAST does not restore calculation nodes on a direct reject: undo the cache update above.
+			edgeWeights.reset();
 			return Double.NEGATIVE_INFINITY;
 		}
 		logHastingsRatio += Math.log(reverseWeight / reverseSourceWeights.total);

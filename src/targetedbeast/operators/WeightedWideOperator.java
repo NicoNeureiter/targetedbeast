@@ -221,6 +221,8 @@ public class WeightedWideOperator extends TargetedWeightOperator {
         SourceWeights reverseSourceWeights = getSourceWeights(tree);
         double reverseWeight = reverseSourceWeights.weightFor(randomNode);
         if (reverseSourceWeights.isDegenerate() || !(reverseWeight > 0.0)) {
+            // BEAST does not restore calculation nodes on a direct reject: undo the cache update above.
+            edgeWeights.reset();
             return Double.NEGATIVE_INFINITY;
         }
         logHastingsRatio += Math.log(reverseWeight / reverseSourceWeights.total);
