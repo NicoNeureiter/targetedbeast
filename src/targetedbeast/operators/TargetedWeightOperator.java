@@ -23,29 +23,9 @@ import targetedbeast.edgeweights.EdgeWeights;
 import targetedbeast.weighttransform.WeightTransform;
 
 /**
- * A tree operator whose proposal is driven by {@link EdgeWeights}, with optional adaptive
- * {@link WeightTransform}s on the two weight vectors it uses.
- *
- * <p>Subclasses pick a <em>source</em> edge to move, weighted by per-edge weights, and a
- * <em>target</em> edge to move it to, weighted by per-candidate weights. Either vector may be
- * reshaped before it is normalized, and the transform coefficients are adapted during the run
- * to raise the operator's acceptance rate.
- *
- * <p>Two invariants are easy to get wrong and are handled here rather than in each subclass:
- *
- * <ul>
- * <li>A transform adds its offset to <em>every</em> entry it is handed, so an infeasible
- * candidate has to be left out of the vector rather than passed in with weight zero — a zero
- * entry would acquire positive selection probability. {@link #sourceWeights} builds the source
- * vector that way; target vectors are the subclass's responsibility.</li>
- * <li>When one transform object is wired to both inputs it must be driven once per proposal,
- * not twice. A second {@link WeightTransform#startProposal()} at the head of a batch would
- * redraw the perturbation, and a second {@link WeightTransform#optimize(double)} would take two
- * adaptation steps from a single observation.</li>
- * </ul>
- *
- * <p>Subclasses must call {@link #initWeightTransforms} from their {@code initAndValidate}, and
- * {@link #startTransformProposal()} at the top of {@code proposal()} before any weight is read.
+ * Subclasses call {@link #initWeightTransforms} from {@code initAndValidate} and
+ * {@link #startTransformProposal()} before reading any weight. Infeasible target candidates must
+ * be left out of the vector, not given weight zero, since the offset makes every entry positive.
  */
 @Description("Base class for tree operators that propose from EdgeWeights, with optional "
 		+ "adaptive transforms on the target and source-edge weight vectors.")
@@ -67,22 +47,15 @@ public abstract class TargetedWeightOperator extends TreeOperator {
 	private boolean squareTargetsWhenAbsent;
 
 	/**
-	 * Resolve and check the configured transforms. Call from {@code initAndValidate}.
+	 * Resolve and check the configured transforms.
 	 *
-	 * @param edgeWeights             the weights this operator proposes from
-	 * @param squareTargetsWhenAbsent whether target weights are squared in the absence of a
-	 *                                transform. True for the operators that have always done
-	 *                                so, false for those that use the weights as they come. A
-	 *                                transform's own exponent replaces the squaring, so the two
-	 *                                must never both run.
+	 * @param squareTargetsWhenAbsent whether target weights are squared when there is no target transform
 	 */
 	protected void initWeightTransforms(EdgeWeights edgeWeights, boolean squareTargetsWhenAbsent) {
 		this.squareTargetsWhenAbsent = squareTargetsWhenAbsent;
 		targetWeightTransform = targetWeightTransformInput.get();
 		edgeWeightTransform = edgeWeightTransformInput.get();
 
-		// A log-space transform applied to real-space weights, or the reverse, produces a
-		// silently wrong proposal distribution rather than an error, so catch it at startup.
 		if (targetWeightTransform != null
 				&& targetWeightTransform.requiresLogSpace() != edgeWeights.isLogSpace()) {
 			throw new IllegalArgumentException(describe() + ": targetWeightTransform expects "
@@ -90,14 +63,12 @@ public abstract class TargetedWeightOperator extends TreeOperator {
 					+ "-space weights but " + edgeWeights.getClass().getSimpleName()
 					+ " returns " + (edgeWeights.isLogSpace() ? "log" : "real") + "-space weights");
 		}
-		// getEdgeWeights is real-space by contract in every implementation, and where the
-		// source weights are branch lengths they are real-space too, so a log-space transform
-		// is never correct on this side.
 		// Target vectors reach the transform without their nodes, so it cannot be given lengths.
 		if (targetWeightTransform != null && targetWeightTransform.offsetTowardsBranchLength()) {
 			throw new IllegalArgumentException(describe() + ": offsetBase='branchLength' is only "
 					+ "supported on edgeWeightTransform");
 		}
+		// Source weights are always real-space.
 		if (edgeWeightTransform != null && edgeWeightTransform.requiresLogSpace()) {
 			throw new IllegalArgumentException(describe() + ": edgeWeightTransform must be a "
 					+ "real-space transform; source edge weights are never in log space");
@@ -108,17 +79,12 @@ public abstract class TargetedWeightOperator extends TreeOperator {
 		return getID() == null ? getClass().getSimpleName() : getID();
 	}
 
-	/** True if neither transform was configured, i.e. the operator behaves as it did before. */
+	/** True if neither transform was configured. */
 	protected boolean hasNoWeightTransform() {
 		return targetWeightTransform == null && edgeWeightTransform == null;
 	}
 
-	/**
-	 * Freeze the transform coefficients for the duration of one proposal.
-	 *
-	 * <p>This is what keeps the forward and reverse probabilities of a single proposal mutually
-	 * consistent, so the Hastings ratio stays exact.
-	 */
+	/** Fix the transform coefficients for one proposal; a shared transform is started once. */
 	protected void startTransformProposal() {
 		if (targetWeightTransform != null) {
 			targetWeightTransform.startProposal();
@@ -129,11 +95,8 @@ public abstract class TargetedWeightOperator extends TreeOperator {
 	}
 
 	/**
-	 * i's ancestors from its parent up to the highest one that is a target, whose "without i"
-	 * values the target weights need. Every ancestor in between is included even if it is not a
-	 * target, since a target's value is built from its children's: leaving one out rebuilds the
-	 * targets above it from values that still reflect the tree before the move. Ancestors above
-	 * the highest target are never read.
+	 * i's ancestors up to the highest target, whose "without i" values the target weights need.
+	 * Non-target ancestors in between are included, since each value is built from its children's.
 	 */
 	protected static List<Integer> ancestorsUpToHighestTarget(Node i, Collection<Node> targets) {
 		List<Integer> path = new ArrayList<>();
@@ -147,13 +110,7 @@ public abstract class TargetedWeightOperator extends TreeOperator {
 		return new ArrayList<>(path.subList(0, needed));
 	}
 
-	/**
-	 * Reshape a target-weight vector.
-	 *
-	 * <p>Every entry must be a genuinely selectable candidate; see the class comment.
-	 *
-	 * @return a new array; {@code raw} is not modified
-	 */
+	/** Reshape a target-weight vector of feasible candidates. Returns a new array. */
 	protected double[] applyTargetTransform(double[] raw) {
 		if (targetWeightTransform != null) {
 			return targetWeightTransform.apply(raw);
@@ -168,17 +125,12 @@ public abstract class TargetedWeightOperator extends TreeOperator {
 		return out;
 	}
 
-	/**
-	 * Reshape a source-edge weight vector. Without a transform the weights are used as they
-	 * come, which is what every operator has always done on this side.
-	 *
-	 * @return a new array; {@code raw} is not modified
-	 */
+	/** Reshape a source-edge weight vector; unchanged without a transform. Returns a new array. */
 	protected double[] applyEdgeTransform(double[] raw) {
 		return applyEdgeTransform(raw, null);
 	}
 
-	/** As {@link #applyEdgeTransform(double[])}, with the candidates' branch lengths for a branch-length offset. */
+	/** As {@link #applyEdgeTransform(double[])}, with branch lengths for a branch-length offset. */
 	private double[] applyEdgeTransform(double[] raw, double[] lengths) {
 		if (edgeWeightTransform == null) {
 			return raw.clone();
@@ -186,13 +138,7 @@ public abstract class TargetedWeightOperator extends TreeOperator {
 		return edgeWeightTransform.apply(raw, edgeWeightTransform.offsetTowardsBranchLength() ? lengths : null);
 	}
 
-	/**
-	 * Transformed source weights over the feasible nodes, in node-number order.
-	 *
-	 * @param feasible  which nodes may be chosen as the source edge; infeasible nodes are left
-	 *                  out of the vector entirely rather than given weight zero
-	 * @param rawWeight the untransformed weight of a feasible node
-	 */
+	/** Transformed source weights over the feasible nodes, in node-number order. */
 	protected SourceWeights sourceWeights(Tree tree, Predicate<Node> feasible,
 			ToDoubleFunction<Node> rawWeight) {
 		int nodeCount = tree.getNodeCount();
@@ -254,12 +200,7 @@ public abstract class TargetedWeightOperator extends TreeOperator {
 			return m < 0 ? 0.0 : weights[m];
 		}
 
-		/**
-		 * Draw an index proportional to the weights, or -1 if the total is degenerate.
-		 *
-		 * <p>Falls back to the last entry when accumulated rounding leaves the cumulative sum
-		 * just short of the scaler, rather than reporting a failure the caller cannot act on.
-		 */
+		/** Draw an index proportional to the weights, or -1 if the total is degenerate. */
 		public int sampleIndex() {
 			if (isDegenerate()) {
 				return -1;
@@ -287,13 +228,7 @@ public abstract class TargetedWeightOperator extends TreeOperator {
 		}
 	}
 
-	/**
-	 * Persist the transform tuning alongside the operator's own statistics, using the nested
-	 * JSON convention documented on {@link beast.base.inference.Operator#storeToFile}.
-	 *
-	 * <p>Only the role and the coefficients are written here; everything else is whatever the
-	 * transform's tuner needs to resume, which varies by tuner and is therefore its own business.
-	 */
+	/** Store the transforms' tuning alongside the operator's own statistics. */
 	@Override
 	public void storeToFile(final PrintWriter out) {
 		if (hasNoWeightTransform()) {

@@ -586,12 +586,7 @@ public class FelsensteinWeights2 extends Distribution implements EdgeWeights {
 		System.arraycopy(storedActiveMutationsIndex, 0, activeMutationsIndex, 0, activeMutationsIndex.length);
 	}
 
-	/**
-	 * Checksum over the currently-active cached state (edge mutations and the cached
-	 * without-node partials). Lets beast's reject validation (-Dbeast.debug=true) detect a
-	 * cache that was not correctly restored after a rejected proposal. Only the active
-	 * buffers are hashed -- the inactive/stored halves carry no guarantee.
-	 */
+	/** Checksum of the active cache (edge mutations and the cached without-node partials), for reject validation with -Dbeast.debug=true. */
 	@Override
 	protected int getChecksum() {
 		int h = 1;

@@ -307,11 +307,9 @@ public class PartialWeights extends Distribution implements EdgeWeights {
 	}
 
 	/**
-	 * Computes the partials without {@code ignore} for all of its ancestors; {@code nodes} is
-	 * ignored. These depend only on the tree with {@code ignore} and its parent pruned, which a
-	 * move of {@code ignore}'s subtree leaves unchanged. The reverse pass of such a move therefore
-	 * reuses the forward pass's values: it could not rebuild them, since the likelihood core still
-	 * holds the partials of the tree before the move.
+	 * Computes the partials without {@code ignore} for all its ancestors; {@code nodes} is unused.
+	 * They depend only on the pruned tree, which a move of {@code ignore} leaves unchanged, so the
+	 * reverse pass reuses the forward pass's values: the likelihood core still holds the old tree.
 	 */
 	@Override
 	public void updateByOperatorWithoutNode(int ignore, List<Integer> nodes) {
@@ -340,11 +338,7 @@ public class PartialWeights extends Distribution implements EdgeWeights {
 		coreLabels.clear();
 	}
 
-	/**
-	 * The number under which the likelihood core and the cache hold node {@code nodeNr}'s
-	 * partials. These differ only after a move that changed the root, since Tree.setRoot swaps
-	 * the new root's number with the old one's.
-	 */
+	/** Number under which the core and the cache hold {@code nodeNr}'s partials; differs after a root change. */
 	private int coreLabel(int nodeNr) {
 		if (cachedFrom == null) {
 			return nodeNr;
@@ -513,8 +507,7 @@ public class PartialWeights extends Distribution implements EdgeWeights {
 
 	@Override
 	public void store() {
-		// MCMC stores after every proposal that is not rejected outright, before the likelihood
-		// recomputes the core's partials.
+		// Called before the likelihood recomputes the core's partials.
 		forgetPartialsWithoutNode();
 		super.store();
 	}
@@ -605,12 +598,8 @@ public class PartialWeights extends Distribution implements EdgeWeights {
 	}
 
 	/**
-	 * Candidates equal to fromNode's own current parent p are ill-defined as attachment points:
-	 * p becomes unary (transparent) once fromNode is pruned, so partialsWithoutNode[p] is never
-	 * computed and getPartialsWithoutNode(p) would silently fall back to p's own real partials -
-	 * which already include fromNode, double-counting its data. Score this candidate as p's real
-	 * other child instead: attaching fromNode "above p" when p already is fromNode's parent
-	 * changes nothing but height, so it is exactly attaching fromNode above that other child.
+	 * Scores fromNode's own parent p as p's other child: p's partials include fromNode, and
+	 * attaching above p is the same as attaching above that child.
 	 */
 	private Node resolveScoringNode(Node toNode, Node fromNode) {
 		Node parent = fromNode.getParent();

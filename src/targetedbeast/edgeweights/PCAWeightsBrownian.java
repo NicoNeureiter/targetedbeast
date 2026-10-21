@@ -452,12 +452,7 @@ public class PCAWeightsBrownian extends Distribution implements EdgeWeights {
 	}
 
 
-	/**
-	 * Checksum over the currently-active cached state (PCA points, variances and edge
-	 * mutations). Lets beast's reject validation (-Dbeast.debug=true) detect a cache that
-	 * was not correctly restored after a rejected proposal. Only the active buffers are
-	 * hashed -- the inactive/stored halves carry no guarantee.
-	 */
+	/** Checksum of the active cache (PCA points, variances and edge mutations), for reject validation with -Dbeast.debug=true. */
 	@Override
 	protected int getChecksum() {
 		int h = 1;

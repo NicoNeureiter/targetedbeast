@@ -532,12 +532,7 @@ public class PCAWeights2 extends Distribution implements EdgeWeights, Loggable {
 		System.arraycopy(storedActiveMutationsIndex, 0, activeMutationsIndex, 0, activeMutationsIndex.length);
 	}
 
-	/**
-	 * Checksum over the currently-active cached quantities (consensus points and edge
-	 * mutations). Enables beast's reject-validation (run with -Dbeast.debug=true) to detect
-	 * a cache that was not correctly restored after a rejected proposal. Restoring only swaps
-	 * the active buffers, so the restored values are bit-identical to the pre-operator ones.
-	 */
+	/** Checksum of the active cache (consensus points and edge mutations), for reject validation with -Dbeast.debug=true. */
 	@Override
 	protected int getChecksum() {
 		int h = 1;

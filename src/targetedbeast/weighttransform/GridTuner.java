@@ -9,49 +9,24 @@ import beast.base.core.Function;
 import beast.base.core.Input;
 import beast.base.util.Randomizer;
 
-@Description("Tunes the pointiness coefficient by picking each proposal's value from a fixed "
-		+ "grid and keeping a running reward per grid point. Unlike SPSA this makes no local "
-		+ "gradient estimate: the grid points are far enough apart that the difference between "
-		+ "them is large compared to the measurement noise, there is no baseline to subtract and "
-		+ "no gain schedule to decay, so the estimate only improves with more samples. That "
-		+ "trades badly against many coefficients - the grid grows exponentially - and well "
-		+ "against one, which is the situation here. Only the exponent is gridded; the offset "
-		+ "stays at the value configured on the transform.")
+@Description("Tunes the exponent by drawing it from a fixed grid, proportionally to each grid "
+		+ "point's mean reward. The offset is not tuned.")
 public class GridTuner extends CoefficientTuner {
 
 	final public Input<String> exponentsInput = new Input<>("exponents",
-			"the grid of pointiness values to choose among, whitespace- or comma-separated. A "
-					+ "geometric grid is the natural choice, since the exponent acts "
-					+ "multiplicatively on the log weights. Values above the transform's "
-					+ "maxExponent are rejected rather than silently clamped onto each other",
+			"grid of exponents, whitespace- or comma-separated",
 			"1 2 4 8 16", Input.Validate.REQUIRED);
 	final public Input<Double> explorationProbInput = new Input<>("explorationProb",
-			"probability of ignoring what has been learned and picking a grid point uniformly. "
-					+ "A floor above zero keeps every grid point sampled forever, so a point that "
-					+ "looked bad early can still be revisited and the family of kernels stays "
-					+ "non-degenerate. Set it to 1.0 to disable the adaptation entirely and just "
-					+ "measure the reward curve: equal sample sizes per point give an unbiased "
-					+ "comparison, which is what says whether the surface has an interior optimum "
-					+ "at all", 0.1);
+			"probability of picking a grid point uniformly; 1.0 disables adaptation", 0.1);
 	final public Input<Integer> learninInput = new Input<>("learnin",
-			"proposals to collect on every grid point before the choice starts following the "
-					+ "reward. Until then the choice is uniform. This is what stops one lucky "
-					+ "early acceptance from locking the sampler onto a grid point", 200);
+			"observations per grid point before the choice follows the reward", 200);
 	final public Input<Function> rewardInput = new Input<>("reward",
-			"quantity whose squared change across a proposal is the reward, typically "
-					+ "<parameter idref=\"likelihood\"/>. Since MCMC calls optimize() after "
-					+ "accepting or restoring, this measures the realized jump and its mean is "
-					+ "the expected squared jump distance. Omitting it falls back to acceptance "
-					+ "probability, which rises with pointiness long past the point where the "
-					+ "chain stops exploring");
+			"quantity whose squared change across a proposal is the reward, e.g. the likelihood; "
+					+ "defaults to the acceptance probability");
 	final public Input<Integer> burninInput = new Input<>("burnin",
-			"proposals to discard entirely before any reward is accumulated. The early chain is "
-					+ "still travelling to stationarity, where acceptance says more about the "
-					+ "starting tree than about the coefficient", 1000);
+			"proposals to discard before accumulating rewards", 1000);
 	final public Input<Integer> blockLengthInput = new Input<>("blockLength",
-			"proposals for which one grid point is held, its reward being the change over the whole "
-					+ "block rather than per proposal, so moves that are undone within the block earn "
-					+ "nothing. learnin then counts blocks", 1);
+			"proposals per grid-point choice; the reward is measured over the whole block", 1);
 
 	/** Grid points in natural space, as configured. */
 	private double[] exponents;
@@ -66,7 +41,7 @@ public class GridTuner extends CoefficientTuner {
 	/** Grid point chosen for the proposal currently in flight. */
 	private int current;
 
-	/** Reward source, and its value as of the start of the proposal in flight. Null = acceptance. */
+	/** Reward source (null: acceptance) and its value at the start of the block. */
 	private Function rewardFunction;
 	private double rewardBefore;
 
@@ -112,9 +87,7 @@ public class GridTuner extends CoefficientTuner {
 	@Override
 	void setTransform(WeightTransform transform) {
 		super.setTransform(transform);
-		// Deferred to here because the bounds live on the transform, which does not exist yet
-		// when this tuner is initialised. Clamping instead would silently collapse the top of
-		// the grid onto a single value and quietly turn a 7-point sweep into a 5-point one.
+		// Checked here since the bounds live on the transform. Clamping would merge grid points.
 		for (double b : exponents) {
 			if (transform.clamp(Math.log(b), WeightTransform.EXPONENT) != Math.log(b)) {
 				throw new IllegalArgumentException("grid exponent " + b + " lies outside the "
@@ -125,8 +98,7 @@ public class GridTuner extends CoefficientTuner {
 
 	@Override
 	public void startProposal(double[] theta, double[] effective) {
-		// A proposal whose outcome was not reported (skipped or unused) extends a longer block;
-		// with blocks of one, every proposal starts afresh.
+		// A proposal whose outcome was not reported extends the open block.
 		if (!blockOpen || blockLengthInput.get() == 1) {
 			current = chooseGridPoint();
 			if (rewardFunction != null) {
@@ -137,8 +109,7 @@ public class GridTuner extends CoefficientTuner {
 			blockAcceptance = 0.0;
 		}
 		effective[WeightTransform.EXPONENT] = exponents[current];
-		// The offset is not gridded, so it proposes at whatever the transform holds. The
-		// exact-zero sentinel is -Infinity in log space, and exp of that is exactly 0.0.
+		// The offset is not gridded.
 		effective[WeightTransform.OFFSET] = Math.exp(theta[WeightTransform.OFFSET]);
 	}
 
@@ -175,8 +146,7 @@ public class GridTuner extends CoefficientTuner {
 
 	@Override
 	public void optimize(double logAlpha, boolean used, double[] theta) {
-		// A proposal that aborted before touching the weights says nothing about the
-		// coefficients; counting it would inject pure noise.
+		// An aborted proposal says nothing about the coefficients.
 		if (!used) {
 			return;
 		}
@@ -201,9 +171,7 @@ public class GridTuner extends CoefficientTuner {
 		samples[current]++;
 		meanReward[current] += (reward - meanReward[current]) / samples[current];
 
-		// Report the current leader as the coefficient, so the trace log and the state file say
-		// which grid point the sampler is actually favouring. This is a readout, not an iterate:
-		// nothing here reads theta back, and the grid points themselves never move.
+		// Report the leader through theta, for the log and the state file.
 		theta[WeightTransform.EXPONENT] = logExponents[leader()];
 		transform.refreshEffective();
 	}
@@ -240,7 +208,6 @@ public class GridTuner extends CoefficientTuner {
 
 	@Override
 	public long getAdaptationCount() {
-		// One observation is one adaptation: unlike SPSA there is no batch to complete first.
 		long total = 0;
 		for (long n : samples) {
 			total += n;
@@ -250,7 +217,7 @@ public class GridTuner extends CoefficientTuner {
 
 	@Override
 	public void reset() {
-		// Nothing is accumulated between proposals; every observation is folded in immediately.
+		// Every observation is folded in immediately.
 	}
 
 	@Override
@@ -274,8 +241,7 @@ public class GridTuner extends CoefficientTuner {
 		}
 		JSONArray grid = entry.getJSONArray("grid");
 		if (grid.length() != exponents.length) {
-			// The grid was reconfigured between runs, so the stored rewards are not comparable
-			// to the current points. Starting over is the only honest option.
+			// Rewards from a different grid are not comparable.
 			throw new JSONException("state file holds " + grid.length() + " grid points but the "
 					+ "tuner is configured with " + exponents.length);
 		}

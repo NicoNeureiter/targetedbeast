@@ -217,14 +217,7 @@ public class TargetedWilsonBaldingHeightDelta extends TargetedWeightOperator {
 		}
 	}
 
-	/**
-	 * Transformed source weights over the movable edges.
-	 *
-	 * <p>The root and its children are left out of the vector entirely rather than given
-	 * weight zero: a source edge whose parent is the root cannot be moved by a Wilson-Balding
-	 * step, and a transform adds its offset to every entry it receives, so a zero entry would
-	 * acquire positive selection probability.
-	 */
+	/** Transformed source weights over the movable edges, i.e. excluding the root and its children. */
 	private SourceWeights getSourceWeights(Tree tree, boolean useEdgeLength) {
 		return sourceWeights(tree,
 				node -> !(node.isRoot() || node.getParent().isRoot()),

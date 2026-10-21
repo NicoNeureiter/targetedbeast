@@ -11,11 +11,8 @@ import beast.base.core.Input;
 import beast.base.core.Loggable;
 
 @Description("Reshapes raw edge or target weights before a targeted operator normalizes them. "
-		+ "The pointiness coefficient controls how greedy the resulting proposal is; the offset "
-		+ "coefficient mixes in a uniform distribution and is an adaptive replacement for the "
-		+ "minWeight input of the EdgeWeights implementations. How the coefficients are tuned is "
-		+ "delegated to a CoefficientTuner, so the shape of the transform and the search strategy "
-		+ "can be chosen independently.")
+		+ "The exponent sets how greedy the proposal is, the offset mixes in a base distribution. "
+		+ "A CoefficientTuner adapts both.")
 public abstract class WeightTransform extends BEASTObject implements Loggable {
 
 	/** Fixed coefficient order, used by the tuners, the log and the state file. */
@@ -26,37 +23,22 @@ public abstract class WeightTransform extends BEASTObject implements Loggable {
 	protected static final double[] LOWER_BOUND = { 0.1, 1e-6 };
 	protected static final double[] DEFAULT_UPPER_BOUND = { 20.0, 100.0 };
 
-	/**
-	 * Per-instance upper bounds, so the exponent ceiling can be raised without touching the
-	 * offset's. Only the exponent entry is configurable; see {@link #maxExponentInput}.
-	 */
+	/** Per-instance upper bounds; only the exponent's is configurable. */
 	private final double[] upperBound = DEFAULT_UPPER_BOUND.clone();
 
 	final public Input<Double> exponentInput = new Input<>("exponent",
-			"starting value of the pointiness coefficient b; 2.0 reproduces the exponent "
-					+ "hardcoded in TargetedWilsonBalding today", 2.0);
+			"starting value of the exponent b", 2.0);
 	final public Input<Double> offsetInput = new Input<>("offset",
-			"value of the offset coefficient a, as a proportion of the mean transformed weight; the "
-					+ "resulting proposal is a mixture with weight a/(1+a) on the uniform. The "
-					+ "default of 0 means no uniform mixture at all",
-			0.0);
+			"offset a; the proposal is a mixture with weight a/(1+a) on the base distribution", 0.0);
 	final public Input<String> offsetBaseInput = new Input<>("offsetBase",
-			"distribution the offset mixes towards: 'uniform', or 'branchLength' for weights "
-					+ "proportional to the candidate edges' lengths. branchLength needs the operator to "
-					+ "supply the lengths, which only the source-edge side does", "uniform");
+			"distribution the offset mixes towards: 'uniform' or 'branchLength' (source weights only)",
+			"uniform");
 	final public Input<Double> maxExponentInput = new Input<>("maxExponent",
-			"upper bound on the pointiness coefficient b. This is what keeps the family of "
-					+ "fixed-coefficient kernels compact, which the diminishing-adaptation "
-					+ "argument needs, and it also guards against a proposal so pointy that it "
-					+ "oscillates between a handful of topologies at high acceptance. The default "
-					+ "of 20 is a conservative guess rather than a measured limit; raise it if a "
-					+ "sweep shows the reward still climbing at the bound", 20.0);
+			"upper bound on the exponent b", 20.0);
 	final public Input<Boolean> optimiseInput = new Input<>("optimise",
-			"if true, the coefficients are adapted during the MCMC by the tuner. Set it to false "
-					+ "to pin the transform at its configured coefficients", true);
+			"whether the tuner adapts the coefficients", true);
 	final public Input<CoefficientTuner> tunerInput = new Input<>("tuner",
-			"strategy for adapting the coefficients. Defaults to SPSA with its own defaults, "
-					+ "which is what this transform did before tuners were separable");
+			"strategy for adapting the coefficients (default: SpsaTuner)");
 
 	/** Coefficients in log space. Updated by the tuner; never read directly by apply(). */
 	protected double[] theta;
@@ -84,8 +66,7 @@ public abstract class WeightTransform extends BEASTObject implements Loggable {
 					+ offsetBaseInput.get() + "'");
 		}
 
-		// Must follow the bound assignment, since setCoefficients clamps: a starting exponent
-		// above the default ceiling has to be honoured, not silently pulled back to 20.
+		// After the bounds, since setCoefficients clamps.
 		setCoefficients(new double[] { exponentInput.get(), offsetInput.get() });
 
 		tuner = tunerInput.get();
@@ -93,35 +74,24 @@ public abstract class WeightTransform extends BEASTObject implements Loggable {
 			tuner = new SpsaTuner();
 			tuner.initAndValidate();
 		}
-		// The tuner needs the bounds, which live here, so it can only be finished off once this
-		// object is valid.
 		tuner.setTransform(this);
 	}
 
-	/** True if the offset mixes towards branch lengths, which the caller must then pass to {@link #apply(double[], double[])}. */
+	/** True if {@link #apply(double[], double[])} needs branch lengths. */
 	public boolean offsetTowardsBranchLength() {
 		return offsetBaseInput.get().equals("branchLength");
 	}
 
-	/**
-	 * Reshape one feasible weight vector, mixing towards the uniform distribution.
-	 *
-	 * @see #apply(double[], double[])
-	 */
+	/** Reshape one weight vector, mixing towards uniform. */
 	public final double[] apply(double[] raw) {
 		return apply(raw, null);
 	}
 
 	/**
-	 * Reshape one feasible weight vector.
-	 *
-	 * <p>Every entry of {@code raw} must be a genuinely selectable candidate. Infeasible
-	 * candidates must be dropped by the caller beforehand: the offset is added to every
-	 * entry, so passing an infeasible candidate in as a zero weight would give it positive
-	 * selection probability.
+	 * Reshape one weight vector. Drop infeasible candidates first: every entry gets a share of the offset.
 	 *
 	 * @param base the candidates' branch lengths if {@link #offsetTowardsBranchLength()}, else null
-	 * @return a new array; {@code raw} is not modified
+	 * @return a new array
 	 */
 	public final double[] apply(double[] raw, double[] base) {
 		used = true;
@@ -135,9 +105,7 @@ public abstract class WeightTransform extends BEASTObject implements Loggable {
 		for (double x : u) {
 			sum += x;
 		}
-		// Offset relative to the total, so that it is free of the scale of the raw weights
-		// and invariant to the arbitrary additive constant in log-space weights. After
-		// normalisation this is a mixture with weight a/(1+a) on the base distribution.
+		// Relative to the total, so it is free of the weights' scale.
 		double offset = effective[OFFSET] * sum;
 		if (base == null) {
 			for (int k = 0; k < u.length; k++) {
@@ -161,13 +129,7 @@ public abstract class WeightTransform extends BEASTObject implements Loggable {
 	/** True if this transform expects log-space input weights. */
 	public abstract boolean requiresLogSpace();
 
-	/**
-	 * Called by the operator at the start of every proposal, before any call to apply().
-	 *
-	 * <p>Delegates the choice of coefficients to the tuner and freezes the result for the whole
-	 * proposal, which is what keeps the forward and reverse probabilities of a single proposal
-	 * mutually consistent so the Hastings ratio stays correct.
-	 */
+	/** Fix the coefficients for one proposal, so its forward and reverse moves use the same kernel. */
 	public void startProposal() {
 		used = false;
 		if (!optimiseInput.get()) {
@@ -176,12 +138,7 @@ public abstract class WeightTransform extends BEASTObject implements Loggable {
 		tuner.startProposal(theta, effective);
 	}
 
-	/**
-	 * Report the outcome of one proposal to the tuner.
-	 *
-	 * @param logAlpha difference in posterior between previous and proposed state, plus the
-	 *                 Hastings ratio
-	 */
+	/** Report one proposal's log acceptance ratio to the tuner. */
 	public void optimize(double logAlpha) {
 		if (!optimiseInput.get()) {
 			return;
@@ -189,7 +146,7 @@ public abstract class WeightTransform extends BEASTObject implements Loggable {
 		tuner.optimize(logAlpha, used, theta);
 	}
 
-	/** The tuner adapting this transform's coefficients. Never null after initAndValidate(). */
+	/** The tuner adapting this transform's coefficients. */
 	public CoefficientTuner getTuner() {
 		return tuner;
 	}
@@ -218,16 +175,7 @@ public abstract class WeightTransform extends BEASTObject implements Loggable {
 		return c;
 	}
 
-	/**
-	 * Set the coefficients from natural-space values, clamping each to its bounds.
-	 *
-	 * <p>An exact {@code 0.0} is a distinct case from a small positive value: it is the
-	 * sentinel for "no offset at all" (as used to reproduce the pre-transform hardcoded
-	 * squaring, {@code exponent=2, offset=0}) and is passed through as {@code -Infinity} in
-	 * log space rather than floored to the lower bound. {@code Math.exp(-Infinity) == 0.0}
-	 * exactly, so the effective coefficient is exactly zero. Only a finite, merely
-	 * out-of-bounds value gets clamped.
-	 */
+	/** Set the coefficients in natural space, clamped to their bounds. An exact 0 stays 0 (-Infinity in log space). */
 	public void setCoefficients(double[] natural) {
 		for (int i = 0; i < theta.length; i++) {
 			double logValue = Math.log(natural[i]);
