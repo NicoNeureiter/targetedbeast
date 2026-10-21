@@ -48,6 +48,10 @@ public class GridTuner extends CoefficientTuner {
 			"proposals to discard entirely before any reward is accumulated. The early chain is "
 					+ "still travelling to stationarity, where acceptance says more about the "
 					+ "starting tree than about the coefficient", 1000);
+	final public Input<Integer> blockLengthInput = new Input<>("blockLength",
+			"proposals for which one grid point is held, its reward being the change over the whole "
+					+ "block rather than per proposal, so moves that are undone within the block earn "
+					+ "nothing. learnin then counts blocks", 1);
 
 	/** Grid points in natural space, as configured. */
 	private double[] exponents;
@@ -68,6 +72,11 @@ public class GridTuner extends CoefficientTuner {
 
 	/** Proposals seen so far, including those discarded during burn-in. */
 	private long proposalCount;
+
+	/** Whether a block is open, the proposals counted in it, and its summed acceptance. */
+	private boolean blockOpen;
+	private int inBlock;
+	private double blockAcceptance;
 
 	@Override
 	public void initAndValidate() {
@@ -90,6 +99,9 @@ public class GridTuner extends CoefficientTuner {
 		rewardFunction = rewardInput.get();
 		current = 0;
 		proposalCount = 0;
+		if (blockLengthInput.get() < 1) {
+			throw new IllegalArgumentException("blockLength must be at least 1, got " + blockLengthInput.get());
+		}
 		if (explorationProbInput.get() <= 0.0 || explorationProbInput.get() > 1.0) {
 			throw new IllegalArgumentException(
 					"explorationProb must lie in (0, 1]; a floor of zero would let the sampler "
@@ -113,9 +125,16 @@ public class GridTuner extends CoefficientTuner {
 
 	@Override
 	public void startProposal(double[] theta, double[] effective) {
-		current = chooseGridPoint();
-		if (rewardFunction != null) {
-			rewardBefore = rewardFunction.getArrayValue();
+		// A proposal whose outcome was not reported (skipped or unused) extends a longer block;
+		// with blocks of one, every proposal starts afresh.
+		if (!blockOpen || blockLengthInput.get() == 1) {
+			current = chooseGridPoint();
+			if (rewardFunction != null) {
+				rewardBefore = rewardFunction.getArrayValue();
+			}
+			blockOpen = true;
+			inBlock = 0;
+			blockAcceptance = 0.0;
 		}
 		effective[WeightTransform.EXPONENT] = exponents[current];
 		// The offset is not gridded, so it proposes at whatever the transform holds. The
@@ -161,19 +180,21 @@ public class GridTuner extends CoefficientTuner {
 		if (!used) {
 			return;
 		}
+		inBlock++;
+		blockAcceptance += Math.exp(Math.min(logAlpha, 0.0));
+		if (inBlock < blockLengthInput.get()) {
+			return;
+		}
+		blockOpen = false;
 		double reward;
 		if (rewardFunction != null) {
 			double jump = rewardFunction.getArrayValue() - rewardBefore;
 			reward = jump * jump;
 		} else {
-			reward = Math.exp(Math.min(logAlpha, 0.0));
+			reward = blockAcceptance / inBlock;
 		}
-		if (!Double.isFinite(reward)) {
-			return;
-		}
-
-		proposalCount++;
-		if (proposalCount <= burninInput.get()) {
+		proposalCount += inBlock;
+		if (!Double.isFinite(reward) || proposalCount <= burninInput.get()) {
 			return;
 		}
 

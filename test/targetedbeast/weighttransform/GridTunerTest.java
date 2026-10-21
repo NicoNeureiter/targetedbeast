@@ -352,6 +352,28 @@ public class GridTunerTest {
 		Assert.assertEquals("and its reward is zero", 0.0, total, TOL);
 	}
 
+	/** In block mode a grid point is held for the whole block, which counts as one observation. */
+	@Test
+	public void blockModeHoldsGridPointPerBlock() {
+		PowerOffsetTransform t = transform("blockLength", 3, "burnin", 0);
+		double[] exponents = new double[6];
+		for (int i = 0; i < 6; i++) {
+			t.startProposal();
+			exponents[i] = t.getEffectiveCoefficients()[0];
+			t.apply(new double[] { 1.0, 2.0 });
+			t.optimize(i % 3 == 0 ? 0.0 : Double.NEGATIVE_INFINITY);
+		}
+		Assert.assertEquals(exponents[0], exponents[2], 0.0);
+		Assert.assertEquals(exponents[3], exponents[5], 0.0);
+		GridTuner tuner = tunerOf(t);
+		Assert.assertEquals(2, tuner.getAdaptationCount());
+		double total = 0.0;
+		for (int i = 0; i < 5; i++) {
+			total += tuner.getMeanReward(i) * tuner.getSampleCount(i);
+		}
+		Assert.assertEquals("each block's reward is its mean acceptance", 2.0 / 3.0, total, TOL);
+	}
+
 	private static TargetedWilsonBalding operatorWith(PowerOffsetTransform target) {
 		Tree tree = new Tree("((A:1.0,B:1.0):1.0,C:2.0):0.0;");
 		ConstantWeights weights = new ConstantWeights();
