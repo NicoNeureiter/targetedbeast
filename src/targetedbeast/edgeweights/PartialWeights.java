@@ -524,17 +524,17 @@ public class PartialWeights extends Distribution implements EdgeWeights {
 		double[] weights = new double[toNodeNrs.size()];
 		for (int k = 0; k < toNodeNrs.size(); k++) {
 			int toNodeNr = toNodeNrs.get(k);
-            Node toNode = treeInput.get().getNode(toNodeNr);
-            
+            Node toNode = resolveScoringNode(treeInput.get().getNode(toNodeNr), fromNode);
+
             // Cannot move to edges that end below fromNode
             double parentHeight = toNode.isRoot() ? Double.POSITIVE_INFINITY : toNode.getParent().getHeight();
             if (parentHeight <= fromNode.getHeight()) {
                 weights[k] = Double.NEGATIVE_INFINITY;
                 continue;
             }
-            
+
             // Use partialsWithoutNode (excludes fromNodeNr's contribution)
-			double[] toPartials = getPartialsWithoutNode(toNodeNr);
+			double[] toPartials = getPartialsWithoutNode(toNode.getNr());
 			double newHeight = getToHeightWithoutNode(toNode, fromNode);
 
 			// // Compute the full proposed tree log-likelihood
@@ -552,6 +552,22 @@ public class PartialWeights extends Distribution implements EdgeWeights {
 
         // weights = clipMaxToSecondMaxRatio(weights, 10.);
         // return weights;
+	}
+
+	/**
+	 * Candidates equal to fromNode's own current parent p are ill-defined as attachment points:
+	 * p becomes unary (transparent) once fromNode is pruned, so partialsWithoutNode[p] is never
+	 * computed and getPartialsWithoutNode(p) would silently fall back to p's own real partials -
+	 * which already include fromNode, double-counting its data. Score this candidate as p's real
+	 * other child instead: attaching fromNode "above p" when p already is fromNode's parent
+	 * changes nothing but height, so it is exactly attaching fromNode above that other child.
+	 */
+	private Node resolveScoringNode(Node toNode, Node fromNode) {
+		Node parent = fromNode.getParent();
+		if (toNode != parent) {
+			return toNode;
+		}
+		return parent.getLeft() == fromNode ? parent.getRight() : parent.getLeft();
 	}
 
     double[] clipMaxToSecondMaxRatio(double[] weights, double maxRatio) {
@@ -628,10 +644,10 @@ public class PartialWeights extends Distribution implements EdgeWeights {
 		double[] weights = new double[toNodeNrs.size()];
 		for (int k = 0; k < toNodeNrs.size(); k++) {
 			int toNodeNr = toNodeNrs.get(k);
-            Node toNode = treeInput.get().getNode(toNodeNr);
-            
+            Node toNode = resolveScoringNode(treeInput.get().getNode(toNodeNr), fromNode);
+
             // Use partialsWithoutNode (excludes fromNodeNr's contribution)
-			double[] toPartials = getPartialsWithoutNode(toNodeNr);
+			double[] toPartials = getPartialsWithoutNode(toNode.getNr());
 
 			// Compute the full proposed tree log-likelihood
 			double toWeight = computePartialsAgreement(fromNode, toNode, fromPartials, toPartials, newHeight);
