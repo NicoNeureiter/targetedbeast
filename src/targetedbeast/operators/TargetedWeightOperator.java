@@ -2,7 +2,10 @@ package targetedbeast.operators;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
+import java.util.List;
 import java.util.function.Predicate;
 import java.util.function.ToDoubleFunction;
 
@@ -118,6 +121,25 @@ public abstract class TargetedWeightOperator extends TreeOperator {
 		if (edgeWeightTransform != null && edgeWeightTransform != targetWeightTransform) {
 			edgeWeightTransform.startProposal();
 		}
+	}
+
+	/**
+	 * i's ancestors from its parent up to the highest one that is a target, whose "without i"
+	 * values the target weights need. Every ancestor in between is included even if it is not a
+	 * target, since a target's value is built from its children's: leaving one out rebuilds the
+	 * targets above it from values that still reflect the tree before the move. Ancestors above
+	 * the highest target are never read.
+	 */
+	protected static List<Integer> ancestorsUpToHighestTarget(Node i, Collection<Node> targets) {
+		List<Integer> path = new ArrayList<>();
+		int needed = 0;
+		for (Node ancestor = i.getParent(); ancestor != null; ancestor = ancestor.getParent()) {
+			path.add(ancestor.getNr());
+			if (targets.contains(ancestor)) {
+				needed = path.size();
+			}
+		}
+		return new ArrayList<>(path.subList(0, needed));
 	}
 
 	/**

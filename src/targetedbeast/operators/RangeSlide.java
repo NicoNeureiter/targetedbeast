@@ -320,17 +320,7 @@ public class RangeSlide extends TargetedWeightOperator {
 			return Double.NEGATIVE_INFINITY;
 		}
 
-		// get all nodes in target that are ancestors to p
-		List<Integer> ancestors = new ArrayList<>();
-		// make a copy of p
-		Node ancestor = i.getParent();
-		while (ancestor != null) {
-			// check if p is in the target
-			if (targets.containsKey(ancestor)) {
-				ancestors.add(ancestor.getNr());
-			}
-			ancestor = ancestor.getParent();
-		}
+		List<Integer> ancestors = ancestorsUpToHighestTarget(i, targets.keySet());
 
 		// calculate the consensus sequences without the node i
 		edgeWeights.prestore();
@@ -360,6 +350,9 @@ public class RangeSlide extends TargetedWeightOperator {
 		
 		// pick a random node
 		logHastingsRatio -= Math.log(distance[targetIndex] / totalDistance);
+		// Roll back the forward "without i" values before the move: the reverse pass below takes
+		// its own prestore(), which must record the pre-proposal state for reset() to return to.
+		edgeWeights.reset();
 
 		Node target = targets.keySet().toArray(new Node[0])[targetIndex];
 		
@@ -422,9 +415,14 @@ public class RangeSlide extends TargetedWeightOperator {
 		if (logHastingsRatio == Double.NEGATIVE_INFINITY) {
 			return logHastingsRatio;
 		}
-		
-		// calculate the distance of the previous edge without node i, prior to updating
-		// everything
+
+		// Recompute the "without node i" cache against the moved tree T': the cached values from
+		// the forward pass describe i's old position.
+		List<Integer> newAncestors = ancestorsUpToHighestTarget(i, newTargets.keySet());
+		edgeWeights.prestore();
+		edgeWeights.updateByOperatorWithoutNode(i.getNr(), newAncestors);
+
+		// calculate the distance of the previous edge without node i
 		k = 0;
 		distance = applyTargetTransform(
 				edgeWeights.getTargetWeights(i.getNr(), new ArrayList<>(newTargets.keySet())));
