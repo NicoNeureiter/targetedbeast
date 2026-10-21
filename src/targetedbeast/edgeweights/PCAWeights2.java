@@ -306,12 +306,10 @@ public class PCAWeights2 extends Distribution implements EdgeWeights, Loggable {
 		} else {
 			boolean left = getFilthyNodes(node.getLeft());
 			boolean right = getFilthyNodes(node.getRight());
-			if (left || right || node.isDirty() > 1) {
+			// A node's point is a branch-length-weighted average of its children's, so any height
+			// change (not only a topology change) alters it, and the change reaches every ancestor.
+			if (left || right || node.isDirty() > 0) {
 				changed[node.getNr()] = true;
-				if (node.isDirty() == 3) { 
-					return false;
-				} else {
-				}
 			}
 		}
 
