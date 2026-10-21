@@ -308,10 +308,18 @@ public class TargetedOperatorDetailedBalanceTest extends DetailedBalanceTest<Tre
             // clears the flags so the operator's own move drives the incremental updates.
             for (targetedbeast.edgeweights.EdgeWeights ew : edgeWeights) {
                 tree.setEverythingDirty(true);
+                recalculateLikelihood(ew);
                 ew.updateByOperator();
             }
             tree.setEverythingDirty(false);
             return tree;
+        }
+
+        /** As in a real chain, the likelihood core holds the current tree's partials. */
+        void recalculateLikelihood(targetedbeast.edgeweights.EdgeWeights ew) {
+            if (ew instanceof PartialWeights pw) {
+                pw.likelihoodInput.get().calculateLogP();
+            }
         }
 
         @Override
@@ -716,6 +724,28 @@ public class TargetedOperatorDetailedBalanceTest extends DetailedBalanceTest<Tre
                     "tree", tree,
                     "weight", 1.0,
                     "edgeWeights", getPCAWeights(tree),
+                    "useWeightedStep", true,
+                    "size", 0.25,
+                    "optimise", false);
+            return operator;
+        }));
+    }
+
+    /**
+     * PartialWeights is the one weight function that lets a candidate target equal fromNode's
+     * own parent p (RangeSlide's targets can include "extend p's own edge"), which is exactly
+     * the ill-defined case PartialWeights.resolveScoringNode exists for: p becomes unary once
+     * fromNode is pruned, so getPartialsWithoutNode(p) silently fell back to p's real (stale)
+     * partials that still include fromNode's own contribution.
+     */
+    @Test
+    public void testRangeSlidePartialWeighted() throws Exception {
+        testDetailedBalance(new TreeTrial(tree -> {
+            RangeSlide operator = new RangeSlide();
+            operator.initByName(
+                    "tree", tree,
+                    "weight", 1.0,
+                    "edgeWeights", getPartialWeights(tree),
                     "useWeightedStep", true,
                     "size", 0.25,
                     "optimise", false);
